@@ -17,7 +17,7 @@ A comprehensive **Model Context Protocol (MCP)** server for Kali Linux penetrati
 - **Evidence Collection** - Screenshots, notes, and findings management
 - **Session Management** - Metasploit sessions, reverse shells, SSH connections
 
-## 📚 Documentation
+## Documentation
 
 Full documentation available in the [docs/](docs/) folder:
 
@@ -304,14 +304,6 @@ sudo ufw status
 sudo ufw allow 5000/tcp
 ```
 
-## License
-
-MIT License - See LICENSE file for details.
-
-## Contributing
-
 Contributions welcome! Please read [docs/contributing.md](docs/contributing.md) for guidelines.
 
-## Acknowledgments
-
-- Built on the [Model Context Protocol](https://github.com/modelcontextprotocol)
+Built on the [Model Context Protocol](https://github.com/modelcontextprotocol)
