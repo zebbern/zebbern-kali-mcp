@@ -22,6 +22,7 @@ def register(mcp: FastMCP, kali_client) -> None:
         lhost: str, lport: int = 4444, template: str = "",
         payload: str = "windows/meterpreter/reverse_tcp",
         format_type: str = "exe", encoder: str = "", iterations: int = 1,
+        bad_chars: str = "", nops: int = 0, output_name: str = "",
     ) -> Dict[str, Any]:
         """
         Generate a payload using msfvenom.
@@ -34,6 +35,9 @@ def register(mcp: FastMCP, kali_client) -> None:
             format_type: Output format - exe, elf, raw, ps1, etc.
             encoder: Encoder to use (e.g., 'x86/shikata_ga_nai')
             iterations: Number of encoding iterations
+            bad_chars: Characters to avoid in payload (e.g., '\\x00\\x0a\\x0d')
+            nops: Number of NOP sled bytes to prepend (default: 0)
+            output_name: Custom output filename (auto-generated if empty)
 
         Returns:
             Generated payload info including base64 content for small payloads
@@ -43,6 +47,12 @@ def register(mcp: FastMCP, kali_client) -> None:
             "payload": payload, "format": format_type,
             "encoder": encoder, "iterations": iterations,
         }
+        if bad_chars:
+            data["bad_chars"] = bad_chars
+        if nops > 0:
+            data["nops"] = nops
+        if output_name:
+            data["output_name"] = output_name
         return kali_client.safe_post("api/payload/generate", data)
 
     @mcp.tool()

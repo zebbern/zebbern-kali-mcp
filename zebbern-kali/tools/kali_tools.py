@@ -25,24 +25,24 @@ def run_nmap(params: Dict[str, Any]) -> Dict[str, Any]:
         scan_type = params.get("scan_type", "-sCV")
         ports = params.get("ports", "")
         additional_args = params.get("additional_args", "-T4 -Pn")
-        
+
         if not target:
             logger.warning("Nmap called without target parameter")
             return {
                 "error": "Target parameter is required",
                 "success": False
             }
-        
+
         command = f"nmap {scan_type}"
-        
+
         if ports:
             command += f" -p {ports}"
-        
+
         if additional_args:
             command += f" {additional_args}"
-        
+
         command += f" {target}"
-        
+
         result = execute_command(command)
         return result
     except Exception as e:
@@ -61,14 +61,14 @@ def run_gobuster(params: Dict[str, Any], on_output=None) -> Dict[str, Any]:
         mode = params.get("mode", "dir")
         wordlist = params.get("wordlist", "/usr/share/wordlists/dirb/common.txt")
         additional_args = params.get("additional_args", "")
-        
+
         if not url:
             logger.warning("Gobuster called without URL parameter")
             return {
                 "error": "URL parameter is required",
                 "success": False
             }
-        
+
         # Validate mode
         if mode not in ["dir", "dns", "fuzz", "vhost"]:
             logger.warning(f"Invalid gobuster mode: {mode}")
@@ -76,19 +76,19 @@ def run_gobuster(params: Dict[str, Any], on_output=None) -> Dict[str, Any]:
                 "error": f"Invalid mode: {mode}. Must be one of: dir, dns, fuzz, vhost",
                 "success": False
             }
-        
+
         command = f"gobuster {mode} -u {url} -w {wordlist}"
-        
+
         if additional_args:
             command += f" {additional_args}"
-        
+
         # Use provided callback or default logging callback
         output_callback = on_output
         if not output_callback:
             def handle_gobuster_output(source, line):
                 logger.info(f"[GOBUSTER-{source.upper()}] {line}")
             output_callback = handle_gobuster_output
-        
+
         # Execute with streaming support (gobuster will be detected as a streaming tool)
         result = execute_command(command, on_output=output_callback)
         return result
@@ -117,25 +117,25 @@ def run_fierce(params: Dict[str, Any]) -> Dict[str, Any]:
         dns_server = params.get("dns_server", "")
         wordlist = params.get("wordlist", "")
         additional_args = params.get("additional_args", "")
-        
+
         if not domain:
             logger.warning("Fierce called without domain parameter")
             return {
                 "error": "Domain parameter is required",
                 "success": False
             }
-        
+
         command = f"fierce --domain {domain}"
-        
+
         if dns_server:
             command += f" --dns-servers {dns_server}"
-        
+
         if wordlist:
             command += f" --wordlist {wordlist}"
-        
+
         if additional_args:
             command += f" {additional_args}"
-        
+
         result = execute_command(command, timeout=300)
         return result
     except Exception as e:
@@ -169,26 +169,26 @@ def run_dirb(params: Dict[str, Any], on_output=None) -> Dict[str, Any]:
         url = params.get("url", "")
         wordlist = params.get("wordlist", "/usr/share/wordlists/dirb/common.txt")
         additional_args = params.get("additional_args", "")
-        
+
         if not url:
             logger.warning("Dirb called without URL parameter")
             return {
                 "error": "URL parameter is required",
                 "success": False
             }
-        
+
         command = f"dirb {url} {wordlist}"
-        
+
         if additional_args:
             command += f" {additional_args}"
-        
+
         # Use provided callback or default logging callback
         output_callback = on_output
         if not output_callback:
             def handle_dirb_output(source, line):
                 logger.info(f"[DIRB-{source.upper()}] {line}")
             output_callback = handle_dirb_output
-        
+
         result = execute_command(command, on_output=output_callback)
         return result
     except Exception as e:
@@ -205,26 +205,26 @@ def run_nikto(params: Dict[str, Any], on_output=None) -> Dict[str, Any]:
     try:
         target = params.get("target", "")
         additional_args = params.get("additional_args", "")
-        
+
         if not target:
             logger.warning("Nikto called without target parameter")
             return {
                 "error": "Target parameter is required",
                 "success": False
             }
-        
+
         command = f"nikto -h {target}"
-        
+
         if additional_args:
             command += f" {additional_args}"
-        
+
         # Use provided callback or default logging callback
         output_callback = on_output
         if not output_callback:
             def handle_nikto_output(source, line):
                 logger.info(f"[NIKTO-{source.upper()}] {line}")
             output_callback = handle_nikto_output
-        
+
         result = execute_command(command, on_output=output_callback)
         return result
     except Exception as e:
@@ -242,25 +242,25 @@ def run_sqlmap(params: Dict[str, Any]) -> Dict[str, Any]:
         url = params.get("url", "")
         data = params.get("data", "")
         additional_args = params.get("additional_args", "")
-        
+
         if not url:
             logger.warning("SQLmap called without URL parameter")
             return {
                 "error": "URL parameter is required",
                 "success": False
             }
-        
+
         command = f"sqlmap -u '{url}'"
-        
+
         if data:
             command += f" --data '{data}'"
-        
+
         # Add common safe arguments
         command += " --batch --threads=5 --random-agent"
-        
+
         if additional_args:
             command += f" {additional_args}"
-        
+
         result = execute_command(command)
         return result
     except Exception as e:
@@ -277,23 +277,23 @@ def run_metasploit(params: Dict[str, Any]) -> Dict[str, Any]:
     try:
         module = params.get("module", "")
         options = params.get("options", {})
-        
+
         if not module:
             logger.warning("Metasploit called without module parameter")
             return {
                 "error": "Module parameter is required",
                 "success": False
             }
-        
+
         # Build msfconsole command
         command = f"msfconsole -x 'use {module};"
-        
+
         # Add options
         for key, value in options.items():
             command += f" set {key} {value};"
-        
+
         command += " run; exit'"
-        
+
         result = execute_command(command)
         return result
     except Exception as e:
@@ -315,16 +315,16 @@ def run_hydra(params: Dict[str, Any]) -> Dict[str, Any]:
         password = params.get("password", "")
         password_file = params.get("password_file", "")
         additional_args = params.get("additional_args", "")
-        
+
         if not target or not service:
             logger.warning("Hydra called without target or service parameter")
             return {
                 "error": "Target and service parameters are required",
                 "success": False
             }
-        
+
         command = f"hydra"
-        
+
         # Add username options
         if username:
             command += f" -l {username}"
@@ -332,7 +332,7 @@ def run_hydra(params: Dict[str, Any]) -> Dict[str, Any]:
             command += f" -L {username_file}"
         else:
             command += " -l admin"  # Default username
-        
+
         # Add password options
         if password:
             command += f" -p {password}"
@@ -340,12 +340,12 @@ def run_hydra(params: Dict[str, Any]) -> Dict[str, Any]:
             command += f" -P {password_file}"
         else:
             command += " -P /usr/share/wordlists/rockyou.txt"  # Default wordlist
-        
+
         if additional_args:
             command += f" {additional_args}"
-        
+
         command += f" {target} {service}"
-        
+
         result = execute_command(command)
         return result
     except Exception as e:
@@ -364,25 +364,25 @@ def run_john(params: Dict[str, Any]) -> Dict[str, Any]:
         wordlist = params.get("wordlist", "")
         format_type = params.get("format_type", "")
         additional_args = params.get("additional_args", "")
-        
+
         if not hash_file:
             logger.warning("John called without hash_file parameter")
             return {
                 "error": "Hash file parameter is required",
                 "success": False
             }
-        
+
         command = f"john {hash_file}"
-        
+
         if wordlist:
             command += f" --wordlist={wordlist}"
-        
+
         if format_type:
             command += f" --format={format_type}"
-        
+
         if additional_args:
             command += f" {additional_args}"
-        
+
         result = execute_command(command)
         return result
     except Exception as e:
@@ -399,22 +399,22 @@ def run_wpscan(params: Dict[str, Any]) -> Dict[str, Any]:
     try:
         url = params.get("url", "")
         additional_args = params.get("additional_args", "")
-        
+
         if not url:
             logger.warning("WPScan called without URL parameter")
             return {
                 "error": "URL parameter is required",
                 "success": False
             }
-        
+
         command = f"wpscan --url {url}"
-        
+
         # Add common safe arguments
         command += " --random-user-agent --disable-tls-checks"
-        
+
         if additional_args:
             command += f" {additional_args}"
-        
+
         result = execute_command(command)
         return result
     except Exception as e:
@@ -431,16 +431,16 @@ def run_enum4linux(params: Dict[str, Any]) -> Dict[str, Any]:
     try:
         target = params.get("target", "")
         additional_args = params.get("additional_args", "-a")
-        
+
         if not target:
             logger.warning("Enum4linux called without target parameter")
             return {
                 "error": "Target parameter is required",
                 "success": False
             }
-        
+
         command = f"enum4linux {additional_args} {target}"
-        
+
         result = execute_command(command)
         return result
     except Exception as e:
@@ -453,28 +453,28 @@ def run_enum4linux(params: Dict[str, Any]) -> Dict[str, Any]:
 
 def run_403bypasser(params: Dict[str, Any]) -> Dict[str, Any]:
     """Execute 403bypasser by calling the Python script directly.
-    
-    CRITICAL FIX: The /usr/local/bin/403bypasser wrapper script contains 
-    'cd /opt/403bypasser' which changes to a root-owned directory before 
-    running the tool. This causes permission errors. We bypass the wrapper 
+
+    CRITICAL FIX: The /usr/local/bin/403bypasser wrapper script contains
+    'cd /opt/403bypasser' which changes to a root-owned directory before
+    running the tool. This causes permission errors. We bypass the wrapper
     and call the Python script directly with our controlled working directory.
     """
     import tempfile
     import os
     import subprocess
-    
+
     try:
         url = params.get("url", "")
         urllist = params.get("urllist", "")
         directory = params.get("directory", "")
         dirlist = params.get("dirlist", "")
         additional_args = params.get("additional_args", "")
-        
+
         # Create temp files and working directory
         temp_url_file = None
         temp_dir_file = None
         work_dir = tempfile.mkdtemp(prefix='403bypasser_')
-        
+
         try:
             # Handle URL input
             if url:
@@ -486,7 +486,7 @@ def run_403bypasser(params: Dict[str, Any]) -> Dict[str, Any]:
                 url_param = ["-U", urllist]
             else:
                 return {"error": "Either url or urllist parameter is required", "success": False}
-            
+
             # Handle directory input
             if directory:
                 temp_dir_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', dir=work_dir)
@@ -500,14 +500,14 @@ def run_403bypasser(params: Dict[str, Any]) -> Dict[str, Any]:
                 temp_dir_file.write("/admin\n")
                 temp_dir_file.close()
                 dir_param = ["-D", temp_dir_file.name]
-            
+
             # Call Python script DIRECTLY, not the wrapper!
             cmd = ["python3", "/opt/403bypasser/403bypasser.py"] + url_param + dir_param
             if additional_args:
                 cmd.extend(additional_args.split())
-            
+
             logger.info(f"Executing 403bypasser directly in {work_dir}")
-            
+
             # Execute with explicit cwd - this works now that we're not using the wrapper!
             process = subprocess.Popen(
                 cmd,
@@ -516,10 +516,10 @@ def run_403bypasser(params: Dict[str, Any]) -> Dict[str, Any]:
                 stderr=subprocess.PIPE,
                 text=True
             )
-            
+
             stdout, stderr = process.communicate(timeout=2000)
             return_code = process.returncode
-            
+
             # Build result
             result = {
                 "stdout": stdout,
@@ -529,7 +529,7 @@ def run_403bypasser(params: Dict[str, Any]) -> Dict[str, Any]:
                 "timed_out": False,
                 "partial_results": False
             }
-            
+
             # Read output files
             output_files = []
             if os.path.exists(work_dir):
@@ -540,7 +540,7 @@ def run_403bypasser(params: Dict[str, Any]) -> Dict[str, Any]:
                             continue
                         if temp_dir_file and filename == os.path.basename(temp_dir_file.name):
                             continue
-                        
+
                         filepath = os.path.join(work_dir, filename)
                         try:
                             with open(filepath, 'r') as f:
@@ -549,17 +549,17 @@ def run_403bypasser(params: Dict[str, Any]) -> Dict[str, Any]:
                                 logger.info(f"Captured output file: {filename}")
                         except Exception as read_error:
                             logger.warning(f"Could not read output file {filename}: {read_error}")
-                
+
                 if output_files:
                     result['output_files'] = output_files
                     result['message'] = f"403bypasser completed. Created {len(output_files)} output file(s)."
-            
+
             return result
-            
+
         except subprocess.TimeoutExpired:
             logger.error("403bypasser timed out after 2000 seconds")
             return {"error": "Command timed out", "success": False, "timed_out": True}
-        
+
         finally:
             # Clean up
             import shutil
@@ -568,7 +568,7 @@ def run_403bypasser(params: Dict[str, Any]) -> Dict[str, Any]:
                     shutil.rmtree(work_dir)
             except Exception as cleanup_error:
                 logger.warning(f"Failed to clean up work directory: {cleanup_error}")
-                    
+
     except Exception as e:
         logger.error(f"Error in 403bypasser: {str(e)}")
         logger.error(traceback.format_exc())
@@ -609,14 +609,14 @@ def run_subfinder(params: Dict[str, Any]) -> Dict[str, Any]:
     """Execute Subfinder for subdomain enumeration."""
     target = params.get('target')
     additional_args = params.get('additional_args', '')
-    
+
     if not target:
         return {'success': False, 'error': 'target parameter is required'}
-    
+
     command = f"subfinder -d {target} -silent"
     if additional_args:
         command += f" {additional_args}"
-    
+
     return execute_command(command, timeout=300)
 
 def run_httpx(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -647,14 +647,14 @@ def run_searchsploit(params: Dict[str, Any]) -> Dict[str, Any]:
     """Execute searchsploit for exploit database search."""
     query = params.get('query')
     additional_args = params.get('additional_args', '')
-    
+
     if not query:
         return {'success': False, 'error': 'query parameter is required'}
-    
+
     command = f"searchsploit {query}"
     if additional_args:
         command += f" {additional_args}"
-    
+
     return execute_command(command, timeout=60)
 
 def run_nuclei(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -699,21 +699,21 @@ def run_arjun(params: Dict[str, Any]) -> Dict[str, Any]:
     method = params.get('method', 'GET')
     wordlist = params.get('wordlist', '')
     additional_args = params.get('additional_args', '')
-    
+
     if not url:
         return {'success': False, 'error': 'url parameter is required'}
-    
+
     command = f"arjun -u {url}"
-    
+
     if method:
         command += f" -m {method}"
-    
+
     if wordlist:
         command += f" -w {wordlist}"
-    
+
     if additional_args:
         command += f" {additional_args}"
-    
+
     return execute_command(command, timeout=300)
 
 def run_subzy(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -721,13 +721,13 @@ def run_subzy(params: Dict[str, Any]) -> Dict[str, Any]:
     target = params.get('target')
     targets_file = params.get('targets_file')
     additional_args = params.get('additional_args', '')
-    
+
     if not target and not targets_file:
         return {'success': False, 'error': 'Either target or targets_file parameter is required'}
-    
+
     # Subzy is in ~/go/bin
     subzy_path = "/home/kali/go/bin/subzy"
-    
+
     if target:
         # Create temp file with target
         import tempfile
@@ -737,12 +737,12 @@ def run_subzy(params: Dict[str, Any]) -> Dict[str, Any]:
         command = f"{subzy_path} run --targets {temp_file}"
     else:
         command = f"{subzy_path} run --targets {targets_file}"
-    
+
     if additional_args:
         command += f" {additional_args}"
-    
+
     result = execute_command(command, timeout=300)
-    
+
     # Cleanup temp file if created
     if target:
         import os
@@ -750,7 +750,7 @@ def run_subzy(params: Dict[str, Any]) -> Dict[str, Any]:
             os.unlink(temp_file)
         except:
             pass
-    
+
     return result
 
 def run_assetfinder(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -758,31 +758,31 @@ def run_assetfinder(params: Dict[str, Any]) -> Dict[str, Any]:
     domain = params.get('domain')
     subs_only = params.get('subs_only', True)
     additional_args = params.get('additional_args', '')
-    
+
     if not domain:
         return {'success': False, 'error': 'domain parameter is required'}
-    
+
     # Use system assetfinder (installed via apt)
     command = "assetfinder"
-    
+
     if subs_only:
         command += " --subs-only"
-    
+
     command += f" {domain}"
-    
+
     if additional_args:
         command += f" {additional_args}"
-    
+
     return execute_command(command, timeout=120)
 
 def run_waybackurls(params: Dict[str, Any]) -> Dict[str, Any]:
     """Execute waybackurls to fetch URLs from Wayback Machine."""
     domain = params.get('domain')
     additional_args = params.get('additional_args', '')
-    
+
     if not domain:
         return {'success': False, 'error': 'domain parameter is required'}
-    
+
     # Use the waybackurls from go/bin
     waybackurls_path = "/home/kali/go/bin/waybackurls"
 
@@ -798,13 +798,188 @@ def run_shodan(params: Dict[str, Any]) -> Dict[str, Any]:
     operation = params.get('operation', 'search')  # search, host, scan
     query = params.get('query', '')
     additional_args = params.get('additional_args', '')
-    
+
     if not query:
         return {'success': False, 'error': 'query parameter is required'}
-    
+
     command = f"shodan {operation} {query}"
-    
+
     if additional_args:
         command += f" {additional_args}"
-    
+
     return execute_command(command, timeout=120)
+
+
+def run_masscan(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute masscan for fast port scanning."""
+    target = params.get('target', '')
+    ports = params.get('ports', '1-65535')
+    rate = params.get('rate', 1000)
+    additional_args = params.get('additional_args', '')
+
+    if not target:
+        return {'success': False, 'error': 'target parameter is required'}
+
+    masscan_bin = shutil.which('masscan') or 'masscan'
+    argv = [masscan_bin, target, '-p', str(ports), '--rate', str(rate)]
+
+    if additional_args:
+        argv += shlex.split(additional_args)
+
+    return execute_command_argv(argv, timeout=600)
+
+
+def run_katana(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute katana web crawler for endpoint discovery."""
+    url = params.get('url', '')
+    depth = params.get('depth', 3)
+    js_crawl = params.get('js_crawl', True)
+    scope = params.get('scope', '')
+    additional_args = params.get('additional_args', '')
+
+    if not url:
+        return {'success': False, 'error': 'url parameter is required'}
+
+    katana_bin = _which_or_go('katana')
+    if not os.path.exists(katana_bin):
+        return {'success': False, 'error': 'katana binary not found in PATH or ~/go/bin'}
+
+    argv = [katana_bin, '-u', url, '-d', str(depth), '-silent', '-no-color']
+
+    if js_crawl:
+        argv.append('-jc')
+    if scope:
+        argv += ['-fs', scope]
+    if additional_args:
+        argv += shlex.split(additional_args)
+
+    return execute_command_argv(argv, timeout=600)
+
+
+def run_sslscan(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute sslscan to analyze SSL/TLS configuration."""
+    target = params.get('target', '')
+    port = params.get('port', 443)
+    additional_args = params.get('additional_args', '')
+
+    if not target:
+        return {'success': False, 'error': 'target parameter is required'}
+
+    sslscan_bin = shutil.which('sslscan') or 'sslscan'
+    argv = [sslscan_bin, '--no-colour']
+
+    if additional_args:
+        argv += shlex.split(additional_args)
+
+    host_target = f"{target}:{port}" if port != 443 else target
+    argv.append(host_target)
+
+    return execute_command_argv(argv, timeout=120)
+
+
+def run_crtsh(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Query crt.sh certificate transparency logs for subdomains."""
+    import json as json_lib
+    import urllib.request
+    import urllib.parse
+    import ssl
+
+    domain = params.get('domain', '')
+    include_expired = params.get('include_expired', False)
+
+    if not domain:
+        return {'success': False, 'error': 'domain parameter is required'}
+
+    try:
+        query = urllib.parse.quote(f"%.{domain}", safe='')
+        url = f"https://crt.sh/?q={query}&output=json"
+        ctx = ssl.create_default_context()
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
+            data = json_lib.loads(resp.read().decode())
+
+        results = []
+        seen = set()
+        for entry in data:
+            name = entry.get('name_value', '').strip().lower()
+            if not name or name in seen:
+                continue
+            if not include_expired:
+                not_after = entry.get('not_after', '')
+                if not_after:
+                    from datetime import datetime
+                    try:
+                        exp = datetime.strptime(not_after, "%Y-%m-%dT%H:%M:%S")
+                        if exp < datetime.utcnow():
+                            continue
+                    except ValueError:
+                        pass
+            seen.add(name)
+            results.append(name)
+
+        return {
+            'success': True,
+            'domain': domain,
+            'total_certificates': len(data),
+            'unique_subdomains': len(results),
+            'subdomains': sorted(results),
+        }
+    except Exception as e:
+        logger.error(f"Error in crtsh: {str(e)}")
+        return {'success': False, 'error': f"crt.sh query failed: {str(e)}"}
+
+
+def run_gowitness(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute gowitness for web screenshot capture."""
+    url = params.get('url', '')
+    threads = params.get('threads', 4)
+    resolution = params.get('resolution', '1280x720')
+    additional_args = params.get('additional_args', '')
+
+    if not url:
+        return {'success': False, 'error': 'url parameter is required'}
+
+    gowitness_bin = _which_or_go('gowitness')
+    if not os.path.exists(gowitness_bin):
+        return {'success': False, 'error': 'gowitness binary not found in PATH or ~/go/bin'}
+
+    argv = [gowitness_bin, 'single', url]
+
+    if resolution:
+        parts = resolution.split('x')
+        if len(parts) == 2:
+            argv += ['--resolution-x', parts[0], '--resolution-y', parts[1]]
+
+    if threads != 4:
+        argv += ['--threads', str(threads)]
+
+    if additional_args:
+        argv += shlex.split(additional_args)
+
+    return execute_command_argv(argv, timeout=120)
+
+
+def run_amass(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute amass for subdomain enumeration."""
+    domain = params.get('domain', '')
+    mode = params.get('mode', 'passive')
+    additional_args = params.get('additional_args', '')
+
+    if not domain:
+        return {'success': False, 'error': 'domain parameter is required'}
+
+    amass_bin = _which_or_go('amass')
+    if not os.path.exists(amass_bin):
+        return {'success': False, 'error': 'amass binary not found in PATH or ~/go/bin'}
+
+    argv = [amass_bin, 'enum', '-d', domain]
+
+    if mode == 'passive':
+        argv.append('-passive')
+    elif mode == 'active':
+        argv.append('-active')
+
+    if additional_args:
+        argv += shlex.split(additional_args)
+
+    return execute_command_argv(argv, timeout=1800)

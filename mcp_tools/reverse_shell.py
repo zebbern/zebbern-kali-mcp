@@ -8,7 +8,10 @@ def register(mcp: FastMCP, kali_client) -> None:
     """Register all reverse shell tools (consolidated from revshell_* and reverse_shell_*)."""
 
     @mcp.tool()
-    def reverse_shell_listener_start(port: int = 4444, session_id: str = "", listener_type: str = "netcat") -> Dict[str, Any]:
+    def reverse_shell_listener_start(
+        port: int = 4444, session_id: str = "",
+        listener_type: str = "netcat", auto_upgrade: bool = False,
+    ) -> Dict[str, Any]:
         """
         Start a reverse shell listener on the specified port.
 
@@ -16,6 +19,7 @@ def register(mcp: FastMCP, kali_client) -> None:
             port: Port to listen on (default: 4444)
             session_id: Optional session identifier (auto-generated as shell_{port} if empty)
             listener_type: Type of listener - 'netcat' or 'pwncat' (default: netcat)
+            auto_upgrade: Automatically attempt TTY upgrade on connection (default: False)
 
         Returns:
             Session ID and listener status
@@ -24,6 +28,7 @@ def register(mcp: FastMCP, kali_client) -> None:
             "port": port,
             "session_id": session_id or f"shell_{port}",
             "listener_type": listener_type,
+            "auto_upgrade": auto_upgrade,
         }
         return kali_client.safe_post("api/reverse-shell/listener/start", data)
 

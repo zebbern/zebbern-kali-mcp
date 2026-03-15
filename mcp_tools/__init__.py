@@ -1,4 +1,9 @@
-"""\nMCP Tools Package \u2014 Modular tool registrations for the Kali MCP server.\n\nEach module exposes a `register(mcp, kali_client)` function that registers\nits tools on the given FastMCP instance using the KaliToolsClient for API calls.\n"""
+"""
+MCP Tools Package — Modular tool registrations for the Kali MCP server.
+
+Each module exposes a `register(mcp, kali_client)` function that registers
+its tools on the given FastMCP instance using the KaliToolsClient for API calls.
+"""
 
 from mcp.server.fastmcp import FastMCP
 from ._client import KaliToolsClient
@@ -14,6 +19,7 @@ from . import (
     kali_tools,
     metasploit,
     network_pivot,
+    output_parser,
     payload_generator,
     reverse_shell,
     session_manager,
@@ -39,6 +45,7 @@ _MODULES = [
     api_security,
     ad_tools,
     network_pivot,
+    output_parser,
 ]
 
 

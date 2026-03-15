@@ -9,14 +9,14 @@ def register(mcp: FastMCP, kali_client) -> None:
 
     @mcp.tool()
     def ssh_session_start(
-        host: str, username: str = "root", password: str = "",
+        target: str, username: str = "root", password: str = "",
         key_file: str = "", port: int = 22, session_id: str = "",
     ) -> Dict[str, Any]:
         """
         Start a persistent SSH session to a target host.
 
         Args:
-            host: Target hostname or IP
+            target: Target hostname or IP
             username: SSH username (default: root)
             password: SSH password (if using password auth)
             key_file: Path to SSH private key file (if using key auth)
@@ -27,7 +27,7 @@ def register(mcp: FastMCP, kali_client) -> None:
             Session ID and connection status
         """
         data = {
-            "host": host, "username": username, "password": password,
+            "target": target, "username": username, "password": password,
             "key_file": key_file, "port": port, "session_id": session_id,
         }
         return kali_client.safe_post("api/ssh/session/start", data)
@@ -107,16 +107,16 @@ def register(mcp: FastMCP, kali_client) -> None:
         return kali_client.safe_post("api/ssh/session/download-content", data)
 
     @mcp.tool()
-    def ssh_estimate_transfer(file_size_mb: float, bandwidth_mbps: float = 10.0) -> Dict[str, Any]:
+    def ssh_estimate_transfer(file_size_bytes: int, operation: str = "upload") -> Dict[str, Any]:
         """
         Estimate file transfer time over SSH.
 
         Args:
-            file_size_mb: File size in megabytes
-            bandwidth_mbps: Estimated bandwidth in Mbps (default: 10.0)
+            file_size_bytes: File size in bytes
+            operation: Transfer operation type (upload, download)
 
         Returns:
             Estimated transfer time and recommendations
         """
-        data = {"file_size_mb": file_size_mb, "bandwidth_mbps": bandwidth_mbps}
-        return kali_client.safe_post("api/ssh/estimate-transfer", data)
+        data = {"file_size_bytes": file_size_bytes, "operation": operation}
+        return kali_client.safe_post("api/ssh/estimate_transfer", data)

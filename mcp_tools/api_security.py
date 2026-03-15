@@ -128,19 +128,6 @@ def register(mcp: FastMCP, kali_client) -> None:
         return kali_client.safe_post("api/api-security/ffuf", data)
 
     @mcp.tool()
-    def api_arjun_discover(url: str, method: str = "GET", headers: str = "") -> Dict[str, Any]:
-        """
-        Discover hidden HTTP parameters using Arjun.
-
-        Args:
-            url: Target URL
-            method: HTTP method (GET, POST, JSON)
-            headers: Custom headers
-        """
-        data = {"url": url, "method": method, "headers": headers}
-        return kali_client.safe_post("api/api-security/arjun", data)
-
-    @mcp.tool()
     def api_kiterunner_scan(url: str, wordlist: str = "") -> Dict[str, Any]:
         """
         Scan API endpoints using Kiterunner for route discovery.
@@ -176,7 +163,7 @@ def register(mcp: FastMCP, kali_client) -> None:
             severity: Filter by severity (critical, high, medium, low)
         """
         data = {"url": url, "tags": tags, "severity": severity}
-        return kali_client.safe_post("api/api-security/nuclei", data)
+        return kali_client.heavy_tool_post("api/api-security/nuclei", data)
 
     @mcp.tool()
     def api_newman_run(collection: str, environment: str = "") -> Dict[str, Any]:

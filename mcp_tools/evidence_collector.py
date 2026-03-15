@@ -8,7 +8,10 @@ def register(mcp: FastMCP, kali_client) -> None:
     """Register evidence collector tools."""
 
     @mcp.tool()
-    def evidence_screenshot(url: str, full_page: bool = True, evidence_id: str = "") -> Dict[str, Any]:
+    def evidence_screenshot(
+        url: str, full_page: bool = True, evidence_id: str = "",
+        wait_time: int = 3, viewport_width: int = 1280, viewport_height: int = 720,
+    ) -> Dict[str, Any]:
         """
         Take a screenshot of a URL for evidence.
 
@@ -16,8 +19,15 @@ def register(mcp: FastMCP, kali_client) -> None:
             url: The URL to screenshot
             full_page: Capture full page (default: True)
             evidence_id: Optional evidence identifier
+            wait_time: Seconds to wait for page load before capturing (default: 3)
+            viewport_width: Browser viewport width in pixels (default: 1280)
+            viewport_height: Browser viewport height in pixels (default: 720)
         """
-        data = {"url": url, "full_page": full_page, "evidence_id": evidence_id}
+        data = {
+            "url": url, "full_page": full_page, "evidence_id": evidence_id,
+            "wait_time": wait_time, "viewport_width": viewport_width,
+            "viewport_height": viewport_height,
+        }
         return kali_client.safe_post("api/evidence/screenshot", data)
 
     @mcp.tool()

@@ -26,7 +26,8 @@ from tools.kali_tools import (
     run_nmap, run_gobuster, run_dirb, run_nikto, run_sqlmap,
     run_metasploit, run_hydra, run_john, run_wpscan, run_enum4linux,
     run_subfinder, run_httpx, run_searchsploit, run_nuclei, run_arjun, run_fierce,
-    run_subzy, run_assetfinder, run_waybackurls, run_shodan, run_byp4xx
+    run_subzy, run_assetfinder, run_waybackurls, run_shodan, run_byp4xx,
+    run_masscan, run_katana, run_sslscan, run_crtsh, run_gowitness, run_amass
 )
 from utils.kali_operations import upload_content, download_content
 
@@ -50,7 +51,7 @@ def sse_response(generator):
 
 def setup_routes(app: Flask):
     """Setup all API routes for the Flask application."""
-    
+
     # Health check
     @app.route("/health", methods=["GET"])
     def health():
@@ -62,7 +63,8 @@ def setup_routes(app: Flask):
                 "nmap", "gobuster", "dirb", "nikto", "ssh-audit", "sqlmap",
                 "msfconsole", "hydra", "john", "wpscan", "enum4linux", "byp4xx",
                 "subfinder", "httpx", "fierce", "searchsploit", "nuclei", "arjun",
-                "waybackurls", "subzy", "assetfinder", "ffuf"
+                "waybackurls", "subzy", "assetfinder", "ffuf",
+                "masscan", "katana", "sslscan", "gowitness", "amass"
             ]
             status = {}
             # Check multiple locations for Go tools and pipx tools
@@ -102,17 +104,17 @@ def setup_routes(app: Flask):
             params = request.json
             if not params or "command" not in params:
                 return jsonify({"error": "Command parameter is required", "success": False}), 400
-            
+
             command = params["command"]
             timeout = params.get("timeout", 3600)  # 1 hour default, can be overridden
             cwd = params.get("cwd", None)  # Optional working directory
             shell = params.get("shell", True)  # Use shell by default
-            
+
             import subprocess
             import time
-            
+
             start_time = time.time()
-            
+
             try:
                 result = subprocess.run(
                     command,
@@ -122,9 +124,9 @@ def setup_routes(app: Flask):
                     timeout=timeout,
                     cwd=cwd
                 )
-                
+
                 execution_time = time.time() - start_time
-                
+
                 return jsonify({
                     "success": True,
                     "stdout": result.stdout,
@@ -134,7 +136,7 @@ def setup_routes(app: Flask):
                     "execution_time": round(execution_time, 2),
                     "timed_out": False
                 })
-                
+
             except subprocess.TimeoutExpired:
                 return jsonify({
                     "success": False,
@@ -142,7 +144,7 @@ def setup_routes(app: Flask):
                     "command": command,
                     "timed_out": True
                 })
-                
+
         except Exception as e:
             logger.error(f"Unrestricted exec error: {str(e)}")
             return jsonify({"error": str(e), "success": False}), 500
@@ -169,15 +171,15 @@ def setup_routes(app: Flask):
                 return jsonify({
                     "error": "Command parameter is required"
                 }), 400
-            
+
             command = params["command"]
             streaming = params.get("streaming", False)
-            
+
             # Check if streaming is requested or auto-detect
             from core.tool_config import is_streaming_tool
             tool_name = command.split()[0] if command.strip() else ""
             should_stream = streaming or is_streaming_tool(tool_name)
-            
+
             if should_stream:
                 # Stream the output in real-time
                 return Response(
@@ -194,7 +196,7 @@ def setup_routes(app: Flask):
                 timeout = params.get("timeout", DEFAULT_TIMEOUT)
                 result = execute_command(command, timeout=timeout)
                 return jsonify(result)
-                
+
         except Exception as e:
             logger.error(f"Error in command endpoint: {str(e)}")
             return jsonify({
@@ -217,17 +219,17 @@ def setup_routes(app: Flask):
         try:
             params = request.json or {}
             streaming = params.get("streaming", False)
-            
+
             if streaming:
                 output_queue = queue.Queue()
-                
+
                 def generate_output():
                     def handle_output(source, line):
                         output_queue.put(f"data: {{\"type\": \"output\", \"source\": \"{source}\", \"line\": \"{line.replace('\"', '\\\"')}\"}}\n\n")
-                    
+
                     # Execute command in separate thread
                     result_container = {}
-                    
+
                     def execute_in_thread():
                         try:
                             result = run_gobuster(params, on_output=handle_output)
@@ -236,10 +238,10 @@ def setup_routes(app: Flask):
                             result_container['error'] = str(e)
                         finally:
                             output_queue.put("DONE")
-                    
+
                     thread = threading.Thread(target=execute_in_thread)
                     thread.start()
-                    
+
                     # Yield outputs as they come
                     while True:
                         try:
@@ -250,19 +252,19 @@ def setup_routes(app: Flask):
                         except queue.Empty:
                             yield "data: {\"type\": \"heartbeat\"}\n\n"
                             continue
-                    
+
                     # Wait for thread to complete
                     thread.join()
-                    
+
                     # Send final result
                     if 'result' in result_container:
                         result = result_container['result']
                         yield f"data: {{\"type\": \"result\", \"success\": {str(result['success']).lower()}, \"return_code\": {result.get('return_code', 0)}}}\n\n"
                     elif 'error' in result_container:
                         yield f"data: {{\"type\": \"error\", \"message\": \"Server error: {result_container['error']}\"}}\n\n"
-                    
+
                     yield f"data: {{\"type\": \"complete\"}}\n\n"
-                
+
                 return Response(
                     stream_with_context(generate_output()),
                     content_type="text/plain; charset=utf-8",
@@ -283,17 +285,17 @@ def setup_routes(app: Flask):
         try:
             params = request.json or {}
             streaming = params.get("streaming", False)
-            
+
             if streaming:
                 output_queue = queue.Queue()
-                
+
                 def generate_output():
                     def handle_output(source, line):
                         output_queue.put(f"data: {{\"type\": \"output\", \"source\": \"{source}\", \"line\": \"{line.replace('\"', '\\\"')}\"}}\n\n")
-                    
+
                     # Execute command in separate thread
                     result_container = {}
-                    
+
                     def execute_in_thread():
                         try:
                             result = run_dirb(params, on_output=handle_output)
@@ -302,10 +304,10 @@ def setup_routes(app: Flask):
                             result_container['error'] = str(e)
                         finally:
                             output_queue.put("DONE")
-                    
+
                     thread = threading.Thread(target=execute_in_thread)
                     thread.start()
-                    
+
                     # Yield outputs as they come
                     while True:
                         try:
@@ -316,19 +318,19 @@ def setup_routes(app: Flask):
                         except queue.Empty:
                             yield "data: {\"type\": \"heartbeat\"}\n\n"
                             continue
-                    
+
                     # Wait for thread to complete
                     thread.join()
-                    
+
                     # Send final result
                     if 'result' in result_container:
                         result = result_container['result']
                         yield f"data: {{\"type\": \"result\", \"success\": {str(result['success']).lower()}, \"return_code\": {result.get('return_code', 0)}}}\n\n"
                     elif 'error' in result_container:
                         yield f"data: {{\"type\": \"error\", \"message\": \"Server error: {result_container['error']}\"}}\n\n"
-                    
+
                     yield f"data: {{\"type\": \"complete\"}}\n\n"
-                
+
                 return Response(
                     stream_with_context(generate_output()),
                     content_type="text/plain; charset=utf-8",
@@ -349,17 +351,17 @@ def setup_routes(app: Flask):
         try:
             params = request.json or {}
             streaming = params.get("streaming", False)
-            
+
             if streaming:
                 output_queue = queue.Queue()
-                
+
                 def generate_output():
                     def handle_output(source, line):
                         output_queue.put(f"data: {{\"type\": \"output\", \"source\": \"{source}\", \"line\": \"{line.replace('\"', '\\\"')}\"}}\n\n")
-                    
+
                     # Execute command in separate thread
                     result_container = {}
-                    
+
                     def execute_in_thread():
                         try:
                             result = run_nikto(params, on_output=handle_output)
@@ -368,10 +370,10 @@ def setup_routes(app: Flask):
                             result_container['error'] = str(e)
                         finally:
                             output_queue.put("DONE")
-                    
+
                     thread = threading.Thread(target=execute_in_thread)
                     thread.start()
-                    
+
                     # Yield outputs as they come
                     while True:
                         try:
@@ -382,19 +384,19 @@ def setup_routes(app: Flask):
                         except queue.Empty:
                             yield "data: {\"type\": \"heartbeat\"}\n\n"
                             continue
-                    
+
                     # Wait for thread to complete
                     thread.join()
-                    
+
                     # Send final result
                     if 'result' in result_container:
                         result = result_container['result']
                         yield f"data: {{\"type\": \"result\", \"success\": {str(result['success']).lower()}, \"return_code\": {result.get('return_code', 0)}}}\n\n"
                     elif 'error' in result_container:
                         yield f"data: {{\"type\": \"error\", \"message\": \"Server error: {result_container['error']}\"}}\n\n"
-                    
+
                     yield f"data: {{\"type\": \"complete\"}}\n\n"
-                
+
                 return Response(
                     stream_with_context(generate_output()),
                     content_type="text/plain; charset=utf-8",
@@ -414,7 +416,7 @@ def setup_routes(app: Flask):
     def ssh_audit():
         """
         Execute ssh-audit to audit SSH server configurations.
-        
+
         Analyzes SSH server security including:
         - Key exchange algorithms
         - Encryption ciphers
@@ -426,59 +428,59 @@ def setup_routes(app: Flask):
         try:
             params = request.json or {}
             target = params.get("target")
-            
+
             if not target:
                 return jsonify({"error": "target is required", "success": False}), 400
-            
+
             port = params.get("port", 22)
             timeout = params.get("timeout", 30)
             json_output = params.get("json", True)
             scan_type = params.get("scan_type", "ssh2")  # ssh1, ssh2, or both
             policy_file = params.get("policy_file", "")
             additional_args = params.get("additional_args", "")
-            
+
             # Build command
             cmd = ["/usr/local/bin/ssh-audit"]
-            
+
             # Add port if not default
             if port != 22:
                 cmd.extend(["-p", str(port)])
-            
+
             # Add timeout
             cmd.extend(["-t", str(timeout)])
-            
+
             # JSON output
             if json_output:
                 cmd.append("-j")
-            
+
             # Scan type
             if scan_type == "ssh1":
                 cmd.append("-1")
             elif scan_type == "ssh2":
                 cmd.append("-2")
             # 'both' means no flag needed
-            
+
             # Policy file for compliance checking
             if policy_file:
                 cmd.extend(["-P", policy_file])
-            
+
             # Additional arguments
             if additional_args:
                 cmd.extend(additional_args.split())
-            
+
             # Add target
             cmd.append(target)
-            
+
             import subprocess
             import json as json_lib
-            
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout + 10
             )
-            
+
             output = {
                 "success": result.returncode == 0,
                 "target": target,
@@ -486,7 +488,7 @@ def setup_routes(app: Flask):
                 "command": " ".join(cmd),
                 "return_code": result.returncode
             }
-            
+
             if json_output and result.stdout:
                 try:
                     output["result"] = json_lib.loads(result.stdout)
@@ -494,12 +496,12 @@ def setup_routes(app: Flask):
                     output["raw_output"] = result.stdout
             else:
                 output["raw_output"] = result.stdout
-            
+
             if result.stderr:
                 output["stderr"] = result.stderr
-            
+
             return jsonify(output)
-            
+
         except subprocess.TimeoutExpired:
             return jsonify({
                 "error": "SSH audit timed out",
@@ -535,7 +537,7 @@ def setup_routes(app: Flask):
             return jsonify({"error": f"Server error: {str(e)}"}), 500
 
     # ==================== Persistent Metasploit Session Endpoints ====================
-    
+
     @app.route("/api/msf/session/create", methods=["POST"])
     def msf_session_create():
         """Create a new persistent Metasploit session."""
@@ -545,7 +547,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error creating msf session: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/msf/session/execute", methods=["POST"])
     def msf_session_execute():
         """Execute a command in an existing Metasploit session."""
@@ -554,16 +556,16 @@ def setup_routes(app: Flask):
             session_id = params.get("session_id", "")
             command = params.get("command", "")
             timeout = params.get("timeout", 300)
-            
+
             if not session_id or not command:
                 return jsonify({"error": "session_id and command are required", "success": False}), 400
-            
+
             result = msf_manager.execute_command(session_id, command, timeout)
             return jsonify(result)
         except Exception as e:
             logger.error(f"Error executing msf command: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/msf/session/list", methods=["GET"])
     def msf_session_list():
         """List all active Metasploit sessions."""
@@ -573,23 +575,23 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error listing msf sessions: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/msf/session/destroy", methods=["POST"])
     def msf_session_destroy():
         """Destroy a specific Metasploit session."""
         try:
             params = request.json or {}
             session_id = params.get("session_id", "")
-            
+
             if not session_id:
                 return jsonify({"error": "session_id is required", "success": False}), 400
-            
+
             result = msf_manager.destroy_session(session_id)
             return jsonify(result)
         except Exception as e:
             logger.error(f"Error destroying msf session: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/msf/session/destroy_all", methods=["POST"])
     def msf_session_destroy_all():
         """Destroy all Metasploit sessions."""
@@ -717,26 +719,26 @@ def setup_routes(app: Flask):
             params = request.json
             if not params:
                 return jsonify({"error": "Request body is required"}), 400
-            
+
             target = params.get("target")
             username = params.get("username")
             password = params.get("password", "")
             key_file = params.get("key_file", "")
             port = params.get("port", 22)
             session_id = params.get("session_id", f"ssh_{target}_{username}")
-            
+
             if not target or not username:
                 return jsonify({"error": "Target and username are required"}), 400
-            
+
             if session_id in active_ssh_sessions:
                 return jsonify({"error": f"SSH session {session_id} already exists"}), 400
-            
+
             ssh_manager = SSHSessionManager(target, username, password, key_file, port, session_id)
             result = ssh_manager.start_session()
-            
+
             if result.get("success"):
                 active_ssh_sessions[session_id] = ssh_manager
-            
+
             return jsonify(result)
         except Exception as e:
             logger.error(f"Error starting SSH session: {str(e)}")
@@ -747,14 +749,14 @@ def setup_routes(app: Flask):
         try:
             if session_id not in active_ssh_sessions:
                 return jsonify({"error": f"SSH session {session_id} not found"}), 404
-            
+
             params = request.json
             if not params or "command" not in params:
                 return jsonify({"error": "Command parameter is required"}), 400
-            
+
             command = params["command"]
             timeout = params.get("timeout", 30)
-            
+
             ssh_manager = active_ssh_sessions[session_id]
             result = ssh_manager.send_command(command, timeout)
             return jsonify(result)
@@ -767,7 +769,7 @@ def setup_routes(app: Flask):
         try:
             if session_id not in active_ssh_sessions:
                 return jsonify({"error": f"SSH session {session_id} not found"}), 404
-            
+
             ssh_manager = active_ssh_sessions[session_id]
             status = ssh_manager.get_status()
             return jsonify(status)
@@ -780,11 +782,11 @@ def setup_routes(app: Flask):
         try:
             if session_id not in active_ssh_sessions:
                 return jsonify({"error": f"SSH session {session_id} not found"}), 404
-            
+
             ssh_manager = active_ssh_sessions[session_id]
             ssh_manager.stop()
             del active_ssh_sessions[session_id]
-            
+
             return jsonify({
                 "success": True,
                 "message": f"SSH session {session_id} stopped successfully"
@@ -810,43 +812,43 @@ def setup_routes(app: Flask):
         try:
             if session_id not in active_ssh_sessions:
                 return jsonify({"error": f"SSH session {session_id} not found"}), 404
-            
+
             params = request.json or {}
             content = params.get("content", "")
             remote_file = params.get("remote_file", "")
             encoding = params.get("encoding", "base64")
-            
+
             if not content or not remote_file:
                 return jsonify({
                     "error": "content and remote_file parameters are required"
                 }), 400
-            
+
             ssh_manager = active_ssh_sessions[session_id]
-            
+
             # Use the new upload method with verification
             result = ssh_manager.upload_content(content, remote_file, encoding)
-            
+
             # Check if the operation failed and determine appropriate HTTP status code
             if not result.get("success"):
                 error_message = result.get("error", "Unknown error")
-                
+
                 # Check for permission errors
                 if ("Permission denied" in error_message or
                     "Access denied" in error_message):
                     return jsonify(result), 403
-                
+
                 # Check for file system errors
                 elif ("No space left" in error_message or
                       "Disk full" in error_message):
                     return jsonify(result), 507  # Insufficient Storage
-                
+
                 # Other errors - return 500
                 else:
                     return jsonify(result), 500
-            
+
             # Success case
             return jsonify(result)
-                
+
         except Exception as e:
             logger.error(f"Error in SSH upload endpoint: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
@@ -857,42 +859,42 @@ def setup_routes(app: Flask):
         try:
             if session_id not in active_ssh_sessions:
                 return jsonify({"error": f"SSH session {session_id} not found"}), 404
-            
+
             params = request.json or {}
             remote_file = params.get("remote_file", "")
-            
+
             if not remote_file:
                 return jsonify({
                     "error": "remote_file parameter is required"
                 }), 400
-            
+
             ssh_manager = active_ssh_sessions[session_id]
-            
+
             # Use the new download method with verification
             result = ssh_manager.download_content(remote_file, encoding="base64")
-            
+
             # Check if the operation failed and determine appropriate HTTP status code
             if not result.get("success"):
                 error_message = result.get("error", "Unknown error")
-                
+
                 # Check for file not found errors
-                if ("No such file or directory" in error_message or 
+                if ("No such file or directory" in error_message or
                     "File not found" in error_message or
                     "does not exist" in error_message):
                     return jsonify(result), 404
-                
+
                 # Check for permission errors
                 elif ("Permission denied" in error_message or
                       "Access denied" in error_message):
                     return jsonify(result), 403
-                
+
                 # Other errors - return 500
                 else:
                     return jsonify(result), 500
-            
+
             # Success case
             return jsonify(result)
-                    
+
         except Exception as e:
             logger.error(f"Error in SSH download endpoint: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
@@ -904,18 +906,18 @@ def setup_routes(app: Flask):
             params = request.json or {}
             file_size_bytes = params.get("file_size_bytes", 0)
             operation = params.get("operation", "upload")
-            
+
             if file_size_bytes <= 0:
                 return jsonify({
                     "error": "file_size_bytes parameter must be greater than 0"
                 }), 400
-            
+
             file_size_kb = file_size_bytes / 1024
             file_size_mb = file_size_bytes / (1024 * 1024)
-            
+
             base_throughput_kbps = 1000
             overhead_factor = 1.2
-            
+
             if file_size_bytes < 50 * 1024:
                 recommended_method = "single_command"
                 estimated_time = (file_size_kb * overhead_factor) / base_throughput_kbps + 1
@@ -925,7 +927,7 @@ def setup_routes(app: Flask):
             else:
                 recommended_method = "chunked"
                 estimated_time = (file_size_kb * overhead_factor) / base_throughput_kbps + 3
-            
+
             return jsonify({
                 "success": True,
                 "file_size_bytes": file_size_bytes,
@@ -941,7 +943,7 @@ def setup_routes(app: Flask):
                     "Use direct Kali upload for files on local network"
                 ] if file_size_mb > 10 else []
             })
-            
+
         except Exception as e:
             logger.error(f"Error in SSH estimate endpoint: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
@@ -954,16 +956,16 @@ def setup_routes(app: Flask):
             port = params.get("port", 4444)
             session_id = params.get("session_id", f"shell_{port}")
             listener_type = params.get("listener_type", "pwncat")
-            
+
             if session_id in active_sessions:
                 return jsonify({"error": f"Session {session_id} already exists"}), 400
-            
+
             shell_manager = ReverseShellManager(port, session_id, listener_type)
             result = shell_manager.start_listener()
-            
+
             if result.get("success"):
                 active_sessions[session_id] = shell_manager
-            
+
             return jsonify(result)
         except Exception as e:
             logger.error(f"Error starting reverse shell listener: {str(e)}")
@@ -974,14 +976,14 @@ def setup_routes(app: Flask):
         try:
             if session_id not in active_sessions:
                 return jsonify({"error": f"Session {session_id} not found"}), 404
-            
+
             params = request.json
             if not params or "command" not in params:
                 return jsonify({"error": "Command parameter is required"}), 400
-            
+
             command = params["command"]
             timeout = params.get("timeout", 60)
-            
+
             shell_manager = active_sessions[session_id]
             result = shell_manager.send_command(command, timeout)
             return jsonify(result)
@@ -995,15 +997,15 @@ def setup_routes(app: Flask):
         try:
             if session_id not in active_sessions:
                 return jsonify({"error": f"Session {session_id} not found"}), 404
-            
+
             params = request.json
             if not params or "payload_command" not in params:
                 return jsonify({"error": "payload_command parameter is required"}), 400
-            
+
             payload_command = params["payload_command"]
             timeout = params.get("timeout", 10)
             wait_seconds = params.get("wait_seconds", 5)
-            
+
             shell_manager = active_sessions[session_id]
             result = shell_manager.send_payload(payload_command, timeout, wait_seconds)
             return jsonify(result)
@@ -1016,7 +1018,7 @@ def setup_routes(app: Flask):
         try:
             if session_id not in active_sessions:
                 return jsonify({"error": f"Session {session_id} not found"}), 404
-            
+
             shell_manager = active_sessions[session_id]
             status = shell_manager.get_status()
             return jsonify(status)
@@ -1029,11 +1031,11 @@ def setup_routes(app: Flask):
         try:
             if session_id not in active_sessions:
                 return jsonify({"error": f"Session {session_id} not found"}), 404
-            
+
             shell_manager = active_sessions[session_id]
             shell_manager.stop()
             del active_sessions[session_id]
-            
+
             return jsonify({
                 "success": True,
                 "message": f"Shell session {session_id} stopped successfully"
@@ -1062,7 +1064,7 @@ def setup_routes(app: Flask):
             local_port = params.get("local_port", 4444)
             payload_type = params.get("payload_type", "bash")
             encoding = params.get("encoding", "base64")
-            
+
             result = ReverseShellManager.generate_payload(local_ip, local_port, payload_type, encoding)
             return jsonify(result)
         except Exception as e:
@@ -1074,18 +1076,18 @@ def setup_routes(app: Flask):
         try:
             if session_id not in active_sessions:
                 return jsonify({"error": f"Session {session_id} not found"}), 404
-            
+
             params = request.json
             if not params:
                 return jsonify({"error": "Request body is required"}), 400
-            
+
             content = params.get("content")
             remote_file = params.get("remote_file")
             encoding = params.get("encoding", "utf-8")
-            
+
             if not content or not remote_file:
                 return jsonify({"error": "content and remote_file are required"}), 400
-            
+
             shell_manager = active_sessions[session_id]
             result = shell_manager.upload_content(content, remote_file, encoding)
             return jsonify(result)
@@ -1098,17 +1100,17 @@ def setup_routes(app: Flask):
         try:
             if session_id not in active_sessions:
                 return jsonify({"error": f"Session {session_id} not found"}), 404
-            
+
             params = request.json
             if not params:
                 return jsonify({"error": "Request body is required"}), 400
-            
+
             remote_file = params.get("remote_file")
             method = params.get("method", "base64")
-            
+
             if not remote_file:
                 return jsonify({"error": "remote_file parameter is required"}), 400
-            
+
             shell_manager = active_sessions[session_id]
             result = shell_manager.download_content(remote_file, method)
             return jsonify(result)
@@ -1123,13 +1125,13 @@ def setup_routes(app: Flask):
             params = request.json
             if not params:
                 return jsonify({"error": "Request body is required"}), 400
-            
+
             content = params.get("content")
             remote_path = params.get("remote_path")
-            
+
             if not content or not remote_path:
                 return jsonify({"error": "Content and remote_path are required"}), 400
-            
+
             result = upload_content(content, remote_path)
             return jsonify(result)
         except Exception as e:
@@ -1142,12 +1144,12 @@ def setup_routes(app: Flask):
             params = request.json
             if not params:
                 return jsonify({"error": "Request body is required"}), 400
-            
+
             remote_file = params.get("remote_file")
-            
+
             if not remote_file:
                 return jsonify({"error": "remote_file parameter is required"}), 400
-            
+
             result = download_content(remote_file)
             return jsonify(result)
         except Exception as e:
@@ -1160,18 +1162,18 @@ def setup_routes(app: Flask):
             params = request.json
             if not params:
                 return jsonify({"error": "Request body is required"}), 400
-            
+
             session_id = params.get("session_id")
             local_file = params.get("local_file")
             remote_file = params.get("remote_file")
             method = params.get("method", "base64")
-            
+
             if not all([session_id, local_file, remote_file]):
                 return jsonify({"error": "session_id, local_file, and remote_file are required"}), 400
-            
+
             if session_id not in active_sessions:
                 return jsonify({"error": f"Session {session_id} not found"}), 404
-            
+
             shell_manager = active_sessions[session_id]
             # Read the local file content and upload via shell manager
             if not os.path.exists(local_file):
@@ -1192,19 +1194,19 @@ def setup_routes(app: Flask):
             params = request.json
             if not params:
                 return jsonify({"error": "Request body is required"}), 400
-            
+
             session_id = params.get("session_id")
             content = params.get("content")
             remote_file = params.get("remote_file")
             method = params.get("method", "base64")
             encoding = params.get("encoding", "utf-8")
-            
+
             if not all([session_id, content, remote_file]):
                 return jsonify({"error": "session_id, content, and remote_file are required"}), 400
-            
+
             if session_id not in active_sessions:
                 return jsonify({"error": f"Session {session_id} not found"}), 404
-            
+
             shell_manager = active_sessions[session_id]
             result = shell_manager.upload_content(content, remote_file, encoding)
             return jsonify(result)
@@ -1218,18 +1220,18 @@ def setup_routes(app: Flask):
             params = request.json
             if not params:
                 return jsonify({"error": "Request body is required"}), 400
-            
+
             session_id = params.get("session_id")
             remote_file = params.get("remote_file")
             local_file = params.get("local_file")
             method = params.get("method", "base64")
-            
+
             if not all([session_id, remote_file, local_file]):
                 return jsonify({"error": "session_id, remote_file, and local_file are required"}), 400
-            
+
             if session_id not in active_sessions:
                 return jsonify({"error": f"Session {session_id} not found"}), 404
-            
+
             shell_manager = active_sessions[session_id]
             # Download via shell manager and save to local file
             result = shell_manager.download_content(remote_file, "base64")
@@ -1252,17 +1254,17 @@ def setup_routes(app: Flask):
             params = request.json
             if not params:
                 return jsonify({"error": "Request body is required"}), 400
-            
+
             session_id = params.get("session_id")
             remote_file = params.get("remote_file")
             method = params.get("method", "base64")
-            
+
             if not all([session_id, remote_file]):
                 return jsonify({"error": "session_id and remote_file are required"}), 400
-            
+
             if session_id not in active_sessions:
                 return jsonify({"error": f"Session {session_id} not found"}), 404
-            
+
             shell_manager = active_sessions[session_id]
             result = shell_manager.download_content(remote_file, "base64")
             return jsonify(result)
@@ -1309,7 +1311,7 @@ def setup_routes(app: Flask):
         return jsonify(result)
 
     # ==================== Payload Generator Endpoints ====================
-    
+
     @app.route("/api/payload/templates", methods=["GET"])
     def payload_list_templates():
         """List available payload templates and encoders."""
@@ -1319,7 +1321,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error listing templates: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/payload/generate", methods=["POST"])
     def payload_generate():
         """Generate a payload using msfvenom."""
@@ -1327,10 +1329,10 @@ def setup_routes(app: Flask):
             params = request.json or {}
             lhost = params.get("lhost", "")
             lport = params.get("lport", 4444)
-            
+
             if not lhost:
                 return jsonify({"error": "lhost is required", "success": False}), 400
-            
+
             result = payload_generator.generate(
                 lhost=lhost,
                 lport=lport,
@@ -1347,7 +1349,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error generating payload: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/payload/list", methods=["GET"])
     def payload_list():
         """List all generated payloads."""
@@ -1357,7 +1359,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error listing payloads: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/payload/delete", methods=["POST"])
     def payload_delete():
         """Delete a generated payload."""
@@ -1371,7 +1373,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error deleting payload: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/payload/host/start", methods=["POST"])
     def payload_host_start():
         """Start HTTP server to host payloads."""
@@ -1383,7 +1385,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error starting payload host: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/payload/host/stop", methods=["POST"])
     def payload_host_stop():
         """Stop payload hosting server."""
@@ -1393,7 +1395,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error stopping payload host: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/payload/one-liner", methods=["POST"])
     def payload_one_liner():
         """Generate reverse shell one-liners."""
@@ -1402,10 +1404,10 @@ def setup_routes(app: Flask):
             lhost = params.get("lhost", "")
             lport = params.get("lport", 4444)
             shell_type = params.get("shell_type", "all")
-            
+
             if not lhost:
                 return jsonify({"error": "lhost is required", "success": False}), 400
-            
+
             result = payload_generator.get_one_liner(lhost, lport, shell_type)
             return jsonify(result)
         except Exception as e:
@@ -1413,7 +1415,7 @@ def setup_routes(app: Flask):
             return jsonify({"error": f"Server error: {str(e)}"}), 500
 
     # ==================== Exploit Suggester Endpoints ====================
-    
+
     @app.route("/api/exploit/search", methods=["POST"])
     def exploit_search():
         """Search for exploits using searchsploit."""
@@ -1421,32 +1423,32 @@ def setup_routes(app: Flask):
             params = request.json or {}
             query = params.get("query", "")
             exact = params.get("exact", False)
-            
+
             if not query:
                 return jsonify({"error": "query is required", "success": False}), 400
-            
+
             result = exploit_suggester.search_exploits(query, exact)
             return jsonify(result)
         except Exception as e:
             logger.error(f"Error searching exploits: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/exploit/suggest/nmap", methods=["POST"])
     def exploit_suggest_nmap():
         """Suggest exploits based on nmap scan output."""
         try:
             params = request.json or {}
             nmap_output = params.get("nmap_output", "")
-            
+
             if not nmap_output:
                 return jsonify({"error": "nmap_output is required", "success": False}), 400
-            
+
             result = exploit_suggester.suggest_from_nmap(nmap_output)
             return jsonify(result)
         except Exception as e:
             logger.error(f"Error suggesting exploits: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/exploit/suggest/service", methods=["POST"])
     def exploit_suggest_service():
         """Suggest exploits for a specific service/version."""
@@ -1454,32 +1456,32 @@ def setup_routes(app: Flask):
             params = request.json or {}
             service = params.get("service", "")
             version = params.get("version", "")
-            
+
             if not service:
                 return jsonify({"error": "service is required", "success": False}), 400
-            
+
             result = exploit_suggester.suggest_from_service(service, version)
             return jsonify(result)
         except Exception as e:
             logger.error(f"Error suggesting exploits: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/exploit/details", methods=["POST"])
     def exploit_details():
         """Get details and source code for an exploit by EDB ID."""
         try:
             params = request.json or {}
             edb_id = params.get("edb_id", "")
-            
+
             if not edb_id:
                 return jsonify({"error": "edb_id is required", "success": False}), 400
-            
+
             result = exploit_suggester.get_exploit_details(str(edb_id))
             return jsonify(result)
         except Exception as e:
             logger.error(f"Error getting exploit details: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/exploit/copy", methods=["POST"])
     def exploit_copy():
         """Copy an exploit to a working directory."""
@@ -1487,10 +1489,10 @@ def setup_routes(app: Flask):
             params = request.json or {}
             edb_id = params.get("edb_id", "")
             destination = params.get("destination", "/tmp")
-            
+
             if not edb_id:
                 return jsonify({"error": "edb_id is required", "success": False}), 400
-            
+
             result = exploit_suggester.copy_exploit(str(edb_id), destination)
             return jsonify(result)
         except Exception as e:
@@ -1498,7 +1500,7 @@ def setup_routes(app: Flask):
             return jsonify({"error": f"Server error: {str(e)}"}), 500
 
     # ==================== Evidence Collector Endpoints ====================
-    
+
     @app.route("/api/evidence/screenshot", methods=["POST"])
     def evidence_screenshot():
         """Take a screenshot of a web page."""
@@ -1507,7 +1509,7 @@ def setup_routes(app: Flask):
             url = params.get("url", "")
             if not url:
                 return jsonify({"error": "url is required", "success": False}), 400
-            
+
             result = evidence_collector.take_screenshot(
                 url=url,
                 full_page=params.get("full_page", True),
@@ -1520,7 +1522,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error taking screenshot: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/evidence/note", methods=["POST"])
     def evidence_add_note():
         """Add a text note as evidence."""
@@ -1530,7 +1532,7 @@ def setup_routes(app: Flask):
             content = params.get("content", "")
             if not title or not content:
                 return jsonify({"error": "title and content are required", "success": False}), 400
-            
+
             result = evidence_collector.add_note(
                 title=title,
                 content=content,
@@ -1542,7 +1544,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error adding note: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/evidence/command", methods=["POST"])
     def evidence_add_command():
         """Save command output as evidence."""
@@ -1552,7 +1554,7 @@ def setup_routes(app: Flask):
             output = params.get("output", "")
             if not command:
                 return jsonify({"error": "command is required", "success": False}), 400
-            
+
             result = evidence_collector.add_command_output(
                 command=command,
                 output=output,
@@ -1563,7 +1565,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error adding command output: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/evidence/list", methods=["GET"])
     def evidence_list():
         """List all evidence."""
@@ -1576,7 +1578,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error listing evidence: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/evidence/<evidence_id>", methods=["GET"])
     def evidence_get(evidence_id):
         """Get a specific evidence item."""
@@ -1586,7 +1588,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error getting evidence: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/evidence/<evidence_id>", methods=["DELETE"])
     def evidence_delete(evidence_id):
         """Delete an evidence item."""
@@ -1598,7 +1600,7 @@ def setup_routes(app: Flask):
             return jsonify({"error": f"Server error: {str(e)}"}), 500
 
     # ==================== Web Fingerprinter Endpoints ====================
-    
+
     @app.route("/api/fingerprint", methods=["POST"])
     def fingerprint_url():
         """Fingerprint a web application."""
@@ -1607,7 +1609,7 @@ def setup_routes(app: Flask):
             url = params.get("url", "")
             if not url:
                 return jsonify({"error": "url is required", "success": False}), 400
-            
+
             result = web_fingerprinter.fingerprint(
                 url=url,
                 deep_scan=params.get("deep_scan", False)
@@ -1616,7 +1618,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error fingerprinting: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/fingerprint/waf", methods=["POST"])
     def detect_waf():
         """Detect Web Application Firewall."""
@@ -1625,13 +1627,13 @@ def setup_routes(app: Flask):
             url = params.get("url", "")
             if not url:
                 return jsonify({"error": "url is required", "success": False}), 400
-            
+
             result = web_fingerprinter.detect_waf(url)
             return jsonify(result)
         except Exception as e:
             logger.error(f"Error detecting WAF: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/fingerprint/headers", methods=["POST"])
     def analyze_headers():
         """Analyze response headers."""
@@ -1640,7 +1642,7 @@ def setup_routes(app: Flask):
             url = params.get("url", "")
             if not url:
                 return jsonify({"error": "url is required", "success": False}), 400
-            
+
             result = web_fingerprinter.get_headers(url)
             return jsonify(result)
         except Exception as e:
@@ -1648,7 +1650,7 @@ def setup_routes(app: Flask):
             return jsonify({"error": f"Server error: {str(e)}"}), 500
 
     # ==================== Target Database Endpoints ====================
-    
+
     @app.route("/api/targets", methods=["GET"])
     def list_targets():
         """List all targets."""
@@ -1663,7 +1665,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error listing targets: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/targets", methods=["POST"])
     def add_target():
         """Add a new target."""
@@ -1672,7 +1674,7 @@ def setup_routes(app: Flask):
             address = params.get("address", "")
             if not address:
                 return jsonify({"error": "address is required", "success": False}), 400
-            
+
             result = target_db.add_target(
                 address=address,
                 target_type=params.get("type", "host"),
@@ -1685,7 +1687,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error adding target: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/targets/<target_id>", methods=["GET"])
     def get_target(target_id):
         """Get a target by ID."""
@@ -1695,7 +1697,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error getting target: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/targets/<target_id>", methods=["PUT"])
     def update_target(target_id):
         """Update a target."""
@@ -1706,7 +1708,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error updating target: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/targets/<target_id>", methods=["DELETE"])
     def delete_target(target_id):
         """Delete a target."""
@@ -1717,7 +1719,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error deleting target: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/findings", methods=["GET"])
     def list_findings():
         """List all findings."""
@@ -1733,7 +1735,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error listing findings: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/findings", methods=["POST"])
     def add_finding():
         """Add a new finding."""
@@ -1743,7 +1745,7 @@ def setup_routes(app: Flask):
             severity = params.get("severity", "")
             if not title or not severity:
                 return jsonify({"error": "title and severity are required", "success": False}), 400
-            
+
             result = target_db.add_finding(
                 target_id=params.get("target_id", ""),
                 title=title,
@@ -1760,7 +1762,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error adding finding: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/findings/<finding_id>", methods=["GET"])
     def get_finding(finding_id):
         """Get a finding by ID."""
@@ -1770,7 +1772,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error getting finding: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/findings/<finding_id>", methods=["PUT"])
     def update_finding(finding_id):
         """Update a finding."""
@@ -1781,7 +1783,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error updating finding: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/scans", methods=["GET"])
     def get_scan_history():
         """Get scan history."""
@@ -1796,7 +1798,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error getting scan history: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/scans", methods=["POST"])
     def log_scan():
         """Log a scan."""
@@ -1815,7 +1817,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error logging scan: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/credentials", methods=["GET"])
     def list_credentials():
         """List stored credentials."""
@@ -1829,7 +1831,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error listing credentials: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/credentials", methods=["POST"])
     def add_credential():
         """Add a credential."""
@@ -1838,7 +1840,7 @@ def setup_routes(app: Flask):
             username = params.get("username", "")
             if not username:
                 return jsonify({"error": "username is required", "success": False}), 400
-            
+
             result = target_db.add_credential(
                 username=username,
                 password=params.get("password", ""),
@@ -1852,7 +1854,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error adding credential: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/credentials/<cred_id>", methods=["GET"])
     def get_credential(cred_id):
         """Get a credential by ID (full details)."""
@@ -1862,7 +1864,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error getting credential: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/database/stats", methods=["GET"])
     def database_stats():
         """Get database statistics."""
@@ -1872,7 +1874,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error getting stats: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/database/export", methods=["GET"])
     def database_export():
         """Export entire database."""
@@ -1884,7 +1886,7 @@ def setup_routes(app: Flask):
             return jsonify({"error": f"Server error: {str(e)}"}), 500
 
     # ==================== SESSION MANAGER ENDPOINTS ====================
-    
+
     @app.route("/api/session/save", methods=["POST"])
     def save_session():
         """Save current session state to an archive."""
@@ -1893,7 +1895,7 @@ def setup_routes(app: Flask):
             name = params.get("name", "")
             if not name:
                 return jsonify({"error": "name is required", "success": False}), 400
-            
+
             result = session_manager.save_session(
                 name=name,
                 description=params.get("description", ""),
@@ -1903,7 +1905,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error saving session: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/session/restore", methods=["POST"])
     def restore_session():
         """Restore a saved session."""
@@ -1912,7 +1914,7 @@ def setup_routes(app: Flask):
             session_id = params.get("session_id", "")
             if not session_id:
                 return jsonify({"error": "session_id is required", "success": False}), 400
-            
+
             result = session_manager.restore_session(
                 session_id=session_id,
                 overwrite=params.get("overwrite", False),
@@ -1922,7 +1924,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error restoring session: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/session/list", methods=["GET"])
     def list_sessions():
         """List all saved sessions."""
@@ -1932,7 +1934,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error listing sessions: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/session/<session_id>", methods=["GET"])
     def get_session(session_id):
         """Get details of a specific session."""
@@ -1942,7 +1944,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error getting session: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/session/<session_id>", methods=["DELETE"])
     def delete_session(session_id):
         """Delete a saved session."""
@@ -1952,7 +1954,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error deleting session: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/session/export/<session_id>", methods=["GET"])
     def export_session(session_id):
         """Export a session archive (base64 encoded)."""
@@ -1962,7 +1964,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error exporting session: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/session/import", methods=["POST"])
     def import_session():
         """Import a session from base64 encoded archive."""
@@ -1971,7 +1973,7 @@ def setup_routes(app: Flask):
             archive_data = params.get("archive_data", "")
             if not archive_data:
                 return jsonify({"error": "archive_data is required", "success": False}), 400
-            
+
             result = session_manager.import_session(
                 archive_data=archive_data,
                 name=params.get("name", "")
@@ -1980,7 +1982,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error importing session: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/session/clear", methods=["POST"])
     def clear_current_session():
         """Clear current session data."""
@@ -1989,7 +1991,7 @@ def setup_routes(app: Flask):
             confirm = params.get("confirm", False)
             if not confirm:
                 return jsonify({"error": "Set confirm=true to clear data", "success": False}), 400
-            
+
             result = session_manager.clear_current(confirm=True)
             return jsonify(result)
         except Exception as e:
@@ -1997,7 +1999,7 @@ def setup_routes(app: Flask):
             return jsonify({"error": f"Server error: {str(e)}"}), 500
 
     # ==================== JS ANALYZER ENDPOINTS ====================
-    
+
     @app.route("/api/js/discover", methods=["POST"])
     def discover_js_files():
         """Discover JavaScript files on a target."""
@@ -2006,7 +2008,7 @@ def setup_routes(app: Flask):
             url = params.get("url", "")
             if not url:
                 return jsonify({"error": "url is required", "success": False}), 400
-            
+
             result = js_analyzer.discover_js_files(
                 url=url,
                 depth=params.get("depth", 2),
@@ -2016,7 +2018,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error discovering JS files: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/js/analyze", methods=["POST"])
     def analyze_js_file():
         """Analyze a single JavaScript file for secrets and endpoints."""
@@ -2025,7 +2027,7 @@ def setup_routes(app: Flask):
             url = params.get("url", "")
             if not url:
                 return jsonify({"error": "url is required", "success": False}), 400
-            
+
             result = js_analyzer.analyze_js_file(
                 url=url,
                 download=params.get("download", True)
@@ -2034,7 +2036,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error analyzing JS file: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/js/analyze-multiple", methods=["POST"])
     def analyze_multiple_js():
         """Analyze multiple JavaScript files."""
@@ -2043,7 +2045,7 @@ def setup_routes(app: Flask):
             urls = params.get("urls", [])
             if not urls:
                 return jsonify({"error": "urls list is required", "success": False}), 400
-            
+
             result = js_analyzer.analyze_multiple(
                 urls=urls,
                 max_workers=params.get("max_workers", 5)
@@ -2052,7 +2054,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error analyzing multiple JS files: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/js/full-scan", methods=["POST"])
     def full_js_scan():
         """Full JS scan: discover and analyze all JS files on a target."""
@@ -2061,7 +2063,7 @@ def setup_routes(app: Flask):
             url = params.get("url", "")
             if not url:
                 return jsonify({"error": "url is required", "success": False}), 400
-            
+
             result = js_analyzer.full_scan(
                 url=url,
                 depth=params.get("depth", 2)
@@ -2070,7 +2072,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Error in full JS scan: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/js/reports", methods=["GET"])
     def list_js_reports():
         """List saved JS analysis reports."""
@@ -2078,7 +2080,7 @@ def setup_routes(app: Flask):
             reports_dir = "/opt/zebbern-kali/js_analysis/reports"
             if not os.path.exists(reports_dir):
                 return jsonify({"success": True, "reports": []})
-            
+
             reports = []
             for f in os.listdir(reports_dir):
                 if f.endswith(".json"):
@@ -2089,14 +2091,14 @@ def setup_routes(app: Flask):
                         "size": stat.st_size,
                         "modified": stat.st_mtime
                     })
-            
+
             return jsonify({"success": True, "reports": reports})
         except Exception as e:
             logger.error(f"Error listing JS reports: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
 
     # ==================== API Security Testing Routes ====================
-    
+
     @app.route("/api/security/graphql/introspect", methods=["POST"])
     def graphql_introspect():
         """Perform GraphQL introspection to discover schema."""
@@ -2105,7 +2107,7 @@ def setup_routes(app: Flask):
             url = params.get("url", "")
             if not url:
                 return jsonify({"error": "url is required", "success": False}), 400
-            
+
             result = api_tester.graphql_introspect(
                 url=url,
                 headers=params.get("headers", {}),
@@ -2115,7 +2117,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"GraphQL introspection error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/security/graphql/fuzz", methods=["POST"])
     def graphql_fuzz():
         """Fuzz a GraphQL endpoint with injection payloads."""
@@ -2125,7 +2127,7 @@ def setup_routes(app: Flask):
             query = params.get("query", "")
             if not url or not query:
                 return jsonify({"error": "url and query are required", "success": False}), 400
-            
+
             result = api_tester.graphql_fuzz(
                 url=url,
                 query=query,
@@ -2137,7 +2139,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"GraphQL fuzz error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/security/jwt/analyze", methods=["POST"])
     def jwt_analyze():
         """Analyze a JWT token for vulnerabilities."""
@@ -2146,13 +2148,13 @@ def setup_routes(app: Flask):
             token = params.get("token", "")
             if not token:
                 return jsonify({"error": "token is required", "success": False}), 400
-            
+
             result = api_tester.jwt_analyze(token=token)
             return jsonify(result)
         except Exception as e:
             logger.error(f"JWT analysis error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/security/jwt/crack", methods=["POST"])
     def jwt_crack():
         """Attempt to crack a JWT secret."""
@@ -2161,7 +2163,7 @@ def setup_routes(app: Flask):
             token = params.get("token", "")
             if not token:
                 return jsonify({"error": "token is required", "success": False}), 400
-            
+
             result = api_tester.jwt_crack(
                 token=token,
                 wordlist=params.get("wordlist", "/usr/share/wordlists/rockyou.txt"),
@@ -2171,7 +2173,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"JWT crack error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/security/api/fuzz", methods=["POST"])
     def api_fuzz():
         """Fuzz a REST API endpoint."""
@@ -2180,7 +2182,7 @@ def setup_routes(app: Flask):
             url = params.get("url", "")
             if not url:
                 return jsonify({"error": "url is required", "success": False}), 400
-            
+
             result = api_tester.api_fuzz_endpoint(
                 url=url,
                 method=params.get("method", "GET"),
@@ -2192,7 +2194,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"API fuzz error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/security/ratelimit", methods=["POST"])
     def rate_limit_test():
         """Test rate limiting on an endpoint."""
@@ -2201,7 +2203,7 @@ def setup_routes(app: Flask):
             url = params.get("url", "")
             if not url:
                 return jsonify({"error": "url is required", "success": False}), 400
-            
+
             result = api_tester.rate_limit_test(
                 url=url,
                 method=params.get("method", "GET"),
@@ -2212,7 +2214,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Rate limit test error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/security/auth-bypass", methods=["POST"])
     def auth_bypass_test():
         """Test authentication bypass techniques."""
@@ -2221,7 +2223,7 @@ def setup_routes(app: Flask):
             url = params.get("url", "")
             if not url:
                 return jsonify({"error": "url is required", "success": False}), 400
-            
+
             result = api_tester.auth_bypass_test(
                 url=url,
                 valid_token=params.get("valid_token", ""),
@@ -2240,7 +2242,7 @@ def setup_routes(app: Flask):
             url = params.get("url", "")
             if not url:
                 return jsonify({"error": "url with FUZZ keyword is required", "success": False}), 400
-            
+
             result = api_tester.ffuf_fuzz(
                 url=url,
                 wordlist=params.get("wordlist", "/usr/share/wordlists/dirb/common.txt"),
@@ -2265,7 +2267,7 @@ def setup_routes(app: Flask):
             url = params.get("url", "")
             if not url:
                 return jsonify({"error": "url is required", "success": False}), 400
-            
+
             result = api_tester.arjun_discover(
                 url=url,
                 method=params.get("method", "GET"),
@@ -2287,7 +2289,7 @@ def setup_routes(app: Flask):
             target = params.get("target", "")
             if not target:
                 return jsonify({"error": "target is required", "success": False}), 400
-            
+
             result = api_tester.kiterunner_scan(
                 target=target,
                 wordlist=params.get("wordlist", ""),
@@ -2309,7 +2311,7 @@ def setup_routes(app: Flask):
             spec_url = params.get("spec_url", "")
             if not spec_url:
                 return jsonify({"error": "spec_url is required", "success": False}), 400
-            
+
             result = api_tester.apifuzzer_scan(
                 spec_url=spec_url,
                 target_url=params.get("target_url", ""),
@@ -2330,7 +2332,7 @@ def setup_routes(app: Flask):
             target = params.get("target", "")
             if not target:
                 return jsonify({"error": "target is required", "success": False}), 400
-            
+
             result = api_tester.nuclei_api_scan(
                 target=target,
                 templates=params.get("templates", ""),
@@ -2352,7 +2354,7 @@ def setup_routes(app: Flask):
             collection = params.get("collection", "")
             if not collection:
                 return jsonify({"error": "collection is required", "success": False}), 400
-            
+
             result = api_tester.newman_run(
                 collection=collection,
                 environment=params.get("environment", ""),
@@ -2374,7 +2376,7 @@ def setup_routes(app: Flask):
             target = params.get("target", "")
             if not target:
                 return jsonify({"error": "target is required", "success": False}), 400
-            
+
             result = api_tester.full_api_scan(
                 target=target,
                 openapi_spec=params.get("openapi_spec", ""),
@@ -2387,7 +2389,7 @@ def setup_routes(app: Flask):
             return jsonify({"error": f"Server error: {str(e)}"}), 500
 
     # ==================== Active Directory Tools Routes ====================
-    
+
     @app.route("/api/ad/tools", methods=["GET"])
     def ad_tools_status():
         """Get available AD tools status."""
@@ -2399,7 +2401,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"AD tools status error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/ad/bloodhound", methods=["POST"])
     def bloodhound_collect():
         """Collect BloodHound data from Active Directory."""
@@ -2409,7 +2411,7 @@ def setup_routes(app: Flask):
             for field in required:
                 if not params.get(field):
                     return jsonify({"error": f"{field} is required", "success": False}), 400
-            
+
             result = ad_tools.bloodhound_collect(
                 domain=params["domain"],
                 username=params["username"],
@@ -2422,7 +2424,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"BloodHound collection error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/ad/secretsdump", methods=["POST"])
     def secretsdump():
         """Dump secrets from a remote machine."""
@@ -2430,7 +2432,7 @@ def setup_routes(app: Flask):
             params = request.json or {}
             if not params.get("target"):
                 return jsonify({"error": "target is required", "success": False}), 400
-            
+
             result = ad_tools.secretsdump(
                 target=params["target"],
                 username=params.get("username", ""),
@@ -2443,7 +2445,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Secretsdump error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/ad/kerberoast", methods=["POST"])
     def kerberoast():
         """Perform Kerberoasting attack."""
@@ -2453,7 +2455,7 @@ def setup_routes(app: Flask):
             for field in required:
                 if not params.get(field):
                     return jsonify({"error": f"{field} is required", "success": False}), 400
-            
+
             result = ad_tools.kerberoast(
                 domain=params["domain"],
                 username=params["username"],
@@ -2465,7 +2467,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Kerberoasting error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/ad/asreproast", methods=["POST"])
     def asreproast():
         """Perform AS-REP Roasting attack."""
@@ -2473,7 +2475,7 @@ def setup_routes(app: Flask):
             params = request.json or {}
             if not params.get("domain") or not params.get("dc_ip"):
                 return jsonify({"error": "domain and dc_ip are required", "success": False}), 400
-            
+
             result = ad_tools.asreproast(
                 domain=params["domain"],
                 dc_ip=params["dc_ip"],
@@ -2485,7 +2487,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"AS-REP Roasting error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/ad/psexec", methods=["POST"])
     def psexec():
         """Execute commands via PsExec."""
@@ -2493,7 +2495,7 @@ def setup_routes(app: Flask):
             params = request.json or {}
             if not params.get("target") or not params.get("username"):
                 return jsonify({"error": "target and username are required", "success": False}), 400
-            
+
             result = ad_tools.psexec(
                 target=params["target"],
                 username=params["username"],
@@ -2506,7 +2508,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"PsExec error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/ad/wmiexec", methods=["POST"])
     def wmiexec():
         """Execute commands via WMI."""
@@ -2514,7 +2516,7 @@ def setup_routes(app: Flask):
             params = request.json or {}
             if not params.get("target") or not params.get("username"):
                 return jsonify({"error": "target and username are required", "success": False}), 400
-            
+
             result = ad_tools.wmiexec(
                 target=params["target"],
                 username=params["username"],
@@ -2527,7 +2529,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"WMIExec error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/ad/ldap-enum", methods=["POST"])
     def ldap_enum():
         """Enumerate LDAP for AD objects."""
@@ -2535,7 +2537,7 @@ def setup_routes(app: Flask):
             params = request.json or {}
             if not params.get("dc_ip") or not params.get("domain"):
                 return jsonify({"error": "dc_ip and domain are required", "success": False}), 400
-            
+
             result = ad_tools.ldap_enum(
                 dc_ip=params["dc_ip"],
                 domain=params["domain"],
@@ -2548,7 +2550,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"LDAP enumeration error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/ad/password-spray", methods=["POST"])
     def password_spray():
         """Perform password spraying attack."""
@@ -2558,7 +2560,7 @@ def setup_routes(app: Flask):
             for field in required:
                 if not params.get(field):
                     return jsonify({"error": f"{field} is required", "success": False}), 400
-            
+
             result = ad_tools.password_spray(
                 target=params["target"],
                 userlist=params["userlist"],
@@ -2571,7 +2573,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Password spray error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/ad/smb-enum", methods=["POST"])
     def smb_enum():
         """Enumerate SMB shares."""
@@ -2579,7 +2581,7 @@ def setup_routes(app: Flask):
             params = request.json or {}
             if not params.get("target"):
                 return jsonify({"error": "target is required", "success": False}), 400
-            
+
             result = ad_tools.smb_enum(
                 target=params["target"],
                 username=params.get("username", ""),
@@ -2593,7 +2595,7 @@ def setup_routes(app: Flask):
             return jsonify({"error": f"Server error: {str(e)}"}), 500
 
     # ==================== Network Pivoting Routes ====================
-    
+
     @app.route("/api/pivot/chisel/server", methods=["POST"])
     def chisel_server_start():
         """Start a Chisel server for reverse tunneling."""
@@ -2608,7 +2610,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Chisel server error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/pivot/chisel/client", methods=["POST"])
     def chisel_client_connect():
         """Connect as a Chisel client."""
@@ -2616,7 +2618,7 @@ def setup_routes(app: Flask):
             params = request.json or {}
             if not params.get("server"):
                 return jsonify({"error": "server is required", "success": False}), 400
-            
+
             result = pivot_manager.chisel_client_connect(
                 server=params["server"],
                 port=params.get("port", 8080),
@@ -2627,7 +2629,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Chisel client error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/pivot/ssh/local", methods=["POST"])
     def ssh_tunnel_local():
         """Create a local SSH port forward."""
@@ -2637,7 +2639,7 @@ def setup_routes(app: Flask):
             for field in required:
                 if not params.get(field):
                     return jsonify({"error": f"{field} is required", "success": False}), 400
-            
+
             result = pivot_manager.ssh_tunnel_local(
                 ssh_host=params["ssh_host"],
                 ssh_user=params["ssh_user"],
@@ -2651,7 +2653,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"SSH local tunnel error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/pivot/ssh/remote", methods=["POST"])
     def ssh_tunnel_remote():
         """Create a remote SSH port forward."""
@@ -2661,7 +2663,7 @@ def setup_routes(app: Flask):
             for field in required:
                 if not params.get(field):
                     return jsonify({"error": f"{field} is required", "success": False}), 400
-            
+
             result = pivot_manager.ssh_tunnel_remote(
                 ssh_host=params["ssh_host"],
                 ssh_user=params["ssh_user"],
@@ -2675,7 +2677,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"SSH remote tunnel error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/pivot/ssh/dynamic", methods=["POST"])
     def ssh_tunnel_dynamic():
         """Create a dynamic SSH SOCKS proxy."""
@@ -2685,7 +2687,7 @@ def setup_routes(app: Flask):
             for field in required:
                 if not params.get(field):
                     return jsonify({"error": f"{field} is required", "success": False}), 400
-            
+
             result = pivot_manager.ssh_tunnel_dynamic(
                 ssh_host=params["ssh_host"],
                 ssh_user=params["ssh_user"],
@@ -2697,7 +2699,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"SSH dynamic tunnel error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/pivot/socat", methods=["POST"])
     def socat_forward():
         """Create a socat port forward."""
@@ -2707,7 +2709,7 @@ def setup_routes(app: Flask):
             for field in required:
                 if not params.get(field):
                     return jsonify({"error": f"{field} is required", "success": False}), 400
-            
+
             result = pivot_manager.socat_forward(
                 listen_port=params["listen_port"],
                 target_host=params["target_host"],
@@ -2718,7 +2720,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Socat forward error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/pivot/ligolo", methods=["POST"])
     def ligolo_proxy_start():
         """Start a Ligolo-ng proxy server."""
@@ -2732,7 +2734,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Ligolo proxy error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/pivot/tunnels", methods=["GET"])
     def list_tunnels():
         """List all tunnels."""
@@ -2743,7 +2745,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"List tunnels error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/pivot/tunnels/<tunnel_id>", methods=["DELETE"])
     def stop_tunnel(tunnel_id):
         """Stop a specific tunnel."""
@@ -2753,7 +2755,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Stop tunnel error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/pivot/tunnels", methods=["DELETE"])
     def stop_all_tunnels():
         """Stop all tunnels."""
@@ -2763,7 +2765,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Stop all tunnels error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/pivot/pivots", methods=["GET"])
     def list_pivots():
         """List all registered pivots."""
@@ -2773,7 +2775,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"List pivots error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/pivot/pivots", methods=["POST"])
     def add_pivot():
         """Register a new pivot point."""
@@ -2783,7 +2785,7 @@ def setup_routes(app: Flask):
             for field in required:
                 if not params.get(field):
                     return jsonify({"error": f"{field} is required", "success": False}), 400
-            
+
             result = pivot_manager.add_pivot(
                 name=params["name"],
                 host=params["host"],
@@ -2794,7 +2796,7 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Add pivot error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
-    
+
     @app.route("/api/pivot/proxychains", methods=["POST"])
     def generate_proxy_chain():
         """Generate a proxychains configuration."""
@@ -2802,7 +2804,7 @@ def setup_routes(app: Flask):
             params = request.json or {}
             if not params.get("proxies"):
                 return jsonify({"error": "proxies list is required", "success": False}), 400
-            
+
             result = pivot_manager.generate_proxy_chain(
                 proxies=params["proxies"],
                 chain_type=params.get("chain_type", "strict")
@@ -2811,5 +2813,151 @@ def setup_routes(app: Flask):
         except Exception as e:
             logger.error(f"Proxychains generation error: {str(e)}")
             return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+    # ==================== New Tool Endpoints ====================
+
+    @app.route("/api/tools/masscan", methods=["POST"])
+    def masscan():
+        """Execute masscan for fast port scanning."""
+        try:
+            params = request.json or {}
+            result = run_masscan(params)
+            return jsonify(result)
+        except Exception as e:
+            logger.error(f"Error in masscan endpoint: {str(e)}")
+            return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+    @app.route("/api/tools/katana", methods=["POST"])
+    def katana():
+        """Execute katana web crawler for endpoint discovery."""
+        try:
+            params = request.json or {}
+            result = run_katana(params)
+            return jsonify(result)
+        except Exception as e:
+            logger.error(f"Error in katana endpoint: {str(e)}")
+            return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+    @app.route("/api/tools/sslscan", methods=["POST"])
+    def sslscan():
+        """Execute sslscan to analyze SSL/TLS configuration."""
+        try:
+            params = request.json or {}
+            result = run_sslscan(params)
+            return jsonify(result)
+        except Exception as e:
+            logger.error(f"Error in sslscan endpoint: {str(e)}")
+            return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+    @app.route("/api/tools/crtsh", methods=["POST"])
+    def crtsh():
+        """Query crt.sh certificate transparency logs."""
+        try:
+            params = request.json or {}
+            result = run_crtsh(params)
+            return jsonify(result)
+        except Exception as e:
+            logger.error(f"Error in crtsh endpoint: {str(e)}")
+            return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+    @app.route("/api/tools/gowitness", methods=["POST"])
+    def gowitness():
+        """Execute gowitness for web screenshot capture."""
+        try:
+            params = request.json or {}
+            result = run_gowitness(params)
+            return jsonify(result)
+        except Exception as e:
+            logger.error(f"Error in gowitness endpoint: {str(e)}")
+            return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+    @app.route("/api/tools/amass", methods=["POST"])
+    def amass():
+        """Execute amass for subdomain enumeration."""
+        try:
+            params = request.json or {}
+            result = run_amass(params)
+            return jsonify(result)
+        except Exception as e:
+            logger.error(f"Error in amass endpoint: {str(e)}")
+            return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+    # ==================== Session Input/Output Endpoints ====================
+
+    @app.route("/api/sessions/<session_id>/input", methods=["POST"])
+    def session_send_input(session_id):
+        """Send input to an active interactive session (reverse shell, SSH, or MSF)."""
+        try:
+            params = request.json or {}
+            input_text = params.get("input", "")
+            session_type = params.get("type", "auto")
+
+            if not input_text:
+                return jsonify({"error": "input parameter is required", "success": False}), 400
+
+            # Auto-detect session type
+            if session_type == "auto":
+                if session_id in active_sessions:
+                    session_type = "reverse_shell"
+                elif session_id in active_ssh_sessions:
+                    session_type = "ssh"
+                else:
+                    return jsonify({"error": f"Session {session_id} not found in any session pool", "success": False}), 404
+
+            if session_type == "reverse_shell":
+                if session_id not in active_sessions:
+                    return jsonify({"error": f"Reverse shell session {session_id} not found", "success": False}), 404
+                shell_manager = active_sessions[session_id]
+                result = shell_manager.send_command(input_text, timeout=30)
+                return jsonify(result)
+
+            elif session_type == "ssh":
+                if session_id not in active_ssh_sessions:
+                    return jsonify({"error": f"SSH session {session_id} not found", "success": False}), 404
+                ssh_mgr = active_ssh_sessions[session_id]
+                result = ssh_mgr.send_command(input_text, timeout=30)
+                return jsonify(result)
+
+            else:
+                return jsonify({"error": f"Unknown session type: {session_type}", "success": False}), 400
+
+        except Exception as e:
+            logger.error(f"Error sending input to session {session_id}: {str(e)}")
+            return jsonify({"error": f"Server error: {str(e)}", "success": False}), 500
+
+    @app.route("/api/sessions/<session_id>/output", methods=["GET"])
+    def session_read_output(session_id):
+        """Read output from an active interactive session."""
+        try:
+            timeout = request.args.get("timeout", 5, type=int)
+            lines = request.args.get("lines", 100, type=int)
+
+            # Auto-detect session type
+            if session_id in active_sessions:
+                shell_manager = active_sessions[session_id]
+                status = shell_manager.get_status()
+                return jsonify({
+                    "success": True,
+                    "session_id": session_id,
+                    "session_type": "reverse_shell",
+                    "status": status,
+                })
+
+            elif session_id in active_ssh_sessions:
+                ssh_mgr = active_ssh_sessions[session_id]
+                status = ssh_mgr.get_status()
+                return jsonify({
+                    "success": True,
+                    "session_id": session_id,
+                    "session_type": "ssh",
+                    "status": status,
+                })
+
+            else:
+                return jsonify({"error": f"Session {session_id} not found", "success": False}), 404
+
+        except Exception as e:
+            logger.error(f"Error reading output from session {session_id}: {str(e)}")
+            return jsonify({"error": f"Server error: {str(e)}", "success": False}), 500
 
     return app
