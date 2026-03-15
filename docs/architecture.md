@@ -39,7 +39,7 @@ flowchart TB
 The MCP client is a Python application that implements the Model Context Protocol, allowing VS Code Copilot to invoke penetration testing tools.
 
 ```
-mcp_server.py (3,110 lines)
+mcp_server.py              # Entry point & KaliToolsClient
 ├── KaliToolsClient class
 │   ├── HTTP connection to Kali API
 │   ├── Request timeout handling
@@ -48,10 +48,13 @@ mcp_server.py (3,110 lines)
 ├── FastMCP Server initialization
 │   └── stdio transport for VS Code
 │
-└── 139 @mcp.tool() decorated functions
-    ├── Reconnaissance tools
-    ├── Web application tools
-    ├── Exploitation tools
+└── mcp_tools/             # 139 @mcp.tool() functions (16 modules)
+    ├── recon.py            # Reconnaissance tools
+    ├── web.py              # Web application tools
+    ├── api_security.py     # API testing tools
+    ├── exploitation.py     # Exploit tools
+    ├── ad.py               # Active Directory tools
+    ├── pivoting.py         # Network pivoting tools
     └── ... (see Tools Reference)
 ```
 
@@ -81,7 +84,27 @@ The Flask-based REST API server runs on Kali Linux and provides endpoints for al
 zebbern-kali/
 ├── kali_server.py          # Flask app entry point
 ├── api/
-│   └── routes.py           # 100+ API endpoints (2,816 lines)
+│   ├── routes.py           # Entry point — registers all blueprints (11 lines)
+│   └── blueprints/         # Modular route handlers
+│       ├── __init__.py     # Blueprint registration
+│       ├── _helpers.py     # Shared streaming helpers
+│       ├── health.py       # Health check
+│       ├── command.py      # Command execution
+│       ├── tools.py        # 31 tool endpoints (nmap, gobuster, etc.)
+│       ├── metasploit.py   # Metasploit session management
+│       ├── ssh.py          # SSH session management
+│       ├── reverse_shell.py # Reverse shell management
+│       ├── file_ops.py     # File upload/download
+│       ├── payload.py      # Payload generation
+│       ├── exploit.py      # Exploit suggester
+│       ├── evidence.py     # Evidence collection
+│       ├── fingerprint.py  # Web fingerprinting
+│       ├── database.py     # Target database CRUD
+│       ├── sessions.py     # Session save/restore + I/O
+│       ├── js_analyzer.py  # JavaScript analysis
+│       ├── api_security.py # API security testing
+│       ├── ad.py           # Active Directory tools
+│       └── pivot.py        # Network pivoting
 ├── core/                   # Core functionality modules
 │   ├── config.py           # Configuration & logging
 │   ├── command_executor.py # Safe command execution
@@ -304,7 +327,8 @@ zebbern-mcp/
 ├── zebbern-kali/           # API server (deployed to Kali)
 │   ├── kali_server.py      # Flask entry point
 │   ├── api/
-│   │   └── routes.py       # All API endpoints
+│   │   ├── routes.py       # Entry point (registers blueprints)
+│   │   └── blueprints/     # 17 modular route modules
 │   ├── core/               # Core modules
 │   │   ├── config.py
 │   │   ├── command_executor.py

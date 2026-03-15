@@ -36,16 +36,20 @@ pip install -e ".[dev]"
 ### Project Structure
 
 ```
-zebbern-mcp/
-├── mcp_server.py      # MCP client (Windows/Mac)
-├── kali_server.py     # Flask API server (Kali VM)
-├── routes.py          # API route handlers
-├── database/
-│   └── db.py         # Database operations
-├── docs/             # Documentation (MkDocs)
-├── install.sh        # Bash installer
-├── install.py        # Python installer
-└── tests/            # Test files
+zebbern-kali-mcp/
+├── mcp_server.py      # MCP client entry point (Windows/Mac)
+├── mcp_tools/         # MCP tool modules (16 category files)
+├── zebbern-kali/      # Flask API server (Kali VM)
+│   ├── kali_server.py # Flask entry point
+│   ├── api/
+│   │   ├── routes.py  # Entry point (registers blueprints)
+│   │   └── blueprints/# 17 modular route modules
+│   ├── core/          # Core functionality modules
+│   └── tools/         # Tool execution wrappers
+├── docs/              # Documentation (MkDocs)
+├── install.sh         # Bash installer
+├── install.py         # Python installer
+└── Dockerfile         # Container build
 ```
 
 ---
@@ -132,10 +136,17 @@ def scan_target(
 
 ### Step 1: Add API Endpoint
 
-In `routes.py`:
+Create a new blueprint file in `zebbern-kali/api/blueprints/`, or add to an existing one if the tool fits a current category:
 
 ```python
-@app.route("/api/tools/mytool", methods=["POST"])
+# zebbern-kali/api/blueprints/tools.py (or a new file)
+from flask import Blueprint, request, jsonify
+from core.config import logger
+
+bp = Blueprint("mytool", __name__)
+
+
+@bp.route("/api/tools/mytool", methods=["POST"])
 def run_mytool():
     """
     Run mytool scan.
@@ -146,31 +157,29 @@ def run_mytool():
         "options": "--verbose"
     }
     """
-    data = request.json
-    target = data.get("target")
-    options = data.get("options", "")
-    
-    if not target:
-        return jsonify({"error": "Target required"}), 400
-    
     try:
-        cmd = f"mytool {options} {shlex.quote(target)}"
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=300
-        )
-        return jsonify({
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "returncode": result.returncode
-        })
-    except subprocess.TimeoutExpired:
-        return jsonify({"error": "Command timed out"}), 504
+        data = request.json or {}
+        target = data.get("target")
+        if not target:
+            return jsonify({"error": "Target required", "success": False}), 400
+
+        from tools.kali_tools import run_mytool
+        result = run_mytool(data)
+        return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Error in mytool endpoint: {str(e)}")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+```
+
+If you created a new blueprint file, register it in `zebbern-kali/api/blueprints/__init__.py`:
+
+```python
+from .mytool import bp as mytool_bp
+
+_blueprints = [
+    # ... existing blueprints ...
+    mytool_bp,
+]
 ```
 
 ### Step 2: Add MCP Tool Function
@@ -203,12 +212,12 @@ async def tools_mytool(
 
 ### Step 3: Update Health Check
 
-Add to the `TOOLS` list in `routes.py`:
+Add to the `tools` list in `zebbern-kali/api/blueprints/health.py`:
 
 ```python
-TOOLS = [
+tools = [
     # ... existing tools ...
-    {"name": "mytool", "check": "/api/tools/mytool/version"},
+    "mytool",
 ]
 ```
 
@@ -311,28 +320,33 @@ def add_new_item(name: str, value: str) -> int:
 Follow these patterns for consistency:
 
 ```python
+# In a blueprint file (e.g., api/blueprints/resource.py)
+from flask import Blueprint, request, jsonify
+
+bp = Blueprint("resource", __name__)
+
 # List resources
-@app.route("/api/resource", methods=["GET"])
+@bp.route("/api/resource", methods=["GET"])
 def list_resources():
     ...
 
 # Get single resource
-@app.route("/api/resource/<int:resource_id>", methods=["GET"])
+@bp.route("/api/resource/<int:resource_id>", methods=["GET"])
 def get_resource(resource_id):
     ...
 
 # Create resource
-@app.route("/api/resource", methods=["POST"])
+@bp.route("/api/resource", methods=["POST"])
 def create_resource():
     ...
 
 # Update resource
-@app.route("/api/resource/<int:resource_id>", methods=["PUT"])
+@bp.route("/api/resource/<int:resource_id>", methods=["PUT"])
 def update_resource(resource_id):
     ...
 
 # Delete resource
-@app.route("/api/resource/<int:resource_id>", methods=["DELETE"])
+@bp.route("/api/resource/<int:resource_id>", methods=["DELETE"])
 def delete_resource(resource_id):
     ...
 ```
