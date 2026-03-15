@@ -102,6 +102,122 @@ Install everything from your Windows/Mac machine via SSH:
 python install.py --remote --host 192.168.1.100 --user kali --password kali
 ```
 
+## Docker Quick Start
+
+Run the entire Kali API server in a container — no manual tool installation required.
+
+### 1. Pull and Start (Recommended)
+
+A pre-built image is available on GitHub Container Registry. No build step needed:
+
+```bash
+docker compose up -d
+```
+
+This pulls `ghcr.io/zebbern/zebbern-kali-mcp:latest` and starts the Flask API server on port 5000.
+
+**Without Metasploit** (smaller image):
+
+Edit `docker-compose.yml` and change the image tag:
+
+```yaml
+image: ghcr.io/zebbern/zebbern-kali-mcp:no-metasploit
+```
+
+Then `docker compose up -d`.
+
+### 2. Build Locally (Optional)
+
+If you prefer to build from source instead of pulling the pre-built image:
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+To build without Metasploit:
+
+```bash
+docker compose build --build-arg INCLUDE_METASPLOIT=false
+docker compose up -d
+```
+
+### 3. Environment Variables
+
+Configure the container via environment variables (set in your shell or a `.env` file alongside `docker-compose.yml`):
+
+| Variable | Default | Description |
+|---|---|---|
+| `API_PORT` | `5000` | Port the Flask API listens on inside the container |
+| `DEBUG_MODE` | `0` | Set to `1` to enable Flask debug mode |
+| `BLOCKING_TIMEOUT` | `5` | Timeout in seconds for blocking operations |
+| `INCLUDE_METASPLOIT` | `true` | Set to `false` to exclude Metasploit from the image |
+
+Example `.env` file:
+
+```env
+API_PORT=5000
+DEBUG_MODE=0
+BLOCKING_TIMEOUT=10
+INCLUDE_METASPLOIT=true
+```
+
+### 4. Networking
+
+The container uses **host networking** (`network_mode: host`), meaning it shares your laptop's full network stack. This is important for penetration testing:
+
+- **Internet targets** — the container reaches anything your host can reach
+- **VPN-based CTFs** (HackTheBox, TryHackMe) — the container sees your VPN tunnel (tun0/wg0) automatically
+- **Reverse shells** — callbacks arrive at your host IP, which the container shares
+
+The Flask API listens on `127.0.0.1:5000` by default.
+
+> ⚠️ **Security Note:** The API binds to localhost only, so it is not exposed to your network. However, the container has full access to your host's network interfaces. Only run this on machines you control.
+
+### 5. Linux Capabilities
+
+The container requires `NET_RAW` and `NET_ADMIN` capabilities (already configured in `docker-compose.yml`) so that tools like nmap can send raw packets and perform network-level operations:
+
+```yaml
+cap_add:
+  - NET_RAW
+  - NET_ADMIN
+```
+
+These are scoped capabilities — they are safer than running the container with `--privileged`.
+
+### 6. Verify
+
+Once the container is running:
+
+```bash
+curl http://127.0.0.1:5000/health
+```
+
+### 7. Connect Your Agent
+
+The repo includes a `.vscode/mcp.json` that configures the MCP client automatically. Just open the project in VS Code and the agent will have access to all Kali tools.
+
+If you cloned the repo elsewhere, copy `.vscode/mcp.json` to your workspace or add this to your VS Code settings:
+
+```json
+{
+  "servers": {
+    "kali-tools": {
+      "command": "python",
+      "args": ["mcp_server.py"],
+      "cwd": "C:\\path\\to\\zebbern-kali-mcp"
+    }
+  }
+}
+```
+
+The MCP client defaults to `http://127.0.0.1:5000` (the Docker container). Override with `KALI_API_URL` env var or `--server` flag:
+
+```bash
+python mcp_server.py --server http://192.168.1.100:5000
+```
+
 ## Installation Options
 
 ### Shell Script Options
@@ -253,11 +369,10 @@ After installation, the MCP configuration will be added to your VS Code settings
 
 ## Configuration
 
-Edit `mcp_server.py` to configure the Kali server connection:
+The MCP client defaults to `http://127.0.0.1:5000`. Override with the `KALI_API_URL` environment variable or `--server` flag:
 
-```python
-DEFAULT_KALI_SERVER = "http://192.168.44.131:5000"  # Your Kali IP
-DEFAULT_REQUEST_TIMEOUT = 300  # Timeout in seconds
+```bash
+python mcp_server.py --server http://192.168.1.100:5000
 ```
 
 ## Security Warning
