@@ -165,6 +165,7 @@ cython_debug/
 !.vscode/launch.json
 !.vscode/extensions.json
 !.vscode/*.code-snippets
+!.vscode/mcp.json
 
 # Local History for Visual Studio Code
 .history/
@@ -223,8 +224,8 @@ kali-server/*.log
 PR_INSTRUCTIONS.md
 
 
-# Docker
-.dockerignore
+# AgLoop & AgLoop orchestration state
+.agloop/
 
 # Test results
 test-results/

@@ -1,5 +1,5 @@
 {
-  "include": ["*.py", "zebbern-kali/**/*.py"],
+  "include": ["*.py", "zebbern-kali/**/*.py", "mcp_tools/**/*.py"],
   "exclude": ["**/node_modules", "**/__pycache__", "**/venv", "**/.venv"],
   
   "pythonVersion": "3.11",
