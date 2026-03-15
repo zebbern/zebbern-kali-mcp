@@ -162,17 +162,18 @@ BLOCKING_TIMEOUT=10
 INCLUDE_METASPLOIT=true
 ```
 
-### 4. Networking
+### 4. Network Binding & Remote Access
 
-The container uses **host networking** (`network_mode: host`), meaning it shares your laptop's full network stack. This is important for penetration testing:
+By default, the container binds to **127.0.0.1:5000** — only accessible from the host machine. This is intentional for security.
 
-- **Internet targets** — the container reaches anything your host can reach
-- **VPN-based CTFs** (HackTheBox, TryHackMe) — the container sees your VPN tunnel (tun0/wg0) automatically
-- **Reverse shells** — callbacks arrive at your host IP, which the container shares
+To allow access from other machines on your network, change the port mapping in `docker-compose.yml`:
 
-The Flask API listens on `127.0.0.1:5000` by default.
+```yaml
+ports:
+  - "0.0.0.0:5000:5000"
+```
 
-> ⚠️ **Security Note:** The API binds to localhost only, so it is not exposed to your network. However, the container has full access to your host's network interfaces. Only run this on machines you control.
+> ⚠️ **Security Warning:** Binding to `0.0.0.0` exposes the API to your entire network. The server provides **unrestricted access to penetration testing tools**. Only do this on isolated lab networks where every host is under your control. Never expose this to the public internet.
 
 ### 5. Linux Capabilities
 
@@ -369,10 +370,11 @@ After installation, the MCP configuration will be added to your VS Code settings
 
 ## Configuration
 
-The MCP client defaults to `http://127.0.0.1:5000`. Override with the `KALI_API_URL` environment variable or `--server` flag:
+Edit `mcp_server.py` to configure the Kali server connection:
 
-```bash
-python mcp_server.py --server http://192.168.1.100:5000
+```python
+DEFAULT_KALI_SERVER = "http://192.168.44.131:5000"  # Your Kali IP
+DEFAULT_REQUEST_TIMEOUT = 300  # Timeout in seconds
 ```
 
 ## Security Warning
