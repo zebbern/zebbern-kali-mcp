@@ -19,6 +19,7 @@ venv/
 
 # Host-only MCP client (not used inside container)
 mcp_server.py
+mcp_tools/
 
 # Documentation (not needed in container image)
 docs/

@@ -26,7 +26,7 @@ class PayloadGenerator:
         result = {"success": True, "payloads": [], "encoders": []}
         msfvenom = shutil.which("msfvenom")
         if not msfvenom:
-            return {"success": False, "error": "msfvenom not found \u2014 metasploit may not be installed"}
+            return {"success": False, "error": "msfvenom not found — metasploit may not be installed"}
 
         try:
             proc = subprocess.run(
@@ -81,7 +81,7 @@ class PayloadGenerator:
         """Generate a payload using msfvenom."""
         msfvenom = shutil.which("msfvenom")
         if not msfvenom:
-            return {"success": False, "error": "msfvenom not found \u2014 metasploit may not be installed"}
+            return {"success": False, "error": "msfvenom not found — metasploit may not be installed"}
 
         payload_id = str(uuid.uuid4())[:8]
         if not output_name:
