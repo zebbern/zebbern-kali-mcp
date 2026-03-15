@@ -1,0 +1,44 @@
+# ===========================================
+# .dockerignore — Zebbern Kali MCP Server
+# Excludes host-only and build-irrelevant files
+# from the Docker build context.
+# ===========================================
+
+# Version control
+.git
+.gitignore
+
+# Python bytecode and caches
+__pycache__
+*.pyc
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+
+# Host-only MCP client (not used inside container)
+mcp_server.py
+
+# Documentation (not needed in container image)
+docs/
+
+# AgLoop orchestration state
+.agloop/
+
+# Markdown files (exclude all, then restore README)
+*.md
+!README.md
+
+# Installation scripts (not needed in container)
+install.sh
+install.py
+
+# Editor and IDE config
+.pylintrc
+pyrightconfig.json
+mkdocs.yml
+
+# Host-only sync/test scripts
+sync-to-kali.ps1
+test_exec.sh
