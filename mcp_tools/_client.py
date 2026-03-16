@@ -17,6 +17,7 @@ class KaliToolsClient:
     def __init__(self, server_url: str, timeout: int = 300):
         self.server_url = server_url.rstrip("/")
         self.timeout = timeout
+        self._connect_timeout = 10
         self._heavy_semaphore = threading.Semaphore(self.MAX_HEAVY_TASKS)
         logger.info(f"Initialized Kali Tools Client connecting to {server_url}")
 
@@ -26,7 +27,7 @@ class KaliToolsClient:
         url = f"{self.server_url}/{endpoint}"
         try:
             logger.debug(f"GET {url} with params: {params}")
-            response = requests.get(url, params=params, timeout=self.timeout)
+            response = requests.get(url, params=params, timeout=(self._connect_timeout, self.timeout))
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -40,7 +41,7 @@ class KaliToolsClient:
         url = f"{self.server_url}/{endpoint}"
         try:
             logger.debug(f"POST {url} with data: {json_data}")
-            response = requests.post(url, json=json_data, timeout=self.timeout)
+            response = requests.post(url, json=json_data, timeout=(self._connect_timeout, self.timeout))
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -74,7 +75,7 @@ class KaliToolsClient:
         url = f"{self.server_url}/{endpoint}"
         try:
             logger.debug(f"DELETE {url}")
-            response = requests.delete(url, timeout=self.timeout)
+            response = requests.delete(url, timeout=(self._connect_timeout, self.timeout))
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:

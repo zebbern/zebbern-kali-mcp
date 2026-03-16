@@ -80,7 +80,7 @@ def upload_file_to_target_endpoint():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/target/upload_content", methods=["POST"])
+@bp.route("/api/target/upload", methods=["POST"])
 def upload_content_to_target_endpoint():
     try:
         params = request.json
@@ -89,7 +89,7 @@ def upload_content_to_target_endpoint():
 
         session_id = params.get("session_id")
         content = params.get("content")
-        remote_file = params.get("remote_file")
+        remote_file = params.get("remote_file") or params.get("remote_path")
         method = params.get("method", "base64")
         encoding = params.get("encoding", "utf-8")
 
@@ -141,7 +141,7 @@ def download_file_from_target_endpoint():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/target/download_content", methods=["POST"])
+@bp.route("/api/target/download", methods=["POST"])
 def download_content_from_target_endpoint():
     try:
         params = request.json
@@ -149,7 +149,7 @@ def download_content_from_target_endpoint():
             return jsonify({"error": "Request body is required"}), 400
 
         session_id = params.get("session_id")
-        remote_file = params.get("remote_file")
+        remote_file = params.get("remote_file") or params.get("remote_path")
         method = params.get("method", "base64")
 
         if not all([session_id, remote_file]):

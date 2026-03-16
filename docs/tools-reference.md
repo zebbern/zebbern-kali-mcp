@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-Complete reference for all 139 MCP tools available in Zebbern-MCP.
+Complete reference for all 145+ MCP tools available in Zebbern-MCP.
 
 ---
 
@@ -26,6 +26,9 @@ Complete reference for all 139 MCP tools available in Zebbern-MCP.
 | [Sessions](#sessions) | 6 | Session save/restore |
 | [JavaScript Analysis](#javascript-analysis) | 5 | JS file analysis |
 | [System](#system) | 3 | Health and network info |
+| [VPN](#vpn) | 3 | VPN connection management |
+| [CTF Platform](#ctf-platform) | 7 | CTF challenge management |
+| [Browser Automation](#browser-automation) | 4 | Headless browser control |
 
 ---
 
@@ -1544,3 +1547,244 @@ kali_upload(
     is_base64: bool = False
 ) -> Dict
 ```
+
+---
+
+## VPN
+
+### `vpn_connect`
+
+Connect to a VPN tunnel (WireGuard or OpenVPN). Auto-detects type from config file contents. Automatically starts a SOCKS5 proxy on port 1080 when the VPN connects.
+
+```python
+vpn_connect(
+    config_path: str,
+    vpn_type: str = "auto",
+    interface: str = "wg0"
+) -> Dict
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `config_path` | str | Yes | Path to VPN config inside the container (e.g. `/vpn/wg0.conf`) |
+| `vpn_type` | str | No | `wireguard`, `openvpn`, or `auto` (default) |
+| `interface` | str | No | WireGuard interface name (default `wg0`, ignored for OpenVPN) |
+
+**Example:**
+```
+> vpn_connect(config_path='/vpn/wg0.conf')
+> vpn_connect(config_path='/vpn/client.ovpn', vpn_type='openvpn')
+```
+
+---
+
+### `vpn_disconnect`
+
+Disconnect from a VPN tunnel. Also stops the SOCKS5 proxy.
+
+```python
+vpn_disconnect(
+    interface: str = "wg0",
+    vpn_type: str = "auto"
+) -> Dict
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `interface` | str | No | Interface to disconnect (default `wg0`) |
+| `vpn_type` | str | No | `wireguard`, `openvpn`, or `auto` |
+
+---
+
+### `vpn_status`
+
+Get status of all active VPN connections including SOCKS proxy state.
+
+```python
+vpn_status() -> Dict
+```
+
+---
+
+## CTF Platform
+
+### `ctf_connect`
+
+Connect to a CTF platform (CTFd or rCTF) and authenticate.
+
+```python
+ctf_connect(
+    url: str,
+    token: str = "",
+    platform_type: str = "ctfd",
+    verify_ssl: bool = True
+) -> Dict
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `url` | str | Yes | CTF platform base URL |
+| `token` | str | No | API token from platform settings |
+| `platform_type` | str | No | `ctfd` (default) or `rctf` |
+| `verify_ssl` | bool | No | Verify SSL certificates (default `True`) |
+
+---
+
+### `ctf_list_challenges`
+
+List all available CTF challenges with categories, points, and solve counts.
+
+```python
+ctf_list_challenges(
+    category: str = ""
+) -> Dict
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `category` | str | No | Filter by category (e.g. `web`, `crypto`) |
+
+---
+
+### `ctf_get_challenge`
+
+Get full details for a specific challenge including description, files, and hints.
+
+```python
+ctf_get_challenge(
+    challenge_id: int
+) -> Dict
+```
+
+---
+
+### `ctf_submit_flag`
+
+Submit a flag for a CTF challenge.
+
+```python
+ctf_submit_flag(
+    challenge_id: int,
+    flag: str
+) -> Dict
+```
+
+---
+
+### `ctf_download_file`
+
+Download challenge files from the CTF platform.
+
+```python
+ctf_download_file(
+    challenge_id: int = 0,
+    file_url: str = "",
+    output_dir: str = "/app/tmp/ctf_files"
+) -> Dict
+```
+
+---
+
+### `ctf_scoreboard`
+
+Fetch the current CTF scoreboard.
+
+```python
+ctf_scoreboard(
+    top: int = 20
+) -> Dict
+```
+
+---
+
+### `ctf_status`
+
+Check current CTF platform connection status.
+
+```python
+ctf_status() -> Dict
+```
+
+---
+
+## Browser Automation
+
+### `browser_navigate`
+
+Navigate to a URL using headless Chromium and return rendered content, title, final URL, and cookies. Executes JavaScript and follows client-side redirects.
+
+```python
+browser_navigate(
+    url: str,
+    wait_for: str = "",
+    timeout: int = 30000,
+    headers: Dict[str, str] = None
+) -> Dict
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `url` | str | Yes | Target URL to navigate to |
+| `wait_for` | str | No | CSS selector to wait for before returning |
+| `timeout` | int | No | Page load timeout in ms (default 30000) |
+| `headers` | dict | No | Extra HTTP headers to send |
+
+---
+
+### `browser_screenshot`
+
+Capture a PNG screenshot of a web page with full JavaScript rendering.
+
+```python
+browser_screenshot(
+    url: str,
+    full_page: bool = True,
+    output_path: str = "/app/tmp/screenshot.png",
+    viewport_width: int = 1280,
+    viewport_height: int = 720
+) -> Dict
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `url` | str | Yes | Target URL |
+| `full_page` | bool | No | Capture full scrollable page (default `True`) |
+| `output_path` | str | No | File path to save screenshot |
+| `viewport_width` | int | No | Viewport width in pixels (default 1280) |
+| `viewport_height` | int | No | Viewport height in pixels (default 720) |
+
+---
+
+### `browser_execute_js`
+
+Navigate to a URL and execute JavaScript in the page context. Useful for XSS testing, DOM data extraction, and client-side API interaction.
+
+```python
+browser_execute_js(
+    url: str,
+    script: str
+) -> Dict
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `url` | str | Yes | Target URL to navigate to first |
+| `script` | str | Yes | JavaScript code to execute |
+
+---
+
+### `browser_intercept`
+
+Capture all network requests/responses during page load. Reveals hidden API calls, XHR requests, and loaded resources.
+
+```python
+browser_intercept(
+    url: str,
+    filter_types: List[str] = None
+) -> Dict
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `url` | str | Yes | Target URL |
+| `filter_types` | list | No | Resource types to capture: `xhr`, `fetch`, `document`, `script`, etc. |

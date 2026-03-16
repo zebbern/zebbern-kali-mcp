@@ -12,7 +12,7 @@
 
     [:octicons-arrow-right-24: Installation Guide](installation.md)
 
--   :material-cog:{ .lg .middle } **139 MCP Tools**
+-   :material-cog:{ .lg .middle } **145+ MCP Tools**
 
     ---
 
@@ -56,7 +56,7 @@ graph LR
 
 | Component | Description |
 |-----------|-------------|
-| **MCP Client** | Python server (`mcp_server.py`) with 139 tool functions that runs locally |
+| **MCP Client** | Python server (`mcp_server.py`) with 145+ tool functions that runs locally |
 | **Kali API Server** | Flask-based REST API running on Kali Linux with 100+ endpoints |
 | **Security Tools** | 22+ pre-installed tools: nmap, sqlmap, nuclei, metasploit, and more |
 
@@ -72,6 +72,9 @@ graph LR
 - **Exploitation**: metasploit, searchsploit, msfvenom payloads
 - **Active Directory**: impacket, bloodhound, crackmapexec, kerberoasting
 - **API Security**: arjun, kiterunner, JWT analysis, GraphQL testing
+- **VPN Management**: WireGuard/OpenVPN connect/disconnect with SOCKS5 proxy
+- **CTF Platform**: CTFd/rCTF integration, challenge management, flag submission
+- **Browser Automation**: Headless Chromium via Playwright for JS-heavy targets
 
 ### 🔄 Session Management
 
@@ -96,8 +99,8 @@ graph LR
 
     ```powershell
     # Clone and setup
-    git clone https://github.com/zebbern/zebbern-mcp.git
-    cd zebbern-mcp
+    git clone https://github.com/zebbern/zebbern-kali-mcp.git
+    cd zebbern-kali-mcp
     python install.py --client
     ```
 
@@ -105,8 +108,8 @@ graph LR
 
     ```bash
     # Full installation
-    git clone https://github.com/zebbern/zebbern-mcp.git
-    cd zebbern-mcp
+    git clone https://github.com/zebbern/zebbern-kali-mcp.git
+    cd zebbern-kali-mcp
     sudo ./install.sh
     ```
 
@@ -205,8 +208,8 @@ After installation, add to VS Code's MCP configuration:
 
 !!! warning "For Authorized Testing Only"
 
-    This toolkit is designed for **authorized penetration testing** and security research. 
-    
+    This toolkit is designed for **authorized penetration testing** and security research.
+
     - Always obtain proper authorization before testing
     - The API server has **no authentication** by default
     - Run only on isolated networks or with proper firewall rules

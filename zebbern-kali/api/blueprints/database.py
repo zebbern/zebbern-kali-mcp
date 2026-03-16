@@ -9,7 +9,7 @@ bp = Blueprint("database", __name__)
 
 # --- Targets ---
 
-@bp.route("/api/targets", methods=["POST"])
+@bp.route("/api/db/target", methods=["POST"])
 def add_target():
     """Add a new target."""
     try:
@@ -32,7 +32,7 @@ def add_target():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/targets", methods=["GET"])
+@bp.route("/api/db/targets", methods=["GET"])
 def list_targets():
     """List all targets."""
     try:
@@ -48,7 +48,7 @@ def list_targets():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/targets/<target_id>", methods=["GET"])
+@bp.route("/api/db/target/<target_id>", methods=["GET"])
 def get_target(target_id):
     """Get details for a specific target."""
     try:
@@ -59,7 +59,7 @@ def get_target(target_id):
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/targets/<target_id>", methods=["PUT"])
+@bp.route("/api/db/target/<target_id>", methods=["PUT"])
 def update_target(target_id):
     """Update an existing target."""
     try:
@@ -71,7 +71,7 @@ def update_target(target_id):
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/targets/<target_id>", methods=["DELETE"])
+@bp.route("/api/db/target/<target_id>", methods=["DELETE"])
 def delete_target(target_id):
     """Delete a target."""
     try:
@@ -85,7 +85,7 @@ def delete_target(target_id):
 
 # --- Findings ---
 
-@bp.route("/api/findings", methods=["POST"])
+@bp.route("/api/db/finding", methods=["POST"])
 def add_finding():
     """Add a new finding."""
     try:
@@ -113,7 +113,7 @@ def add_finding():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/findings", methods=["GET"])
+@bp.route("/api/db/findings", methods=["GET"])
 def list_findings():
     """List all findings."""
     try:
@@ -130,7 +130,7 @@ def list_findings():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/findings/<finding_id>", methods=["GET"])
+@bp.route("/api/db/finding/<finding_id>", methods=["GET"])
 def get_finding(finding_id):
     """Get a finding by ID."""
     try:
@@ -141,7 +141,7 @@ def get_finding(finding_id):
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/findings/<finding_id>", methods=["PUT"])
+@bp.route("/api/db/finding/<finding_id>", methods=["PUT"])
 def update_finding(finding_id):
     """Update a finding."""
     try:
@@ -155,7 +155,7 @@ def update_finding(finding_id):
 
 # --- Scans ---
 
-@bp.route("/api/scans", methods=["POST"])
+@bp.route("/api/db/scan", methods=["POST"])
 def log_scan():
     """Log a scan."""
     try:
@@ -175,7 +175,7 @@ def log_scan():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/scans", methods=["GET"])
+@bp.route("/api/db/scans", methods=["GET"])
 def get_scan_history():
     """Get scan history."""
     try:
@@ -193,7 +193,7 @@ def get_scan_history():
 
 # --- Credentials ---
 
-@bp.route("/api/credentials", methods=["POST"])
+@bp.route("/api/db/credential", methods=["POST"])
 def add_credential():
     """Add a credential."""
     try:
@@ -217,7 +217,7 @@ def add_credential():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/credentials", methods=["GET"])
+@bp.route("/api/db/credentials", methods=["GET"])
 def list_credentials():
     """List stored credentials."""
     try:
@@ -234,7 +234,7 @@ def list_credentials():
 
 # --- Database Stats & Export ---
 
-@bp.route("/api/credentials/<cred_id>", methods=["GET"])
+@bp.route("/api/db/credential/<cred_id>", methods=["GET"])
 def get_credential(cred_id):
     """Get a credential by ID."""
     try:
@@ -247,7 +247,7 @@ def get_credential(cred_id):
 
 # --- Database Stats & Export ---
 
-@bp.route("/api/database/stats", methods=["GET"])
+@bp.route("/api/db/stats", methods=["GET"])
 def database_stats():
     """Get database statistics."""
     try:
@@ -258,7 +258,7 @@ def database_stats():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/database/export", methods=["GET"])
+@bp.route("/api/db/export", methods=["POST"])
 def database_export():
     """Export entire database."""
     try:

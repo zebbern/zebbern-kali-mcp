@@ -172,6 +172,7 @@ Set these in the systemd service or shell:
 | `API_PORT` | `5000` | Port for Flask API server |
 | `DEBUG_MODE` | `0` | Enable Flask debug mode (`1` = enabled) |
 | `BLOCKING_TIMEOUT` | `5` | Timeout for blocking operations |
+| `VPN_DIR` | (none) | Host directory with VPN config files, mounted as `/vpn` in Docker |
 
 ### Modify Systemd Service
 
@@ -203,7 +204,7 @@ sequenceDiagram
     participant MCP as MCP Client
     participant API as Kali API
     participant Tool as System Tool
-    
+
     VS->>MCP: Request
     Note over MCP: Client Timeout (--timeout)
     MCP->>API: HTTP Request

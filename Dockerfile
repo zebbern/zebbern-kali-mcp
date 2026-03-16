@@ -1,5 +1,6 @@
 # Zebbern Kali MCP Server - Docker Image
-# Single-stage build based on kalilinux/kali-rolling with all pentest tools
+# Full-featured pentest image based on kalilinux/kali-rolling.
+# Pre-built images are published to GHCR so users never need to build locally.
 #
 # Build:
 #   docker build -t zebbern-kali-mcp .
@@ -21,10 +22,11 @@ ENV PATH="/root/go/bin:/root/.local/bin:${PATH}"
 
 WORKDIR /app
 
-# ---------- Layer 1: System dependencies ----------
+# ---------- Layer 1: System & build dependencies ----------
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         python3-pip \
+        python3-dev \
         git \
         curl \
         wget \
@@ -34,6 +36,8 @@ RUN apt-get update && \
         nodejs \
         npm \
         ca-certificates \
+        libssl-dev \
+        libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------- Layer 2: Pentest APT packages ----------
@@ -68,6 +72,10 @@ RUN apt-get update && \
         impacket-scripts \
         set \
         gophish \
+        amass \
+        masscan \
+        sslscan \
+        exploitdb \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------- Layer 2b: Conditional Metasploit install ----------
@@ -77,6 +85,55 @@ RUN if [ "$INCLUDE_METASPLOIT" = "true" ]; then \
         rm -rf /var/lib/apt/lists/*; \
     fi
 
+# ---------- Layer 2c: Wordlists ----------
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        wordlists \
+        seclists \
+    && rm -rf /var/lib/apt/lists/* && \
+    gunzip -f /usr/share/wordlists/rockyou.txt.gz 2>/dev/null || true
+
+# ---------- Layer 2d: Network & pivoting tools ----------
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        openvpn \
+        wireguard-tools \
+        openresolv \
+        iproute2 \
+        proxychains4 \
+        socat \
+        netcat-traditional \
+        dnsutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------- Layer 2d2: microsocks SOCKS5 proxy (VPN bridge) ----------
+RUN cd /tmp && \
+    git clone --depth 1 https://github.com/rofl0r/microsocks.git && \
+    cd microsocks && \
+    make && \
+    cp microsocks /usr/local/bin/microsocks && \
+    chmod +x /usr/local/bin/microsocks && \
+    rm -rf /tmp/microsocks
+
+# ---------- Layer 2e: Forensics & CTF tools ----------
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        binwalk \
+        steghide \
+        libimage-exiftool-perl \
+        foremost \
+        strace \
+        ltrace \
+        gdb \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------- Layer 2f: Chromium for headless browser automation ----------
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        chromium \
+        chromium-driver \
+    && rm -rf /var/lib/apt/lists/*
+
 # ---------- Layer 3: Go tools ----------
 RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest || true && \
     go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest || true && \
@@ -85,7 +142,26 @@ RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest || tru
     go install -v github.com/tomnomnom/assetfinder@latest || true && \
     go install -v github.com/tomnomnom/waybackurls@latest || true && \
     go install -v github.com/lobuhi/byp4xx@latest || true && \
-    go install -v github.com/PentestPad/subzy@latest || true
+    go install -v github.com/PentestPad/subzy@latest || true && \
+    go install -v github.com/sensepost/gowitness@latest || true && \
+    go install -v github.com/jpillora/chisel@latest || true
+
+# ---------- Layer 3a: Katana binary (pre-built — go install often fails) ----------
+RUN cd /tmp && \
+    KATANA_VER="1.1.0" && \
+    wget -q "https://github.com/projectdiscovery/katana/releases/download/v${KATANA_VER}/katana_${KATANA_VER}_linux_amd64.zip" -O katana.zip && \
+    unzip -o katana.zip katana -d /usr/local/bin/ && \
+    chmod +x /usr/local/bin/katana && \
+    rm -f katana.zip || true
+
+# ---------- Layer 3b: Ligolo-ng proxy ----------
+RUN cd /tmp && \
+    LIGOLO_VER="0.7.5" && \
+    wget -q "https://github.com/nicocha30/ligolo-ng/releases/download/v${LIGOLO_VER}/ligolo-ng_proxy_${LIGOLO_VER}_linux_amd64.tar.gz" -O ligolo-proxy.tar.gz && \
+    tar -xzf ligolo-proxy.tar.gz && \
+    mv proxy /usr/local/bin/ligolo-proxy && \
+    chmod +x /usr/local/bin/ligolo-proxy && \
+    rm -f ligolo-proxy.tar.gz LICENSE README.md || true
 
 # ---------- Layer 4: Kiterunner binary ----------
 RUN cd /tmp && \
@@ -107,6 +183,9 @@ RUN npm install -g newman
 # ---------- Layer 7: Python dependencies ----------
 COPY requirements.txt /app/requirements.txt
 RUN pip3 install --break-system-packages --no-cache-dir -r requirements.txt
+
+# ---------- Layer 7b: Install Playwright browsers ----------
+RUN playwright install chromium --with-deps 2>/dev/null || true
 
 # ---------- Layer 8: Application code ----------
 COPY zebbern-kali/ /app/zebbern-kali/

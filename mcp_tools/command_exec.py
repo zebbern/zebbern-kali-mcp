@@ -40,7 +40,7 @@ def register(mcp: FastMCP, kali_client) -> None:
     def exec_stream(command: str, timeout: int = 3600) -> Dict[str, Any]:
         """
         Execute a command with real-time streaming output via SSE (text/event-stream).
-        Posts to api/exec with streaming=True. Useful for long-running commands
+        Posts to api/command with streaming=True. Useful for long-running commands
         like nmap, nuclei, fuzzing.
 
         Args:
@@ -50,14 +50,14 @@ def register(mcp: FastMCP, kali_client) -> None:
         Returns:
             Streaming output collected in real-time with all events
         """
-        url = f"{kali_client.server_url}/api/exec"
+        url = f"{kali_client.server_url}/api/command"
         try:
             response = requests.post(
                 url,
-                json={"command": command, "streaming": True},
+                json={"command": command, "streaming": True, "timeout": timeout},
                 headers={"Accept": "text/event-stream"},
                 stream=True,
-                timeout=timeout,
+                timeout=(10, timeout),
             )
             response.raise_for_status()
 

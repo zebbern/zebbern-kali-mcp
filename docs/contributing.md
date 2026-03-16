@@ -16,8 +16,8 @@ Thank you for considering contributing to Zebbern-MCP! This guide will help you 
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/zebbern/kali.git
-cd kali/zebbern-mcp
+git clone https://github.com/zebbern/zebbern-kali-mcp.git
+cd zebbern-kali-mcp
 ```
 
 ### Install Development Dependencies
@@ -38,12 +38,12 @@ pip install -e ".[dev]"
 ```
 zebbern-kali-mcp/
 ├── mcp_server.py      # MCP client entry point (Windows/Mac)
-├── mcp_tools/         # MCP tool modules (16 category files)
+├── mcp_tools/         # MCP tool modules (20 category files)
 ├── zebbern-kali/      # Flask API server (Kali VM)
 │   ├── kali_server.py # Flask entry point
 │   ├── api/
 │   │   ├── routes.py  # Entry point (registers blueprints)
-│   │   └── blueprints/# 17 modular route modules
+│   │   └── blueprints/# 20 modular route modules
 │   ├── core/          # Core functionality modules
 │   └── tools/         # Tool execution wrappers
 ├── docs/              # Documentation (MkDocs)
@@ -69,12 +69,12 @@ def process_target(
 ) -> dict:
     """
     Process a target for scanning.
-    
+
     Args:
         host: Target hostname or IP
         port: Target port (default: 80)
         timeout: Connection timeout in seconds
-        
+
     Returns:
         Dictionary with scan results
     """
@@ -94,20 +94,20 @@ Use Google-style docstrings for all functions:
 def example_function(param1: str, param2: int) -> bool:
     """
     Brief description of the function.
-    
+
     Longer description if needed. Explain what the function
     does in more detail.
-    
+
     Args:
         param1: Description of param1
         param2: Description of param2
-        
+
     Returns:
         Description of return value
-        
+
     Raises:
         ValueError: If param1 is empty
-        
+
     Example:
         >>> example_function("test", 42)
         True
@@ -150,7 +150,7 @@ bp = Blueprint("mytool", __name__)
 def run_mytool():
     """
     Run mytool scan.
-    
+
     Expected JSON body:
     {
         "target": "example.com",
@@ -194,11 +194,11 @@ async def tools_mytool(
 ) -> str:
     """
     Run mytool against a target.
-    
+
     Args:
         target: Target hostname or IP address
         options: Additional command-line options
-        
+
     Returns:
         Scan results from mytool
     """
@@ -234,8 +234,8 @@ async def test_mytool_basic():
     """Test basic mytool functionality."""
     result = await tools_mytool(target="example.com")
     assert "result" in result
-    
-@pytest.mark.asyncio  
+
+@pytest.mark.asyncio
 async def test_mytool_with_options():
     """Test mytool with custom options."""
     result = await tools_mytool(
@@ -276,14 +276,14 @@ result = await tools_mytool(
 
 If adding new database tables:
 
-1. Update `database/db.py`:
+1. Update `core/target_database.py`:
 
 ```python
 def init_db():
     """Initialize database with all tables."""
     conn = get_connection()
     cursor = conn.cursor()
-    
+
     # Add new table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS new_table (
@@ -293,7 +293,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
+
     conn.commit()
     conn.close()
 ```
@@ -379,7 +379,7 @@ from unittest.mock import patch, AsyncMock
 
 class TestMyTool:
     """Test cases for mytool functionality."""
-    
+
     @pytest.fixture
     def mock_response(self):
         """Sample API response."""
@@ -388,7 +388,7 @@ class TestMyTool:
             "stderr": "",
             "returncode": 0
         }
-    
+
     @pytest.mark.asyncio
     async def test_success(self, mock_response):
         """Test successful execution."""
@@ -396,7 +396,7 @@ class TestMyTool:
             mock.return_value = mock_response
             result = await tools_mytool(target="test.com")
             assert "scan complete" in result
-    
+
     @pytest.mark.asyncio
     async def test_invalid_target(self):
         """Test with invalid target."""

@@ -1,0 +1,18 @@
+include mcp_server.py
+include LICENSE
+include README.md
+recursive-include mcp_tools *.py
+
+prune zebbern-kali
+prune docs
+prune vpn
+prune .github
+prune .vscode
+exclude Dockerfile
+exclude docker-compose.yml
+exclude install.py
+exclude install.sh
+exclude mkdocs.yml
+exclude pyrightconfig.json
+exclude .pylintrc
+exclude .dockerignore

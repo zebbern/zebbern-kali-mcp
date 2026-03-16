@@ -19,9 +19,26 @@ def unrestricted_exec():
         timeout = params.get("timeout", 3600)
         cwd = params.get("cwd", None)
         shell = params.get("shell", True)
+        background = params.get("background", False)
 
         import subprocess
         import time
+
+        if background:
+            process = subprocess.Popen(
+                command,
+                shell=shell,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                cwd=cwd,
+            )
+            return jsonify({
+                "success": True,
+                "pid": process.pid,
+                "command": command,
+                "background": True,
+                "message": f"Command started in background with PID {process.pid}",
+            })
 
         start_time = time.time()
 

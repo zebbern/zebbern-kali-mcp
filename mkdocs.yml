@@ -60,7 +60,8 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started:
-      - Installation: installation.md
+      - Docker Setup: docker-install.md
+      - VM Setup: vm-install.md
       - Configuration: configuration.md
   - Architecture: architecture.md
   - Reference:

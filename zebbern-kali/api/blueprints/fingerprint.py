@@ -7,7 +7,7 @@ from core.web_fingerprinter import web_fingerprinter
 bp = Blueprint("fingerprint", __name__)
 
 
-@bp.route("/api/fingerprint", methods=["POST"])
+@bp.route("/api/fingerprint/url", methods=["POST"])
 def fingerprint_url():
     """Fingerprint a web application's technology stack."""
     try:

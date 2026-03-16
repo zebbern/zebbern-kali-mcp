@@ -11,7 +11,9 @@ from ._client import KaliToolsClient
 from . import (
     ad_tools,
     api_security,
+    browser,
     command_exec,
+    ctf_platform,
     evidence_collector,
     exploit_suggester,
     file_operations,
@@ -25,6 +27,7 @@ from . import (
     session_manager,
     ssh_manager,
     target_database,
+    vpn,
     web_fingerprinter,
 )
 
@@ -46,6 +49,9 @@ _MODULES = [
     ad_tools,
     network_pivot,
     output_parser,
+    ctf_platform,
+    browser,
+    vpn,
 ]
 
 

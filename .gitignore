@@ -158,6 +158,10 @@ cython_debug/
 #  Community Edition, use 'PyCharm CE' instead of 'PyCharm'.
 .idea/
 
+# VPN configs (contain private keys)
+vpn/*.conf
+vpn/*.ovpn
+
 # VS Code
 .vscode/
 !.vscode/settings.json

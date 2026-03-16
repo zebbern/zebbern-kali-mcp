@@ -32,11 +32,54 @@ Choose the method that fits your environment:
 
 | Method | Use Case | Command |
 |--------|----------|---------|
+| [Docker + uvx](#docker--uvx-recommended) | **Recommended** — easiest setup | `docker compose up -d` + add 3 lines to mcp.json |
 | [Bash Script](#bash-script-kali) | Direct Kali install | `sudo ./install.sh` |
-| [Python Client](#python-client) | Windows/macOS setup | `python install.py --client` |
+| [Python Client](#python-client) | Windows/macOS setup (from repo) | `python install.py --client` |
 | [Python Server](#python-server) | Kali install with Python | `python install.py --server` |
 | [Remote Install](#remote-installation) | Install via SSH | `python install.py --remote` |
 | [Manual](#manual-installation) | Custom setup | Step-by-step |
+
+---
+
+## Docker + uvx (Recommended)
+
+The fastest way to get started. No repo clone needed for the MCP client.
+
+### 1. Start the Kali Backend
+
+```bash
+# Download docker-compose.yml
+curl -sLO https://raw.githubusercontent.com/zebbern/zebbern-kali-mcp/main/docker-compose.yml
+
+# Start the Kali API server
+docker compose up -d
+```
+
+### 2. Connect VS Code
+
+Add to `.vscode/mcp.json` (or your global VS Code MCP config):
+
+```json
+{
+  "servers": {
+    "kali-tools": {
+      "command": "uvx",
+      "args": ["zebbern-kali-mcp"]
+    }
+  }
+}
+```
+
+### 3. Verify
+
+Restart VS Code and ask Copilot: *"Check the kali server health"*
+
+!!! note "Prerequisites"
+    - [Docker](https://docs.docker.com/get-docker/) with Docker Compose V2
+    - [uv](https://docs.astral.sh/uv/getting-started/installation/) for `uvx` (or use `pip install zebbern-kali-mcp` instead)
+    - VS Code with GitHub Copilot
+
+For detailed Docker configuration (ports, VPN, environment vars), see [Docker Installation](docker-install.md).
 
 ---
 
@@ -48,8 +91,8 @@ The fastest way to set up the Kali server.
 
 ```bash
 # Clone repository
-git clone https://github.com/zebbern/zebbern-mcp.git
-cd zebbern-mcp
+git clone https://github.com/zebbern/zebbern-kali-mcp.git
+cd zebbern-kali-mcp
 
 # Run installer (requires root)
 sudo ./install.sh
@@ -158,15 +201,15 @@ Set up the MCP client on your local machine (Windows/macOS/Linux).
 
 === "Windows (PowerShell)"
     ```powershell
-    git clone https://github.com/zebbern/zebbern-mcp.git
-    cd zebbern-mcp
+    git clone https://github.com/zebbern/zebbern-kali-mcp.git
+    cd zebbern-kali-mcp
     python install.py --client
     ```
 
 === "macOS/Linux"
     ```bash
-    git clone https://github.com/zebbern/zebbern-mcp.git
-    cd zebbern-mcp
+    git clone https://github.com/zebbern/zebbern-kali-mcp.git
+    cd zebbern-kali-mcp
     python3 install.py --client
     ```
 
@@ -191,8 +234,8 @@ Alternative to bash script, useful for more control.
 
 ```bash
 # On Kali Linux
-git clone https://github.com/zebbern/zebbern-mcp.git
-cd zebbern-mcp
+git clone https://github.com/zebbern/zebbern-kali-mcp.git
+cd zebbern-kali-mcp
 sudo python3 install.py --server
 ```
 
@@ -244,8 +287,8 @@ For custom setups or understanding the process.
 ### Step 1: Clone Repository
 
 ```bash
-git clone https://github.com/zebbern/zebbern-mcp.git
-cd zebbern-mcp
+git clone https://github.com/zebbern/zebbern-kali-mcp.git
+cd zebbern-kali-mcp
 ```
 
 ### Step 2: Install System Dependencies (Kali)
@@ -338,6 +381,9 @@ pip install mcp requests
 ### Step 7: Configure VS Code
 
 Create `.vscode/mcp.json` in your workspace:
+
+!!! tip "Easier alternative"
+    If you installed via `pip install zebbern-kali-mcp` or `uvx`, you can use the simpler config shown in [Docker + uvx](#docker--uvx-recommended) instead of the path-based config below.
 
 ```json
 {
@@ -473,12 +519,12 @@ rm -rf /path/to/zebbern-mcp
     ```
     nuclei: command not found
     ```
-    **Solution**: 
+    **Solution**:
     ```bash
     # Add Go bin to PATH
     echo 'export PATH=$PATH:~/go/bin' >> ~/.bashrc
     source ~/.bashrc
-    
+
     # Or create symlinks
     sudo ln -sf ~/go/bin/* /usr/local/bin/
     ```
@@ -497,7 +543,7 @@ rm -rf /path/to/zebbern-mcp
     ```bash
     # On Kali
     sudo ufw allow 5000/tcp
-    
+
     # Test locally first
     curl http://localhost:5000/health
     ```

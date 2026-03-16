@@ -17,6 +17,9 @@ from .js_analyzer import bp as js_analyzer_bp
 from .api_security import bp as api_security_bp
 from .ad import bp as ad_bp
 from .pivot import bp as pivot_bp
+from .ctf_platform import bp as ctf_platform_bp
+from .browser import bp as browser_bp
+from .vpn import bp as vpn_bp
 
 _blueprints = [
     health_bp,
@@ -36,6 +39,9 @@ _blueprints = [
     api_security_bp,
     ad_bp,
     pivot_bp,
+    ctf_platform_bp,
+    browser_bp,
+    vpn_bp,
 ]
 
 

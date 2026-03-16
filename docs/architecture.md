@@ -12,21 +12,21 @@ Zebbern-MCP follows a client-server architecture where an MCP client on your loc
 flowchart TB
     subgraph LOCAL["Your Machine (Windows/macOS/Linux)"]
         VSC[VS Code + Copilot]
-        MCP[mcp_server.py<br/>139 MCP Tools]
+        MCP[mcp_server.py<br/>145+ MCP Tools]
         VSC <-->|MCP Protocol<br/>stdio| MCP
     end
-    
+
     subgraph KALI["Kali Linux VM/Server"]
         API[Flask API Server<br/>Port 5000]
         CORE[Core Modules]
         TOOLS[System Tools]
         DB[(SQLite DB)]
-        
+
         API --> CORE
         CORE --> TOOLS
         CORE --> DB
     end
-    
+
     MCP <-->|HTTP/REST<br/>JSON| API
 ```
 
@@ -48,13 +48,16 @@ mcp_server.py              # Entry point & KaliToolsClient
 ├── FastMCP Server initialization
 │   └── stdio transport for VS Code
 │
-└── mcp_tools/             # 139 @mcp.tool() functions (16 modules)
-    ├── recon.py            # Reconnaissance tools
-    ├── web.py              # Web application tools
+└── mcp_tools/             # @mcp.tool() functions (20 modules)
+    ├── kali_tools.py       # Reconnaissance & scan tools
+    ├── web_fingerprinter.py# Web application tools
     ├── api_security.py     # API testing tools
-    ├── exploitation.py     # Exploit tools
-    ├── ad.py               # Active Directory tools
-    ├── pivoting.py         # Network pivoting tools
+    ├── exploit_suggester.py# Exploit tools
+    ├── ad_tools.py         # Active Directory tools
+    ├── network_pivot.py    # Network pivoting tools
+    ├── vpn.py              # VPN management (WireGuard/OpenVPN)
+    ├── ctf_platform.py     # CTF platform integration
+    ├── browser.py          # Headless browser automation
     └── ... (see Tools Reference)
 ```
 
@@ -84,8 +87,8 @@ The Flask-based REST API server runs on Kali Linux and provides endpoints for al
 zebbern-kali/
 ├── kali_server.py          # Flask app entry point
 ├── api/
-│   ├── routes.py           # Entry point — registers all blueprints (11 lines)
-│   └── blueprints/         # Modular route handlers
+│   ├── routes.py           # Entry point — registers all blueprints
+│   └── blueprints/         # Modular route handlers (20 blueprints)
 │       ├── __init__.py     # Blueprint registration
 │       ├── _helpers.py     # Shared streaming helpers
 │       ├── health.py       # Health check
@@ -104,7 +107,10 @@ zebbern-kali/
 │       ├── js_analyzer.py  # JavaScript analysis
 │       ├── api_security.py # API security testing
 │       ├── ad.py           # Active Directory tools
-│       └── pivot.py        # Network pivoting
+│       ├── pivot.py        # Network pivoting
+│       ├── ctf_platform.py # CTF platform integration (CTFd/rCTF)
+│       ├── browser.py      # Headless browser automation (Playwright)
+│       └── vpn.py          # VPN management (WireGuard/OpenVPN)
 ├── core/                   # Core functionality modules
 │   ├── config.py           # Configuration & logging
 │   ├── command_executor.py # Safe command execution
@@ -113,21 +119,24 @@ zebbern-kali/
 │   ├── metasploit_manager.py
 │   ├── payload_generator.py
 │   ├── exploit_suggester.py
-│   ├── evidence_manager.py
-│   ├── fingerprint_manager.py
-│   ├── database_manager.py
+│   ├── evidence_collector.py
+│   ├── web_fingerprinter.py
+│   ├── target_database.py
 │   ├── session_manager.py
 │   ├── js_analyzer.py
 │   ├── api_security.py
 │   ├── ad_tools.py
-│   ├── pivoting.py
+│   ├── network_pivot.py
+│   ├── vpn_manager.py      # VPN lifecycle + SOCKS proxy
+│   ├── ctf_platform.py     # CTF platform API client
 │   └── tool_config.py
 ├── tools/
 │   └── kali_tools.py       # Tool execution wrappers
-├── utils/
-│   └── kali_operations.py  # File operations
-└── database/
-    └── pentest.db          # SQLite database
+└── utils/
+    ├── file_operations.py   # File operations
+    ├── kali_operations.py   # Kali-specific operations
+    ├── network_utils.py     # Network utilities
+    └── transfer_manager.py  # File transfer management
 ```
 
 ---
@@ -191,17 +200,17 @@ sequenceDiagram
     participant API
     participant MSF as Metasploit Manager
     participant Console as msfconsole
-    
+
     API->>MSF: Create session
     MSF->>Console: Start msfconsole
     Console-->>MSF: Ready
     MSF-->>API: Session ID
-    
+
     API->>MSF: Execute command
     MSF->>Console: use exploit/...
     Console-->>MSF: Output
     MSF-->>API: Results
-    
+
     API->>MSF: Destroy session
     MSF->>Console: exit
 ```
@@ -218,7 +227,7 @@ Manages netcat/pwncat listeners:
 | `get_active_shells` | List captured shells |
 | `interact_shell` | Send commands to shell |
 
-#### Evidence Manager (`evidence_manager.py`)
+#### Evidence Collector (`evidence_collector.py`)
 
 Stores and organizes penetration test artifacts:
 
@@ -249,7 +258,7 @@ erDiagram
         string notes
         datetime created_at
     }
-    
+
     FINDINGS {
         int id PK
         int target_id FK
@@ -259,7 +268,7 @@ erDiagram
         string remediation
         datetime found_at
     }
-    
+
     SCANS {
         int id PK
         int target_id FK
@@ -268,7 +277,7 @@ erDiagram
         text output
         datetime executed_at
     }
-    
+
     CREDENTIALS {
         int id PK
         string service
@@ -292,7 +301,7 @@ sequenceDiagram
     participant MCP as mcp_server.py
     participant API as Kali API
     participant Tool as System Tool
-    
+
     User->>Copilot: "Scan 192.168.1.1 with nmap"
     Copilot->>MCP: tools_nmap(target="192.168.1.1")
     MCP->>API: POST /api/tools/nmap<br/>{"target": "192.168.1.1"}
@@ -315,6 +324,8 @@ zebbern-mcp/
 ├── install.py              # Cross-platform installer
 ├── install.sh              # Bash installer for Kali
 ├── requirements.txt        # Python dependencies
+├── Dockerfile              # Container build
+├── docker-compose.yml      # Docker service orchestration
 ├── mkdocs.yml              # Documentation config
 ├── README.md               # Project readme
 │
@@ -324,35 +335,35 @@ zebbern-mcp/
 │   ├── installation.md
 │   └── ...
 │
-├── zebbern-kali/           # API server (deployed to Kali)
+├── mcp_tools/              # MCP tool modules (20 modules)
+│   ├── __init__.py
+│   ├── _client.py          # KaliToolsClient HTTP wrapper
+│   ├── kali_tools.py
+│   ├── vpn.py              # VPN management tools
+│   ├── ctf_platform.py     # CTF platform tools
+│   ├── browser.py          # Browser automation tools
+│   └── ...
+│
+├── zebbern-kali/           # API server (deployed to Kali / Docker)
 │   ├── kali_server.py      # Flask entry point
 │   ├── api/
 │   │   ├── routes.py       # Entry point (registers blueprints)
-│   │   └── blueprints/     # 17 modular route modules
+│   │   └── blueprints/     # 20 modular route modules
 │   ├── core/               # Core modules
 │   │   ├── config.py
 │   │   ├── command_executor.py
-│   │   ├── ssh_manager.py
-│   │   ├── reverse_shell_manager.py
-│   │   ├── metasploit_manager.py
-│   │   ├── payload_generator.py
-│   │   ├── exploit_suggester.py
-│   │   ├── evidence_manager.py
-│   │   ├── fingerprint_manager.py
-│   │   ├── database_manager.py
-│   │   ├── session_manager.py
-│   │   ├── js_analyzer.py
-│   │   ├── api_security.py
-│   │   ├── ad_tools.py
-│   │   ├── pivoting.py
-│   │   └── tool_config.py
+│   │   ├── vpn_manager.py  # VPN lifecycle + SOCKS proxy
+│   │   ├── ctf_platform.py # CTF API client
+│   │   └── ...
 │   ├── tools/
 │   │   └── kali_tools.py   # Tool wrappers
-│   ├── utils/
-│   │   └── kali_operations.py
-│   └── database/
-│       └── pentest.db
+│   └── utils/
+│       ├── file_operations.py
+│       ├── kali_operations.py
+│       ├── network_utils.py
+│       └── transfer_manager.py
 │
+├── vpn/                    # VPN config directory (mounted as /vpn)
 └── .vscode/
     └── mcp.json            # Workspace MCP config
 ```
@@ -385,7 +396,7 @@ zebbern-mcp/
 | 5000 | API Server | Inbound to Kali | REST API |
 | 22 | SSH | Outbound from Kali | Remote target access |
 | 4444+ | Reverse Shells | Inbound to Kali | Shell listeners |
-| 1080 | SOCKS Proxy | As needed | Pivoting |
+| 1080 | SOCKS5 Proxy | Outbound to clients | microsocks — auto-starts with VPN |
 
 ---
 
@@ -400,6 +411,9 @@ zebbern-mcp/
 | **Process Execution** | subprocess, shlex |
 | **Serialization** | JSON |
 | **Service Manager** | systemd |
+| **SOCKS5 Proxy** | microsocks |
+| **Browser Automation** | Playwright + Chromium |
+| **VPN** | WireGuard, OpenVPN |
 
 ---
 

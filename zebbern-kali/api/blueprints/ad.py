@@ -7,7 +7,7 @@ from core.ad_tools import ad_tools
 bp = Blueprint("ad", __name__)
 
 
-@bp.route("/api/ad/tools", methods=["GET"])
+@bp.route("/api/ad/tools-status", methods=["GET"])
 def ad_tools_status():
     """Get available AD tools status."""
     try:

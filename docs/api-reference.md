@@ -1339,3 +1339,193 @@ Get specific report.
 | 404 | Endpoint or resource not found |
 | 500 | Server error |
 | 504 | Timeout (command took too long) |
+
+---
+
+## VPN Management
+
+### POST `/api/vpn/connect`
+
+Connect to a WireGuard or OpenVPN tunnel. Automatically starts a SOCKS5 proxy on port 1080.
+
+**Request:**
+```json
+{
+  "config_path": "/vpn/wg0.conf",
+  "vpn_type": "auto",
+  "interface": "wg0"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `config_path` | string | Yes | Path to VPN config inside the container |
+| `vpn_type` | string | No | `wireguard`, `openvpn`, or `auto` (default) |
+| `interface` | string | No | WireGuard interface name (default `wg0`) |
+
+---
+
+### POST `/api/vpn/disconnect`
+
+Disconnect from a VPN tunnel. Stops the SOCKS5 proxy.
+
+**Request:**
+```json
+{
+  "interface": "wg0",
+  "vpn_type": "auto"
+}
+```
+
+---
+
+### GET `/api/vpn/status`
+
+Get status of all active VPN connections and SOCKS proxy.
+
+**Response:**
+```json
+{
+  "success": true,
+  "connections": [],
+  "count": 0,
+  "active_count": 0,
+  "socks_proxy": {
+    "running": false,
+    "port": 1080
+  }
+}
+```
+
+---
+
+## CTF Platform
+
+### POST `/api/ctf/connect`
+
+Connect to a CTF platform (CTFd or rCTF).
+
+**Request:**
+```json
+{
+  "url": "https://ctf.example.com",
+  "token": "ctfd_abc123",
+  "platform_type": "ctfd",
+  "verify_ssl": true
+}
+```
+
+---
+
+### GET `/api/ctf/challenges`
+
+List all challenges. Optional query param `category` to filter.
+
+---
+
+### GET `/api/ctf/challenges/{id}`
+
+Get full details for a specific challenge.
+
+---
+
+### POST `/api/ctf/submit`
+
+Submit a flag.
+
+**Request:**
+```json
+{
+  "challenge_id": 42,
+  "flag": "flag{example}"
+}
+```
+
+---
+
+### POST `/api/ctf/download`
+
+Download challenge files.
+
+**Request:**
+```json
+{
+  "challenge_id": 42,
+  "output_dir": "/app/tmp/ctf_files"
+}
+```
+
+---
+
+### GET `/api/ctf/scoreboard`
+
+Fetch scoreboard. Optional query param `top` (default 20).
+
+---
+
+### GET `/api/ctf/status`
+
+Check CTF platform connection status.
+
+---
+
+## Browser Automation
+
+### POST `/api/browser/navigate`
+
+Navigate to a URL with headless Chromium. Returns rendered content, title, cookies.
+
+**Request:**
+```json
+{
+  "url": "https://example.com",
+  "wait_for": "#main-content",
+  "timeout": 30000,
+  "headers": {}
+}
+```
+
+---
+
+### POST `/api/browser/screenshot`
+
+Capture a PNG screenshot of a web page.
+
+**Request:**
+```json
+{
+  "url": "https://example.com",
+  "full_page": true,
+  "output_path": "/app/tmp/screenshot.png",
+  "viewport_width": 1280,
+  "viewport_height": 720
+}
+```
+
+---
+
+### POST `/api/browser/execute-js`
+
+Execute JavaScript in the page context.
+
+**Request:**
+```json
+{
+  "url": "https://example.com",
+  "script": "document.title"
+}
+```
+
+---
+
+### POST `/api/browser/intercept`
+
+Capture all network requests during page load.
+
+**Request:**
+```json
+{
+  "url": "https://example.com",
+  "filter_types": ["xhr", "fetch"]
+}
+```

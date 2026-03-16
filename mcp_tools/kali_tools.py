@@ -578,3 +578,72 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
         if additional_args:
             data["additional_args"] = additional_args
         return kali_client.heavy_tool_post("api/tools/amass", data)
+
+    # ── CVE / Vulnerability Database Tools ────────────────────────
+
+    @mcp.tool()
+    def cve_search(
+        keyword: str = "",
+        cve_id: str = "",
+        results_per_page: int = 20,
+    ) -> Dict[str, Any]:
+        """
+        Search the NVD (NIST National Vulnerability Database) for CVEs.
+
+        Query by keyword (e.g., 'Apache Log4j'), specific CVE ID
+        (e.g., 'CVE-2021-44228'), or product name. Returns CVSS scores,
+        descriptions, references, and weakness classifications.
+
+        Args:
+            keyword: Search keyword — product name, library, or description text
+                (e.g., 'OpenSSH', 'Apache Struts', 'buffer overflow')
+            cve_id: Specific CVE identifier to look up (e.g., 'CVE-2021-44228').
+                When provided, keyword is ignored.
+            results_per_page: Number of results to return (1-100, default 20)
+
+        Example usage:
+            cve_search(keyword='Log4j')
+            cve_search(cve_id='CVE-2021-44228')
+            cve_search(keyword='OpenSSH', results_per_page=50)
+        """
+        data: Dict[str, Any] = {}
+        if cve_id:
+            data["cve_id"] = cve_id
+        elif keyword:
+            data["keyword"] = keyword
+        if results_per_page != 20:
+            data["results_per_page"] = results_per_page
+        return kali_client.safe_post("api/tools/cve-search", data)
+
+    @mcp.tool()
+    def cve_package_audit(
+        package: str,
+        version: str = "",
+        ecosystem: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Check a specific software package for known vulnerabilities using OSV.dev.
+
+        Queries the Open Source Vulnerabilities database to find all known CVEs
+        and security advisories affecting a package. Supports version-specific
+        queries across all major ecosystems.
+
+        Args:
+            package: Package name (e.g., 'lodash', 'django', 'openssl')
+            version: Specific version to check (e.g., '4.17.20'). If omitted,
+                returns all known vulnerabilities for any version.
+            ecosystem: Package ecosystem — 'npm', 'PyPI', 'Maven', 'Go',
+                'crates.io', 'NuGet', 'Packagist', 'RubyGems', 'Debian',
+                'Alpine', etc. If omitted, OSV auto-detects.
+
+        Example usage:
+            cve_package_audit(package='lodash', version='4.17.20', ecosystem='npm')
+            cve_package_audit(package='django', ecosystem='PyPI')
+            cve_package_audit(package='openssl')
+        """
+        data: Dict[str, Any] = {"package": package}
+        if version:
+            data["version"] = version
+        if ecosystem:
+            data["ecosystem"] = ecosystem
+        return kali_client.safe_post("api/tools/cve-package-audit", data)

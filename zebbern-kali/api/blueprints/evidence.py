@@ -18,7 +18,7 @@ def evidence_screenshot():
         if not url:
             return jsonify({"error": "url is required", "success": False}), 400
 
-        result = evidence_collector.capture_screenshot(url, description)
+        result = evidence_collector.take_screenshot(url=url, tags=[description] if description else None)
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error capturing screenshot: {str(e)}")
@@ -38,7 +38,7 @@ def evidence_add_note():
         if not title or not content:
             return jsonify({"error": "title and content are required", "success": False}), 400
 
-        result = evidence_collector.add_note(title, content, category, tags)
+        result = evidence_collector.add_note(title=title, content=content, category=category, tags=tags)
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error adding note: {str(e)}")
@@ -58,7 +58,7 @@ def evidence_add_command():
         if not command:
             return jsonify({"error": "command is required", "success": False}), 400
 
-        result = evidence_collector.add_command(command, output, description, target)
+        result = evidence_collector.add_command_output(command=command, output=output, target=target, tags=[description] if description else None)
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error adding command evidence: {str(e)}")

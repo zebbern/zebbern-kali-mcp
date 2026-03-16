@@ -2,7 +2,7 @@
 
 from flask import Blueprint, request, jsonify
 from core.config import logger
-from core.pivot_manager import pivot_manager
+from core.network_pivot import pivot_manager
 
 bp = Blueprint("pivot", __name__)
 
@@ -138,7 +138,7 @@ def socat_forward():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/pivot/ligolo", methods=["POST"])
+@bp.route("/api/pivot/ligolo/start", methods=["POST"])
 def ligolo_proxy_start():
     """Start a Ligolo-ng proxy server."""
     try:
@@ -165,10 +165,14 @@ def list_tunnels():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/pivot/tunnels/<tunnel_id>", methods=["DELETE"])
-def stop_tunnel(tunnel_id):
+@bp.route("/api/pivot/tunnel/stop", methods=["POST"])
+def stop_tunnel():
     """Stop a specific tunnel."""
     try:
+        params = request.json or {}
+        tunnel_id = params.get("tunnel_id", "")
+        if not tunnel_id:
+            return jsonify({"error": "tunnel_id is required", "success": False}), 400
         result = pivot_manager.stop_tunnel(tunnel_id)
         return jsonify(result)
     except Exception as e:
@@ -176,7 +180,7 @@ def stop_tunnel(tunnel_id):
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/pivot/tunnels", methods=["DELETE"])
+@bp.route("/api/pivot/tunnels/stop-all", methods=["POST"])
 def stop_all_tunnels():
     """Stop all tunnels."""
     try:
@@ -198,7 +202,7 @@ def list_pivots():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/pivot/pivots", methods=["POST"])
+@bp.route("/api/pivot/add", methods=["POST"])
 def add_pivot():
     """Register a new pivot point."""
     try:

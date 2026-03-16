@@ -2,12 +2,12 @@
 
 from flask import Blueprint, request, jsonify
 from core.config import logger
-from core.api_tester import api_tester
+from core.api_security import api_tester
 
 bp = Blueprint("api_security", __name__)
 
 
-@bp.route("/api/security/graphql/introspect", methods=["POST"])
+@bp.route("/api/api-security/graphql/introspect", methods=["POST"])
 def graphql_introspect():
     """Perform GraphQL introspection to discover schema."""
     try:
@@ -27,7 +27,7 @@ def graphql_introspect():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/security/graphql/fuzz", methods=["POST"])
+@bp.route("/api/api-security/graphql/fuzz", methods=["POST"])
 def graphql_fuzz():
     """Fuzz a GraphQL endpoint with injection payloads."""
     try:
@@ -50,7 +50,7 @@ def graphql_fuzz():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/security/jwt/analyze", methods=["POST"])
+@bp.route("/api/api-security/jwt/analyze", methods=["POST"])
 def jwt_analyze():
     """Analyze a JWT token for vulnerabilities."""
     try:
@@ -66,7 +66,7 @@ def jwt_analyze():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/security/jwt/crack", methods=["POST"])
+@bp.route("/api/api-security/jwt/crack", methods=["POST"])
 def jwt_crack():
     """Attempt to crack a JWT secret."""
     try:
@@ -86,7 +86,7 @@ def jwt_crack():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/security/api/fuzz", methods=["POST"])
+@bp.route("/api/api-security/fuzz", methods=["POST"])
 def api_fuzz():
     """Fuzz a REST API endpoint."""
     try:
@@ -108,7 +108,7 @@ def api_fuzz():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/security/ratelimit", methods=["POST"])
+@bp.route("/api/api-security/rate-limit", methods=["POST"])
 def rate_limit_test():
     """Test rate limiting on an endpoint."""
     try:
@@ -129,7 +129,7 @@ def rate_limit_test():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/security/auth-bypass", methods=["POST"])
+@bp.route("/api/api-security/auth-bypass", methods=["POST"])
 def auth_bypass_test():
     """Test authentication bypass techniques."""
     try:
@@ -149,7 +149,7 @@ def auth_bypass_test():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/security/ffuf", methods=["POST"])
+@bp.route("/api/api-security/ffuf", methods=["POST"])
 def ffuf_fuzz():
     """Fuzz API endpoints using FFUF."""
     try:
@@ -175,7 +175,7 @@ def ffuf_fuzz():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/security/arjun", methods=["POST"])
+@bp.route("/api/api-security/arjun", methods=["POST"])
 def arjun_discover():
     """Discover hidden API parameters using Arjun."""
     try:
@@ -198,7 +198,7 @@ def arjun_discover():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/security/kiterunner", methods=["POST"])
+@bp.route("/api/api-security/kiterunner", methods=["POST"])
 def kiterunner_scan():
     """Discover API paths using Kiterunner."""
     try:
@@ -221,7 +221,7 @@ def kiterunner_scan():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/security/apifuzzer", methods=["POST"])
+@bp.route("/api/api-security/apifuzzer", methods=["POST"])
 def apifuzzer_scan():
     """Fuzz API using OpenAPI/Swagger specification."""
     try:
@@ -243,7 +243,7 @@ def apifuzzer_scan():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/security/nuclei-api", methods=["POST"])
+@bp.route("/api/api-security/nuclei", methods=["POST"])
 def nuclei_api_scan():
     """Scan API with Nuclei templates."""
     try:
@@ -266,7 +266,7 @@ def nuclei_api_scan():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/security/newman", methods=["POST"])
+@bp.route("/api/api-security/newman", methods=["POST"])
 def newman_run():
     """Run Postman collection with Newman."""
     try:
@@ -289,7 +289,7 @@ def newman_run():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/security/full-scan", methods=["POST"])
+@bp.route("/api/api-security/full-scan", methods=["POST"])
 def full_api_scan():
     """Perform comprehensive API security scan."""
     try:

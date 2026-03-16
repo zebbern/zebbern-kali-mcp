@@ -983,3 +983,175 @@ def run_amass(params: Dict[str, Any]) -> Dict[str, Any]:
         argv += shlex.split(additional_args)
 
     return execute_command_argv(argv, timeout=1800)
+
+
+def run_cve_search(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Search the NVD (NIST) database for CVEs by keyword, product, or CVE ID."""
+    import json as json_lib
+    import urllib.request
+    import urllib.parse
+    import ssl
+
+    keyword = params.get('keyword', '')
+    cve_id = params.get('cve_id', '')
+    results_per_page = min(params.get('results_per_page', 20), 100)
+
+    if not keyword and not cve_id:
+        return {'success': False, 'error': 'Either keyword or cve_id parameter is required'}
+
+    try:
+        ctx = ssl.create_default_context()
+        headers = {"User-Agent": "Mozilla/5.0"}
+
+        if cve_id:
+            url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={urllib.parse.quote(cve_id)}"
+        else:
+            url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={urllib.parse.quote(keyword)}&resultsPerPage={results_per_page}"
+
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
+            data = json_lib.loads(resp.read().decode())
+
+        vulnerabilities = []
+        for item in data.get('vulnerabilities', []):
+            cve = item.get('cve', {})
+            metrics = cve.get('metrics', {})
+
+            cvss_v31 = None
+            cvss_v2 = None
+            if 'cvssMetricV31' in metrics and metrics['cvssMetricV31']:
+                cvss_data = metrics['cvssMetricV31'][0].get('cvssData', {})
+                cvss_v31 = {
+                    'score': cvss_data.get('baseScore'),
+                    'severity': cvss_data.get('baseSeverity'),
+                    'vector': cvss_data.get('vectorString'),
+                }
+            if 'cvssMetricV2' in metrics and metrics['cvssMetricV2']:
+                cvss_data = metrics['cvssMetricV2'][0].get('cvssData', {})
+                cvss_v2 = {
+                    'score': cvss_data.get('baseScore'),
+                    'vector': cvss_data.get('vectorString'),
+                }
+
+            descriptions = cve.get('descriptions', [])
+            desc_en = ''
+            for d in descriptions:
+                if d.get('lang') == 'en':
+                    desc_en = d.get('value', '')
+                    break
+
+            refs = [r.get('url', '') for r in cve.get('references', [])]
+
+            weaknesses = []
+            for w in cve.get('weaknesses', []):
+                for wd in w.get('description', []):
+                    if wd.get('lang') == 'en':
+                        weaknesses.append(wd.get('value', ''))
+
+            vuln = {
+                'cve_id': cve.get('id', ''),
+                'published': cve.get('published', ''),
+                'last_modified': cve.get('lastModified', ''),
+                'description': desc_en,
+                'cvss_v31': cvss_v31,
+                'cvss_v2': cvss_v2,
+                'weaknesses': weaknesses,
+                'references': refs[:10],
+            }
+            vulnerabilities.append(vuln)
+
+        return {
+            'success': True,
+            'source': 'NVD (NIST)',
+            'total_results': data.get('totalResults', 0),
+            'results_returned': len(vulnerabilities),
+            'vulnerabilities': vulnerabilities,
+        }
+    except Exception as e:
+        logger.error(f"Error in cve_search: {str(e)}")
+        return {'success': False, 'error': f"NVD query failed: {str(e)}"}
+
+
+def run_cve_package_audit(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Query OSV.dev for CVEs affecting a specific package and version."""
+    import json as json_lib
+    import urllib.request
+    import ssl
+
+    package_name = params.get('package', '')
+    version = params.get('version', '')
+    ecosystem = params.get('ecosystem', '')
+
+    if not package_name:
+        return {'success': False, 'error': 'package parameter is required'}
+
+    try:
+        ctx = ssl.create_default_context()
+
+        query: Dict[str, Any] = {"package": {"name": package_name}}
+        if ecosystem:
+            query["package"]["ecosystem"] = ecosystem
+        if version:
+            query["version"] = version
+
+        body = json_lib.dumps(query).encode()
+        req = urllib.request.Request(
+            "https://api.osv.dev/v1/query",
+            data=body,
+            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
+            data = json_lib.loads(resp.read().decode())
+
+        vulns = []
+        for v in data.get('vulns', []):
+            affected_ranges = []
+            for aff in v.get('affected', []):
+                for r in aff.get('ranges', []):
+                    events = r.get('events', [])
+                    introduced = ''
+                    fixed = ''
+                    for ev in events:
+                        if 'introduced' in ev:
+                            introduced = ev['introduced']
+                        if 'fixed' in ev:
+                            fixed = ev['fixed']
+                    affected_ranges.append({
+                        'type': r.get('type', ''),
+                        'introduced': introduced,
+                        'fixed': fixed,
+                    })
+
+            aliases = v.get('aliases', [])
+            severity_list = v.get('severity', [])
+            cvss_score = None
+            for s in severity_list:
+                if s.get('type') == 'CVSS_V3':
+                    cvss_score = s.get('score', '')
+
+            vuln = {
+                'id': v.get('id', ''),
+                'aliases': aliases,
+                'summary': v.get('summary', ''),
+                'details': v.get('details', '')[:500],
+                'published': v.get('published', ''),
+                'modified': v.get('modified', ''),
+                'cvss_v3_vector': cvss_score,
+                'affected_ranges': affected_ranges,
+                'references': [r.get('url', '') for r in v.get('references', [])[:5]],
+            }
+            vulns.append(vuln)
+
+        return {
+            'success': True,
+            'source': 'OSV.dev',
+            'package': package_name,
+            'version': version or 'any',
+            'ecosystem': ecosystem or 'auto-detected',
+            'total_vulnerabilities': len(vulns),
+            'vulnerabilities': vulns,
+        }
+    except Exception as e:
+        logger.error(f"Error in cve_package_audit: {str(e)}")
+        return {'success': False, 'error': f"OSV.dev query failed: {str(e)}"}

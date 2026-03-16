@@ -1,6 +1,9 @@
 """Session manager endpoints + session I/O for active sessions."""
 
 import json
+import base64
+import tempfile
+import os
 from flask import Blueprint, request, jsonify
 from core.config import logger, active_sessions, active_ssh_sessions
 from core.session_manager import session_manager
@@ -106,10 +109,14 @@ def session_import():
         if not archive_data:
             return jsonify({"error": "archive_data is required", "success": False}), 400
 
-        result = session_manager.import_session(
-            archive_data=archive_data,
-            name=params.get("name", "")
-        )
+        archive_bytes = base64.b64decode(archive_data)
+        with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
+            tmp.write(archive_bytes)
+            tmp_path = tmp.name
+        try:
+            result = session_manager.import_session(archive_path=tmp_path)
+        finally:
+            os.unlink(tmp_path)
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error importing session: {str(e)}")

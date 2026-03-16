@@ -7,13 +7,13 @@ Security considerations and hardening recommendations for Zebbern-MCP.
 ## Security Overview
 
 !!! danger "Critical Warning"
-    
-    Zebbern-MCP is a powerful penetration testing tool that provides **unrestricted command execution** on the Kali server. 
-    
+
+    Zebbern-MCP is a powerful penetration testing tool that provides **unrestricted command execution** on the Kali server.
+
     **By default, the API has no authentication.**
-    
+
     Only use this tool:
-    
+
     - On isolated networks
     - With proper authorization
     - For legitimate security testing
@@ -28,6 +28,7 @@ Security considerations and hardening recommendations for Zebbern-MCP.
 | HTTPS | **Disabled** | 🔴 Critical |
 | Command Execution | **Unrestricted** | 🔴 Critical |
 | Network Binding | `0.0.0.0` (all interfaces) | 🟠 High |
+| SOCKS Proxy (port 1080) | **Exposed when VPN active** | 🟠 High |
 | Database Encryption | **None** | 🟡 Medium |
 
 ---
@@ -66,9 +67,11 @@ Security considerations and hardening recommendations for Zebbern-MCP.
 # Only allow from specific IP
 sudo ufw default deny incoming
 sudo ufw allow from 192.168.56.1 to any port 5000
+sudo ufw allow from 192.168.56.1 to any port 1080  # SOCKS proxy
 
 # Or specific subnet
 sudo ufw allow from 192.168.56.0/24 to any port 5000
+sudo ufw allow from 192.168.56.0/24 to any port 1080  # SOCKS proxy
 
 # Enable firewall
 sudo ufw enable
@@ -102,26 +105,18 @@ app.run(host="192.168.56.100", port=5000)
 Create a simple authentication middleware:
 
 ```python
-# In kali_server.py
-from functools import wraps
+# In kali_server.py — applies to ALL routes (including blueprints)
 from flask import request, jsonify
 
 API_KEY = "your-secure-random-key-here"
 
-def require_api_key(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        key = request.headers.get('X-API-Key')
-        if key != API_KEY:
-            return jsonify({"error": "Unauthorized"}), 401
-        return f(*args, **kwargs)
-    return decorated
-
-# Apply to routes
-@app.route("/api/exec", methods=["POST"])
-@require_api_key
-def exec_command():
-    ...
+@app.before_request
+def require_api_key():
+    if request.endpoint == "health.health":
+        return  # Allow unauthenticated health checks
+    key = request.headers.get('X-API-Key')
+    if key != API_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
 ```
 
 ### Option 2: Enable HTTPS
@@ -218,18 +213,14 @@ def log_command(command, user_ip):
 
 ### Database Protection
 
-The SQLite database stores discovered credentials:
+The target database is managed in-memory by `core/target_database.py` — there is no on-disk database file by default.
 
-```
-/opt/zebbern-kali/database/pentest.db
-```
-
-**Protect the database:**
+If you add persistent storage in the future, restrict permissions on the database file:
 
 ```bash
-# Restrict permissions
-chmod 600 /opt/zebbern-kali/database/pentest.db
-chown root:root /opt/zebbern-kali/database/pentest.db
+# Restrict permissions on any persistent database
+chmod 600 /opt/zebbern-kali/data/pentest.db
+chown root:root /opt/zebbern-kali/data/pentest.db
 ```
 
 ### Encrypt Sensitive Data
@@ -255,8 +246,8 @@ def decrypt_password(encrypted):
 # Export data first
 curl http://localhost:5000/api/db/export > backup.json
 
-# Then clear database
-rm /opt/zebbern-kali/database/pentest.db
+# Then clear in-memory database by restarting the server
+sudo systemctl restart kali-mcp
 ```
 
 ---
@@ -300,9 +291,9 @@ curl -X DELETE http://localhost:5000/api/shell/listeners/all
 ### Use Only with Authorization
 
 !!! warning "Legal Compliance"
-    
+
     Always obtain written authorization before testing:
-    
+
     - Signed penetration test agreement
     - Defined scope and rules of engagement
     - Emergency contacts

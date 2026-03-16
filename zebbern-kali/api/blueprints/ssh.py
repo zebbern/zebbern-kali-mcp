@@ -39,15 +39,19 @@ def start_ssh_session():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/ssh/session/<session_id>/command", methods=["POST"])
-def execute_ssh_command(session_id):
+@bp.route("/api/ssh/session/command", methods=["POST"])
+def execute_ssh_command():
     try:
-        if session_id not in active_ssh_sessions:
-            return jsonify({"error": f"SSH session {session_id} not found"}), 404
-
         params = request.json
         if not params or "command" not in params:
             return jsonify({"error": "Command parameter is required"}), 400
+
+        session_id = params.get("session_id", "")
+        if not session_id:
+            return jsonify({"error": "session_id is required"}), 400
+
+        if session_id not in active_ssh_sessions:
+            return jsonify({"error": f"SSH session {session_id} not found"}), 404
 
         command = params["command"]
         timeout = params.get("timeout", 30)
@@ -74,9 +78,14 @@ def get_ssh_session_status(session_id):
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/ssh/session/<session_id>/stop", methods=["POST"])
-def stop_ssh_session(session_id):
+@bp.route("/api/ssh/session/stop", methods=["POST"])
+def stop_ssh_session():
     try:
+        params = request.json or {}
+        session_id = params.get("session_id", "")
+        if not session_id:
+            return jsonify({"error": "session_id is required"}), 400
+
         if session_id not in active_ssh_sessions:
             return jsonify({"error": f"SSH session {session_id} not found"}), 404
 
@@ -105,16 +114,20 @@ def list_ssh_sessions():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/ssh/session/<session_id>/upload_content", methods=["POST"])
-def upload_content_to_ssh_session(session_id):
+@bp.route("/api/ssh/session/upload-content", methods=["POST"])
+def upload_content_to_ssh_session():
     """Upload content to target via SSH session with integrity verification."""
     try:
+        params = request.json or {}
+        session_id = params.get("session_id", "")
+        if not session_id:
+            return jsonify({"error": "session_id is required"}), 400
+
         if session_id not in active_ssh_sessions:
             return jsonify({"error": f"SSH session {session_id} not found"}), 404
 
-        params = request.json or {}
         content = params.get("content", "")
-        remote_file = params.get("remote_file", "")
+        remote_file = params.get("remote_file", "") or params.get("remote_path", "")
         encoding = params.get("encoding", "base64")
 
         if not content or not remote_file:
@@ -139,15 +152,19 @@ def upload_content_to_ssh_session(session_id):
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/ssh/session/<session_id>/download_content", methods=["POST"])
-def download_content_from_ssh_session(session_id):
+@bp.route("/api/ssh/session/download-content", methods=["POST"])
+def download_content_from_ssh_session():
     """Download content from target via SSH session with integrity verification."""
     try:
+        params = request.json or {}
+        session_id = params.get("session_id", "")
+        if not session_id:
+            return jsonify({"error": "session_id is required"}), 400
+
         if session_id not in active_ssh_sessions:
             return jsonify({"error": f"SSH session {session_id} not found"}), 404
 
-        params = request.json or {}
-        remote_file = params.get("remote_file", "")
+        remote_file = params.get("remote_file", "") or params.get("remote_path", "")
 
         if not remote_file:
             return jsonify({"error": "remote_file parameter is required"}), 400
