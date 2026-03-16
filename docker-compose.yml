@@ -1,5 +1,6 @@
 services:
   kali-server:
+    container_name: zebbern-kali
     image: ghcr.io/zebbern/zebbern-kali-mcp:latest
     build:
       context: .
