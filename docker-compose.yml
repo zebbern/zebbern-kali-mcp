@@ -32,7 +32,7 @@ services:
       resources:
         limits:
           memory: 4g
-          cpus: "2"
+          cpus: "2.0"
     restart: unless-stopped
     # -- CTF network helpers (uncomment as needed) --
     # dns:

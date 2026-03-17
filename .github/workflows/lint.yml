@@ -28,4 +28,4 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Pylint
-        run: pylint --fail-under=5.0 zebbern-kali/ mcp_server.py mcp_tools/
+        run: pylint --rcfile=.pylintrc --fail-under=5.0 zebbern-kali/ mcp_server.py mcp_tools/
