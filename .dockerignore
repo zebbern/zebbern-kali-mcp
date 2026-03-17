@@ -35,9 +35,13 @@ docs/
 install.sh
 install.py
 
-# Editor and IDE config
+# CI and editor config
+.github/
+.vscode/
 .pylintrc
 pyrightconfig.json
+pyproject.toml
+MANIFEST.in
 mkdocs.yml
 
 # Host-only sync/test scripts
