@@ -191,21 +191,25 @@ def session_read_output(session_id):
 
         if session_id in active_sessions:
             shell_manager = active_sessions[session_id]
+            output = shell_manager.read_output(timeout=timeout, max_lines=lines)
             status = shell_manager.get_status()
             return jsonify({
                 "success": True,
                 "session_id": session_id,
                 "session_type": "reverse_shell",
+                "output": output,
                 "status": status,
             })
 
         elif session_id in active_ssh_sessions:
             ssh_mgr = active_ssh_sessions[session_id]
+            output = ssh_mgr.read_output(timeout=timeout, max_lines=lines)
             status = ssh_mgr.get_status()
             return jsonify({
                 "success": True,
                 "session_id": session_id,
                 "session_type": "ssh",
+                "output": output,
                 "status": status,
             })
 

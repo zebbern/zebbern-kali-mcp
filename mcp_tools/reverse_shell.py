@@ -101,16 +101,6 @@ def register(mcp: FastMCP, kali_client) -> None:
         return kali_client.safe_post(f"api/reverse-shell/{session_id}/stop", {})
 
     @mcp.tool()
-    def reverse_shell_sessions() -> Dict[str, Any]:
-        """
-        List all active reverse shell sessions with their details.
-
-        Returns:
-            All active sessions with IDs, ports, connection status, and timestamps
-        """
-        return kali_client.safe_get("api/reverse-shell/sessions")
-
-    @mcp.tool()
     def reverse_shell_upload_content(
         session_id: str, content: str, remote_file: str,
         method: str = "base64", encoding: str = "utf-8",

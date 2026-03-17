@@ -1,5 +1,6 @@
 """Shared helpers for API route blueprints."""
 
+import json as _json
 import queue
 import threading
 from flask import Response, stream_with_context
@@ -19,7 +20,7 @@ def sse_response(generator):
 
 
 def streaming_tool_response(run_func, params):
-    """Generic streaming SSE response for tool endpoints (gobuster, dirb, nikto).
+    """Generic streaming SSE response for tool endpoints (gobuster, nikto, etc).
 
     Deduplicates the identical streaming boilerplate used by multiple tools.
     """
@@ -27,7 +28,7 @@ def streaming_tool_response(run_func, params):
 
     def generate_output():
         def handle_output(source, line):
-            escaped = line.replace('"', '\\"')
+            escaped = _json.dumps(line)[1:-1]
             output_queue.put(
                 f'data: {{"type": "output", "source": "{source}", "line": "{escaped}"}}\n\n'
             )
@@ -74,9 +75,10 @@ def streaming_tool_response(run_func, params):
 
     return Response(
         stream_with_context(generate_output()),
-        content_type="text/plain; charset=utf-8",
+        content_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
         },
     )

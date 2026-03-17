@@ -36,10 +36,10 @@ def download_from_kali():
         if not params:
             return jsonify({"error": "Request body is required"}), 400
 
-        remote_file = params.get("remote_file")
+        remote_file = params.get("remote_file") or params.get("remote_path")
 
         if not remote_file:
-            return jsonify({"error": "remote_file parameter is required"}), 400
+            return jsonify({"error": "remote_file or remote_path parameter is required"}), 400
 
         result = download_content(remote_file)
         return jsonify(result)

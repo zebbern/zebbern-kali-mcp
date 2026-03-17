@@ -36,7 +36,8 @@ def bloodhound_collect():
             password=params["password"],
             dc_ip=params["dc_ip"],
             collection_method=params.get("collection_method", "all"),
-            use_ldaps=params.get("use_ldaps", False)
+            use_ldaps=params.get("use_ldaps", False),
+            nameserver=params.get("nameserver", "")
         )
         return jsonify(result)
     except Exception as e:
@@ -49,11 +50,11 @@ def secretsdump():
     """Dump secrets from a remote machine."""
     try:
         params = request.json or {}
-        if not params.get("target"):
-            return jsonify({"error": "target is required", "success": False}), 400
+        if not params.get("target") and not params.get("dc_ip"):
+            return jsonify({"error": "target or dc_ip is required", "success": False}), 400
 
         result = ad_tools.secretsdump(
-            target=params["target"],
+            target=params.get("target") or params.get("dc_ip"),
             username=params.get("username", ""),
             password=params.get("password", ""),
             domain=params.get("domain", ""),
@@ -81,7 +82,8 @@ def kerberoast():
             username=params["username"],
             password=params["password"],
             dc_ip=params["dc_ip"],
-            output_format=params.get("output_format", "hashcat")
+            output_format=params.get("output_format", "hashcat"),
+            target_user=params.get("target_user", "")
         )
         return jsonify(result)
     except Exception as e:
@@ -162,12 +164,17 @@ def ldap_enum():
         if not params.get("dc_ip") or not params.get("domain"):
             return jsonify({"error": "dc_ip and domain are required", "success": False}), 400
 
+        anonymous = params.get("anonymous")
+        if anonymous is None:
+            # default to anonymous only when no credentials provided
+            anonymous = not (params.get("username") and params.get("password"))
+
         result = ad_tools.ldap_enum(
             dc_ip=params["dc_ip"],
             domain=params["domain"],
             username=params.get("username", ""),
             password=params.get("password", ""),
-            anonymous=params.get("anonymous", True),
+            anonymous=anonymous,
             query=params.get("query", "")
         )
         return jsonify(result)
@@ -181,14 +188,18 @@ def password_spray():
     """Perform password spraying attack."""
     try:
         params = request.json or {}
-        required = ["target", "userlist", "password"]
+        required = ["target", "password"]
         for field in required:
-            if not params.get(field):
+            # accept dc_ip as an alias for target
+            val = params.get(field)
+            if field == "target":
+                val = params.get("target") or params.get("dc_ip")
+            if not val:
                 return jsonify({"error": f"{field} is required", "success": False}), 400
 
         result = ad_tools.password_spray(
-            target=params["target"],
-            userlist=params["userlist"],
+            target=params.get("target") or params.get("dc_ip"),
+            userlist=params.get("userlist", ""),
             password=params["password"],
             domain=params.get("domain", ""),
             protocol=params.get("protocol", "smb"),

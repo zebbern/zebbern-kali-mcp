@@ -788,18 +788,6 @@ exploit_copy(
 
 ---
 
-### `tools_shodan`
-
-Shodan CLI for host lookup.
-
-```python
-tools_shodan(
-    query: str,
-    operation: str = "search",
-    additional_args: str = ""
-) -> Dict
-```
-
 ---
 
 ## Metasploit

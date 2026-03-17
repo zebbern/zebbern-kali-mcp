@@ -107,7 +107,7 @@ def command():
         if should_stream:
             return Response(
                 stream_with_context(stream_command_execution(command, streaming)),
-                content_type="text/plain; charset=utf-8",
+                content_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
                     "Connection": "keep-alive",

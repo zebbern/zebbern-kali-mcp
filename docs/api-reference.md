@@ -451,19 +451,6 @@ Wayback Machine URLs.
 
 ---
 
-### POST `/api/tools/shodan`
-
-Shodan CLI.
-
-**Request:**
-```json
-{
-  "query": "apache country:US",
-  "operation": "search",
-  "additional_args": ""
-}
-```
-
 ---
 
 ### POST `/api/tools/metasploit`

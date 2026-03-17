@@ -13,7 +13,7 @@ def start_reverse_shell_listener():
         params = request.json or {}
         port = params.get("port", 4444)
         session_id = params.get("session_id", f"shell_{port}")
-        listener_type = params.get("listener_type", "pwncat")
+        listener_type = params.get("listener_type", "netcat")
 
         if session_id in active_sessions:
             return jsonify({"error": f"Session {session_id} already exists"}), 400

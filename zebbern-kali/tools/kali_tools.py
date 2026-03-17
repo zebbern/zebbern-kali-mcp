@@ -24,7 +24,7 @@ def run_nmap(params: Dict[str, Any]) -> Dict[str, Any]:
         target = params.get("target", "")
         scan_type = params.get("scan_type", "-sCV")
         ports = params.get("ports", "")
-        additional_args = params.get("additional_args", "-T4 -Pn")
+        additional_args = params.get("additional_args", "") or "-T4 -Pn"
 
         if not target:
             logger.warning("Nmap called without target parameter")
@@ -61,6 +61,9 @@ def run_gobuster(params: Dict[str, Any], on_output=None) -> Dict[str, Any]:
         mode = params.get("mode", "dir")
         wordlist = params.get("wordlist", "/usr/share/wordlists/dirb/common.txt")
         additional_args = params.get("additional_args", "")
+        threads = params.get("threads", 10)
+        extensions = params.get("extensions", "")
+        status_codes = params.get("status_codes", "")
 
         if not url:
             logger.warning("Gobuster called without URL parameter")
@@ -77,7 +80,14 @@ def run_gobuster(params: Dict[str, Any], on_output=None) -> Dict[str, Any]:
                 "success": False
             }
 
-        command = f"gobuster {mode} -u {url} -w {wordlist}"
+        command = f"gobuster {mode} -u {url} -w {wordlist} --no-color"
+
+        if threads and int(threads) != 10:
+            command += f" -t {threads}"
+        if extensions:
+            command += f" -x {extensions}"
+        if status_codes:
+            command += f" -s {status_codes}"
 
         if additional_args:
             command += f" {additional_args}"
@@ -163,48 +173,13 @@ def run_fierce(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 
-def run_dirb(params: Dict[str, Any], on_output=None) -> Dict[str, Any]:
-    """Execute dirb with the provided parameters."""
-    try:
-        url = params.get("url", "")
-        wordlist = params.get("wordlist", "/usr/share/wordlists/dirb/common.txt")
-        additional_args = params.get("additional_args", "")
-
-        if not url:
-            logger.warning("Dirb called without URL parameter")
-            return {
-                "error": "URL parameter is required",
-                "success": False
-            }
-
-        command = f"dirb {url} {wordlist}"
-
-        if additional_args:
-            command += f" {additional_args}"
-
-        # Use provided callback or default logging callback
-        output_callback = on_output
-        if not output_callback:
-            def handle_dirb_output(source, line):
-                logger.info(f"[DIRB-{source.upper()}] {line}")
-            output_callback = handle_dirb_output
-
-        result = execute_command(command, on_output=output_callback)
-        return result
-    except Exception as e:
-        logger.error(f"Error in dirb: {str(e)}")
-        logger.error(traceback.format_exc())
-        return {
-            "error": f"Server error: {str(e)}",
-            "success": False
-        }
-
-
 def run_nikto(params: Dict[str, Any], on_output=None) -> Dict[str, Any]:
     """Execute nikto with the provided parameters."""
     try:
         target = params.get("target", "")
         additional_args = params.get("additional_args", "")
+        tuning = params.get("tuning", "")
+        output_format = params.get("output_format", "")
 
         if not target:
             logger.warning("Nikto called without target parameter")
@@ -214,6 +189,11 @@ def run_nikto(params: Dict[str, Any], on_output=None) -> Dict[str, Any]:
             }
 
         command = f"nikto -h {target}"
+
+        if tuning:
+            command += f" -Tuning {tuning}"
+        if output_format:
+            command += f" -Format {output_format}"
 
         if additional_args:
             command += f" {additional_args}"
@@ -242,6 +222,12 @@ def run_sqlmap(params: Dict[str, Any]) -> Dict[str, Any]:
         url = params.get("url", "")
         data = params.get("data", "")
         additional_args = params.get("additional_args", "")
+        technique = params.get("technique", "")
+        level = params.get("level", 1)
+        risk = params.get("risk", 1)
+        dbs = params.get("dbs", False)
+        tables = params.get("tables", False)
+        dump = params.get("dump", False)
 
         if not url:
             logger.warning("SQLmap called without URL parameter")
@@ -256,7 +242,20 @@ def run_sqlmap(params: Dict[str, Any]) -> Dict[str, Any]:
             command += f" --data '{data}'"
 
         # Add common safe arguments
-        command += " --batch --threads=5 --random-agent"
+        command += " --batch --disable-coloring --threads=5 --random-agent"
+
+        if technique:
+            command += f" --technique={technique}"
+        if int(level) != 1:
+            command += f" --level={level}"
+        if int(risk) != 1:
+            command += f" --risk={risk}"
+        if dbs:
+            command += " --dbs"
+        if tables:
+            command += " --tables"
+        if dump:
+            command += " --dump"
 
         if additional_args:
             command += f" {additional_args}"
@@ -285,14 +284,26 @@ def run_metasploit(params: Dict[str, Any]) -> Dict[str, Any]:
                 "success": False
             }
 
-        # Build msfconsole command
-        command = f"msfconsole -x 'use {module};"
+        # Sanitize module name — only allow safe characters
+        import re as _re
+        if not _re.match(r'^[a-zA-Z0-9_/.-]+$', module):
+            return {
+                "error": f"Invalid module name: {module}",
+                "success": False
+            }
 
-        # Add options
+        # Build msfconsole command using argv to avoid shell injection
+        msf_commands = f"use {module};"
+
         for key, value in options.items():
-            command += f" set {key} {value};"
+            # Sanitize key and value
+            safe_key = _re.sub(r'[^a-zA-Z0-9_]', '', str(key))
+            safe_value = str(value).replace("'", "").replace(";", "").replace("`", "")
+            msf_commands += f" set {safe_key} {safe_value};"
 
-        command += " run; exit'"
+        msf_commands += " run; exit"
+
+        command = f"msfconsole -q -x '{msf_commands}'"
 
         result = execute_command(command)
         return result
@@ -314,6 +325,9 @@ def run_hydra(params: Dict[str, Any]) -> Dict[str, Any]:
         username_file = params.get("username_file", "")
         password = params.get("password", "")
         password_file = params.get("password_file", "")
+        port = params.get("port")
+        tasks = params.get("tasks")
+        wait = params.get("wait")
         additional_args = params.get("additional_args", "")
 
         if not target or not service:
@@ -340,6 +354,13 @@ def run_hydra(params: Dict[str, Any]) -> Dict[str, Any]:
             command += f" -P {password_file}"
         else:
             command += " -P /usr/share/wordlists/rockyou.txt"  # Default wordlist
+
+        if port is not None and int(port) != 0:
+            command += f" -s {port}"
+        if tasks is not None:
+            command += f" -t {tasks}"
+        if wait is not None:
+            command += f" -w {wait}"
 
         if additional_args:
             command += f" {additional_args}"
@@ -399,6 +420,9 @@ def run_wpscan(params: Dict[str, Any]) -> Dict[str, Any]:
     try:
         url = params.get("url", "")
         additional_args = params.get("additional_args", "")
+        api_token = params.get("api_token", "")
+        enumerate_opt = params.get("enumerate", "")
+        output_format = params.get("output_format", "")
 
         if not url:
             logger.warning("WPScan called without URL parameter")
@@ -410,7 +434,14 @@ def run_wpscan(params: Dict[str, Any]) -> Dict[str, Any]:
         command = f"wpscan --url {url}"
 
         # Add common safe arguments
-        command += " --random-user-agent --disable-tls-checks"
+        command += " --no-banner --random-user-agent --disable-tls-checks"
+
+        if api_token:
+            command += f" --api-token {api_token}"
+        if enumerate_opt:
+            command += f" -e {enumerate_opt}"
+        if output_format and output_format != "cli":
+            command += f" -f {output_format}"
 
         if additional_args:
             command += f" {additional_args}"
@@ -450,132 +481,6 @@ def run_enum4linux(params: Dict[str, Any]) -> Dict[str, Any]:
             "error": f"Server error: {str(e)}",
             "success": False
         }
-
-def run_403bypasser(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Execute 403bypasser by calling the Python script directly.
-
-    CRITICAL FIX: The /usr/local/bin/403bypasser wrapper script contains
-    'cd /opt/403bypasser' which changes to a root-owned directory before
-    running the tool. This causes permission errors. We bypass the wrapper
-    and call the Python script directly with our controlled working directory.
-    """
-    import tempfile
-    import os
-    import subprocess
-
-    try:
-        url = params.get("url", "")
-        urllist = params.get("urllist", "")
-        directory = params.get("directory", "")
-        dirlist = params.get("dirlist", "")
-        additional_args = params.get("additional_args", "")
-
-        # Create temp files and working directory
-        temp_url_file = None
-        temp_dir_file = None
-        work_dir = tempfile.mkdtemp(prefix='403bypasser_')
-
-        try:
-            # Handle URL input
-            if url:
-                temp_url_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', dir=work_dir)
-                temp_url_file.write(url + '\n')
-                temp_url_file.close()
-                url_param = ["-U", temp_url_file.name]
-            elif urllist:
-                url_param = ["-U", urllist]
-            else:
-                return {"error": "Either url or urllist parameter is required", "success": False}
-
-            # Handle directory input
-            if directory:
-                temp_dir_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', dir=work_dir)
-                temp_dir_file.write(directory + '\n')
-                temp_dir_file.close()
-                dir_param = ["-D", temp_dir_file.name]
-            elif dirlist:
-                dir_param = ["-D", dirlist]
-            else:
-                temp_dir_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', dir=work_dir)
-                temp_dir_file.write("/admin\n")
-                temp_dir_file.close()
-                dir_param = ["-D", temp_dir_file.name]
-
-            # Call Python script DIRECTLY, not the wrapper!
-            cmd = ["python3", "/opt/403bypasser/403bypasser.py"] + url_param + dir_param
-            if additional_args:
-                cmd.extend(additional_args.split())
-
-            logger.info(f"Executing 403bypasser directly in {work_dir}")
-
-            # Execute with explicit cwd - this works now that we're not using the wrapper!
-            process = subprocess.Popen(
-                cmd,
-                cwd=work_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-
-            stdout, stderr = process.communicate(timeout=2000)
-            return_code = process.returncode
-
-            # Build result
-            result = {
-                "stdout": stdout,
-                "stderr": stderr,
-                "return_code": return_code,
-                "success": return_code == 0,
-                "timed_out": False,
-                "partial_results": False
-            }
-
-            # Read output files
-            output_files = []
-            if os.path.exists(work_dir):
-                for filename in os.listdir(work_dir):
-                    if filename.endswith('.txt'):
-                        # Skip our temp input files
-                        if temp_url_file and filename == os.path.basename(temp_url_file.name):
-                            continue
-                        if temp_dir_file and filename == os.path.basename(temp_dir_file.name):
-                            continue
-
-                        filepath = os.path.join(work_dir, filename)
-                        try:
-                            with open(filepath, 'r') as f:
-                                file_content = f.read()
-                                output_files.append({'filename': filename, 'content': file_content})
-                                logger.info(f"Captured output file: {filename}")
-                        except Exception as read_error:
-                            logger.warning(f"Could not read output file {filename}: {read_error}")
-
-                if output_files:
-                    result['output_files'] = output_files
-                    result['message'] = f"403bypasser completed. Created {len(output_files)} output file(s)."
-
-            return result
-
-        except subprocess.TimeoutExpired:
-            logger.error("403bypasser timed out after 2000 seconds")
-            return {"error": "Command timed out", "success": False, "timed_out": True}
-
-        finally:
-            # Clean up
-            import shutil
-            try:
-                if os.path.exists(work_dir):
-                    shutil.rmtree(work_dir)
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to clean up work directory: {cleanup_error}")
-
-    except Exception as e:
-        logger.error(f"Error in 403bypasser: {str(e)}")
-        logger.error(traceback.format_exc())
-        return {"error": f"Server error: {str(e)}", "success": False}
-
-
-
 
 def run_byp4xx(params: Dict[str, Any]) -> Dict[str, Any]:
     """Run byp4xx (fast 403 bypass) with rate limiting."""
@@ -699,6 +604,10 @@ def run_arjun(params: Dict[str, Any]) -> Dict[str, Any]:
     method = params.get('method', 'GET')
     wordlist = params.get('wordlist', '')
     additional_args = params.get('additional_args', '')
+    delay = params.get('delay', 0)
+    threads = params.get('threads', 0)
+    include = params.get('include', '')
+    exclude = params.get('exclude', '')
 
     if not url:
         return {'success': False, 'error': 'url parameter is required'}
@@ -710,6 +619,15 @@ def run_arjun(params: Dict[str, Any]) -> Dict[str, Any]:
 
     if wordlist:
         command += f" -w {wordlist}"
+
+    if delay and int(delay) > 0:
+        command += f" --delay {delay}"
+    if threads and int(threads) > 0:
+        command += f" -t {threads}"
+    if include:
+        command += f" --include {include}"
+    if exclude:
+        command += f" --exclude {exclude}"
 
     if additional_args:
         command += f" {additional_args}"
@@ -786,28 +704,12 @@ def run_waybackurls(params: Dict[str, Any]) -> Dict[str, Any]:
     # Use the waybackurls from go/bin
     waybackurls_path = "/home/kali/go/bin/waybackurls"
 
-    command = f"echo '{domain}' | {waybackurls_path}"
+    command = f"echo {shlex.quote(domain)} | {waybackurls_path}"
 
     if additional_args:
         command += f" {additional_args}"
 
     return execute_command(command, timeout=2000)
-
-def run_shodan(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Execute Shodan CLI for host/search operations."""
-    operation = params.get('operation', 'search')  # search, host, scan
-    query = params.get('query', '')
-    additional_args = params.get('additional_args', '')
-
-    if not query:
-        return {'success': False, 'error': 'query parameter is required'}
-
-    command = f"shodan {operation} {query}"
-
-    if additional_args:
-        command += f" {additional_args}"
-
-    return execute_command(command, timeout=120)
 
 
 def run_masscan(params: Dict[str, Any]) -> Dict[str, Any]:

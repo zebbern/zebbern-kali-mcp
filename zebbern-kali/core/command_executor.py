@@ -9,7 +9,7 @@ from .config import logger, COMMAND_TIMEOUT
 
 class CommandExecutor:
     """Class to handle command execution with better timeout management"""
-    
+
     def __init__(self, command: str, timeout: int = COMMAND_TIMEOUT):
         self.command = command
         self.timeout = timeout
@@ -20,17 +20,17 @@ class CommandExecutor:
         self.stderr_thread = None
         self.return_code = None
         self.timed_out = False
-    
+
     def _read_stdout(self):
         """Thread function to continuously read stdout"""
         for line in iter(self.process.stdout.readline, ''):
             self.stdout_data += line
-    
+
     def _read_stderr(self):
         """Thread function to continuously read stderr"""
         for line in iter(self.process.stderr.readline, ''):
             self.stderr_data += line
-    
+
     def _read_stdout_with_streaming(self, on_output):
         """Thread function to continuously read stdout with streaming callback"""
         for line in iter(self.process.stdout.readline, ''):
@@ -40,7 +40,7 @@ class CommandExecutor:
                     on_output("stdout", line.strip())
                 except Exception as e:
                     logger.error(f"Error in streaming callback: {e}")
-    
+
     def _read_stderr_with_streaming(self, on_output):
         """Thread function to continuously read stderr with streaming callback"""
         for line in iter(self.process.stderr.readline, ''):
@@ -50,11 +50,11 @@ class CommandExecutor:
                     on_output("stderr", line.strip())
                 except Exception as e:
                     logger.error(f"Error in streaming callback: {e}")
-    
+
     def execute(self) -> Dict[str, Any]:
         """Execute the command and handle timeout gracefully"""
         logger.info(f"Executing command: {self.command}")
-        
+
         try:
             self.process = subprocess.Popen(
                 self.command,
@@ -64,7 +64,7 @@ class CommandExecutor:
                 text=True,
                 bufsize=1  # Line buffered
             )
-            
+
             # Start threads to read output continuously
             self.stdout_thread = threading.Thread(target=self._read_stdout)
             self.stderr_thread = threading.Thread(target=self._read_stderr)
@@ -72,7 +72,7 @@ class CommandExecutor:
             self.stderr_thread.daemon = True
             self.stdout_thread.start()
             self.stderr_thread.start()
-            
+
             # Wait for the process to complete or timeout
             try:
                 self.return_code = self.process.wait(timeout=self.timeout)
@@ -83,7 +83,7 @@ class CommandExecutor:
                 # Process timed out but we might have partial results
                 self.timed_out = True
                 logger.warning(f"Command timed out after {self.timeout} seconds. Terminating process.")
-                
+
                 # Try to terminate gracefully first
                 self.process.terminate()
                 try:
@@ -92,13 +92,13 @@ class CommandExecutor:
                     # Force kill if it doesn't terminate
                     logger.warning("Process not responding to termination. Killing.")
                     self.process.kill()
-                
+
                 # Update final output
                 self.return_code = -1
-            
+
             # Always consider it a success if we have output, even with timeout
             success = True if self.timed_out and (self.stdout_data or self.stderr_data) else (self.return_code == 0)
-            
+
             return {
                 "stdout": self.stdout_data,
                 "stderr": self.stderr_data,
@@ -107,7 +107,7 @@ class CommandExecutor:
                 "timed_out": self.timed_out,
                 "partial_results": self.timed_out and (self.stdout_data or self.stderr_data)
             }
-        
+
         except Exception as e:
             logger.error(f"Error executing command: {str(e)}")
             return {
@@ -122,7 +122,7 @@ class CommandExecutor:
     def execute_with_streaming(self, on_output: Callable[[str, str], None]) -> Dict[str, Any]:
         """Execute the command with streaming output via callback"""
         logger.info(f"Executing command with streaming: {self.command}")
-        
+
         try:
             self.process = subprocess.Popen(
                 self.command,
@@ -132,7 +132,7 @@ class CommandExecutor:
                 text=True,
                 bufsize=1  # Line buffered
             )
-            
+
             # Start threads to read output continuously with streaming
             self.stdout_thread = threading.Thread(target=self._read_stdout_with_streaming, args=(on_output,))
             self.stderr_thread = threading.Thread(target=self._read_stderr_with_streaming, args=(on_output,))
@@ -140,7 +140,7 @@ class CommandExecutor:
             self.stderr_thread.daemon = True
             self.stdout_thread.start()
             self.stderr_thread.start()
-            
+
             # Wait for the process to complete or timeout
             try:
                 self.return_code = self.process.wait(timeout=self.timeout)
@@ -151,7 +151,7 @@ class CommandExecutor:
                 # Process timed out but we might have partial results
                 self.timed_out = True
                 logger.warning(f"Command timed out after {self.timeout} seconds. Terminating process.")
-                
+
                 # Try to terminate gracefully first
                 self.process.terminate()
                 try:
@@ -160,13 +160,13 @@ class CommandExecutor:
                     # Force kill if it doesn't terminate
                     logger.warning("Process not responding to termination. Killing.")
                     self.process.kill()
-                
+
                 # Update final output
                 self.return_code = -1
-            
+
             # Always consider it a success if we have output, even with timeout
             success = True if self.timed_out and (self.stdout_data or self.stderr_data) else (self.return_code == 0)
-            
+
             return {
                 "stdout": self.stdout_data,
                 "stderr": self.stderr_data,
@@ -176,7 +176,7 @@ class CommandExecutor:
                 "partial_results": self.timed_out and (self.stdout_data or self.stderr_data),
                 "streaming_enabled": True
             }
-        
+
         except Exception as e:
             logger.error(f"Error executing command with streaming: {str(e)}")
             return {
@@ -286,11 +286,11 @@ def execute_command_argv(argv: list, on_output: Callable[[str, str], None] = Non
 def stream_command_execution(command: str, streaming: bool = False):
     """
     Execute a command with streaming support and blocking detection.
-    
+
     Args:
         command: The command to execute
         streaming: Whether streaming was explicitly requested
-        
+
     Yields:
         Server-sent events for streaming response
     """
@@ -299,31 +299,31 @@ def stream_command_execution(command: str, streaming: bool = False):
     import time
     from .tool_config import is_streaming_tool
     from .config import BLOCKING_TIMEOUT
-    
+
     # Check if streaming is requested or auto-detect
     tool_name = command.split()[0] if command.strip() else ""
     should_stream = streaming or is_streaming_tool(tool_name)
-    
+
     if not should_stream:
         # Non-streaming execution
         result = execute_command(command)
         yield f"data: {{\"type\": \"result\", \"success\": {str(result['success']).lower()}, \"return_code\": {result['return_code']}, \"timed_out\": {str(result.get('timed_out', False)).lower()}}}\n\n"
         yield f"data: {{\"type\": \"complete\"}}\n\n"
         return
-    
+
     # Streaming execution with blocking detection
     output_queue = queue.Queue()
     output_received = threading.Event()
-    
+
     def handle_output(source, line):
         output_received.set()  # Mark that we received output
         escaped_line = line.replace('"', '\\"')
         output_queue.put(f'data: {{"type": "output", "source": "{source}", "line": "{escaped_line}"}}\n\n')
-    
+
     # Execute command in separate thread
     result_container = {}
     command_terminated = threading.Event()
-    
+
     def execute_in_thread():
         try:
             result = execute_command(command, on_output=handle_output)
@@ -332,13 +332,15 @@ def stream_command_execution(command: str, streaming: bool = False):
             result_container['error'] = str(e)
         finally:
             output_queue.put("DONE")
-    
+
     thread = threading.Thread(target=execute_in_thread)
     thread.start()
-    
+
     start_time = time.time()
     blocking_detected = False
-    
+    # Use a longer initial timeout for streaming — many tools need >5s startup
+    stream_startup_timeout = max(BLOCKING_TIMEOUT, 30)
+
     # Yield outputs as they come
     while True:
         try:
@@ -349,25 +351,25 @@ def stream_command_execution(command: str, streaming: bool = False):
             # Reset start time when we receive output
             start_time = time.time()
         except queue.Empty:
-            # Check if no output has been received within BLOCKING_TIMEOUT
-            if not output_received.is_set() and (time.time() - start_time) > BLOCKING_TIMEOUT:
+            # Check if no output has been received within startup timeout
+            if not output_received.is_set() and (time.time() - start_time) > stream_startup_timeout:
                 blocking_detected = True
-                yield f'data: {{"type": "error", "message": "Blocking or server-hanging commands are not allowed via this endpoint. Use the appropriate reverse shell or listener API for such operations."}}\n\n'
+                yield f'data: {{"type": "error", "message": "No output received within {stream_startup_timeout}s — command may be blocking."}}\n\n'
                 yield f'data: {{"type": "complete"}}\n\n'
                 command_terminated.set()
-                return  # Exit the generator function completely
+                return
             yield "data: {\"type\": \"heartbeat\"}\n\n"
             continue
-    
+
     if not blocking_detected:
         # Wait for thread to complete
         thread.join()
-        
+
         # Send final result
         if 'result' in result_container:
             result = result_container['result']
             yield f"data: {{\"type\": \"result\", \"success\": {str(result['success']).lower()}, \"return_code\": {result['return_code']}, \"timed_out\": {str(result.get('timed_out', False)).lower()}}}\n\n"
         elif 'error' in result_container:
             yield f"data: {{\"type\": \"error\", \"message\": \"Server error: {result_container['error']}\"}}\n\n"
-        
+
         yield f"data: {{\"type\": \"complete\"}}\n\n"

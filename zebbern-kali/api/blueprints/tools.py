@@ -6,10 +6,10 @@ import traceback
 from flask import Blueprint, request, jsonify
 from core.config import logger
 from tools.kali_tools import (
-    run_nmap, run_gobuster, run_dirb, run_nikto, run_sqlmap,
+    run_nmap, run_gobuster, run_nikto, run_sqlmap,
     run_hydra, run_john, run_wpscan, run_enum4linux,
     run_subfinder, run_httpx, run_searchsploit, run_nuclei, run_arjun, run_fierce,
-    run_subzy, run_assetfinder, run_waybackurls, run_shodan, run_byp4xx,
+    run_subzy, run_assetfinder, run_waybackurls, run_byp4xx,
     run_masscan, run_katana, run_sslscan, run_crtsh, run_gowitness, run_amass,
     run_cve_search, run_cve_package_audit,
 )
@@ -39,19 +39,6 @@ def gobuster():
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error in gobuster endpoint: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
-
-
-@bp.route("/api/tools/dirb", methods=["POST"])
-def dirb():
-    try:
-        params = request.json or {}
-        if params.get("streaming", False):
-            return streaming_tool_response(run_dirb, params)
-        result = run_dirb(params)
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"Error in dirb endpoint: {str(e)}")
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
@@ -290,17 +277,6 @@ def waybackurls():
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error in waybackurls endpoint: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
-
-
-@bp.route("/api/tools/shodan", methods=["POST"])
-def shodan():
-    try:
-        params = request.json or {}
-        result = run_shodan(params)
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"Error in shodan endpoint: {str(e)}")
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 

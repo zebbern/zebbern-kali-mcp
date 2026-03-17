@@ -21,3 +21,11 @@ playwright>=1.40.0
 
 # Binary exploitation
 pwntools>=4.11.0
+
+# Crypto / math (CTF challenges)
+sympy>=1.12
+gmpy2>=2.1.0
+pycryptodome>=3.19.0
+
+# Active Directory — BloodHound ingestor (bloodhound.py)
+bloodhound>=1.7.0

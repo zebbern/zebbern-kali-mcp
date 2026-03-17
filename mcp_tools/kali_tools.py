@@ -109,19 +109,6 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
         return kali_client.heavy_tool_post("api/tools/gobuster", data)
 
     @mcp.tool()
-    def tools_dirb(url: str, wordlist: str = "/usr/share/wordlists/dirb/common.txt", additional_args: str = "") -> Dict[str, Any]:
-        """
-        Execute Dirb web content scanner.
-
-        Args:
-            url: Target URL
-            wordlist: Wordlist path on Kali
-            additional_args: Extra dirb arguments
-        """
-        data = {"url": url, "wordlist": wordlist, "additional_args": additional_args}
-        return kali_client.safe_post("api/tools/dirb", data)
-
-    @mcp.tool()
     def tools_wpscan(
         url: str, additional_args: str = "",
         api_token: str = "", enumerate: str = "", output_format: str = "cli",
@@ -368,28 +355,6 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
         """
         data = {"domain": domain, "additional_args": additional_args}
         return kali_client.safe_post("api/tools/waybackurls", data)
-
-    @mcp.tool()
-    def search_shodan(
-        query: str, facets: List[str] = [], fields: List[str] = [],
-        max_items: int = 5, page: int = 1, summarize: bool = False,
-    ) -> Dict[str, Any]:
-        """
-        Search Shodan's database for devices and services.
-
-        Args:
-            query: Shodan search query (e.g., 'apache country:US')
-            facets: Facet fields for aggregation
-            fields: Specific fields to return
-            max_items: Maximum results (default: 5)
-            page: Result page number
-            summarize: Return summary instead of full results
-        """
-        data = {
-            "query": query, "facets": facets, "fields": fields,
-            "max_items": max_items, "page": page, "summarize": summarize,
-        }
-        return kali_client.safe_post("api/tools/shodan", data)
 
     # ── Fast scanning & crawling ─────────────────────────────
 

@@ -1,13 +1,14 @@
 """File upload/download operations for Kali and targets."""
 
+import base64
 import hashlib
 from typing import Dict, Any
 from mcp.server.fastmcp import FastMCP
 
 
 def _compute_sha256(content: str) -> str:
-    """Compute SHA256 hex digest of a string."""
-    return hashlib.sha256(content.encode()).hexdigest()
+    """Compute SHA256 hex digest of base64-decoded content."""
+    return hashlib.sha256(base64.b64decode(content)).hexdigest()
 
 
 def _verify_download_checksum(response: Dict[str, Any], content_key: str = "content") -> Dict[str, Any]:

@@ -221,28 +221,6 @@ def kiterunner_scan():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/api-security/apifuzzer", methods=["POST"])
-def apifuzzer_scan():
-    """Fuzz API using OpenAPI/Swagger specification."""
-    try:
-        params = request.json or {}
-        spec_url = params.get("spec_url", "")
-        if not spec_url:
-            return jsonify({"error": "spec_url is required", "success": False}), 400
-
-        result = api_tester.apifuzzer_scan(
-            spec_url=spec_url,
-            target_url=params.get("target_url", ""),
-            auth_header=params.get("auth_header", ""),
-            test_level=params.get("test_level", 1),
-            additional_args=params.get("additional_args", "")
-        )
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"APIFuzzer error: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
-
-
 @bp.route("/api/api-security/nuclei", methods=["POST"])
 def nuclei_api_scan():
     """Scan API with Nuclei templates."""

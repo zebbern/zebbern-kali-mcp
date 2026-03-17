@@ -140,19 +140,6 @@ def register(mcp: FastMCP, kali_client) -> None:
         return kali_client.safe_post("api/api-security/kiterunner", data)
 
     @mcp.tool()
-    def api_apifuzzer_scan(url: str, spec_url: str = "", method: str = "GET") -> Dict[str, Any]:
-        """
-        Fuzz an API using APIFuzzer with OpenAPI/Swagger spec.
-
-        Args:
-            url: Target API base URL
-            spec_url: OpenAPI/Swagger specification URL
-            method: HTTP method
-        """
-        data = {"url": url, "spec_url": spec_url, "method": method}
-        return kali_client.safe_post("api/api-security/apifuzzer", data)
-
-    @mcp.tool()
     def api_nuclei_scan(url: str, tags: str = "api", severity: str = "") -> Dict[str, Any]:
         """
         Run Nuclei templates against API endpoints.

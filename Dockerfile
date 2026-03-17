@@ -20,6 +20,32 @@ ENV HOME=/root
 ENV GOPATH=/root/go
 ENV PATH="/root/go/bin:/root/.local/bin:${PATH}"
 
+# ── AI-agent optimised: suppress colors, banners, progress bars ──
+# Locale — clean UTF-8, English messages
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    LANGUAGE=en
+
+# Universal output control
+ENV NO_COLOR=1 \
+    TERM=dumb \
+    FORCE_COLOR=0 \
+    CI=true \
+    COLUMNS=200 \
+    LINES=50
+
+# Python runtime
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONWARNINGS=ignore \
+    PYTHONIOENCODING=utf-8 \
+    PIP_NO_COLOR=1
+
+# Pwntools — disable terminal features and log spam
+ENV PWNLIB_NOTERM=1
+
+
+
 WORKDIR /app
 
 # ---------- Layer 1: System & build dependencies ----------
@@ -39,45 +65,58 @@ RUN apt-get update && \
         ca-certificates \
         libssl-dev \
         libffi-dev \
+        libgmp-dev \
+        libmpfr-dev \
+        libmpc-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ---------- Layer 2: Pentest APT packages ----------
+# ---------- Layer 2: All runtime APT packages (single update) ----------
+# Pentest, wordlists, network/pivot, forensics/CTF, headless browser
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         nmap \
         gobuster \
-        dirb \
         nikto \
         sqlmap \
         hydra \
         john \
-        hashcat \
         wpscan \
         enum4linux \
         fierce \
-        theharvester \
-        recon-ng \
-        dnsenum \
         wafw00f \
-        sslyze \
-        cewl \
-        crunch \
-        medusa \
-        ncrack \
         tcpdump \
         responder \
         smbclient \
         ldap-utils \
-        bloodhound \
         crackmapexec \
         impacket-scripts \
-        set \
-        gophish \
         amass \
         masscan \
         sslscan \
         exploitdb \
-    && rm -rf /var/lib/apt/lists/*
+        wordlists \
+        seclists \
+        openvpn \
+        wireguard-tools \
+        openresolv \
+        openssh-client \
+        iputils-ping \
+        iproute2 \
+        proxychains4 \
+        socat \
+        netcat-traditional \
+        dnsutils \
+        binwalk \
+        steghide \
+        libimage-exiftool-perl \
+        foremost \
+        strace \
+        ltrace \
+        gdb \
+        chromium \
+        chromium-driver \
+    && rm -rf /var/lib/apt/lists/* \
+    && gunzip -f /usr/share/wordlists/rockyou.txt.gz 2>/dev/null || true
 
 # ---------- Layer 2b: Conditional Metasploit install ----------
 RUN if [ "$INCLUDE_METASPLOIT" = "true" ]; then \
@@ -85,27 +124,6 @@ RUN if [ "$INCLUDE_METASPLOIT" = "true" ]; then \
         apt-get install -y --no-install-recommends metasploit-framework && \
         rm -rf /var/lib/apt/lists/*; \
     fi
-
-# ---------- Layer 2c: Wordlists ----------
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        wordlists \
-        seclists \
-    && rm -rf /var/lib/apt/lists/* && \
-    gunzip -f /usr/share/wordlists/rockyou.txt.gz 2>/dev/null || true
-
-# ---------- Layer 2d: Network & pivoting tools ----------
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        openvpn \
-        wireguard-tools \
-        openresolv \
-        iproute2 \
-        proxychains4 \
-        socat \
-        netcat-traditional \
-        dnsutils \
-    && rm -rf /var/lib/apt/lists/*
 
 # ---------- Layer 2d2: microsocks SOCKS5 proxy (VPN bridge) ----------
 RUN cd /tmp && \
@@ -115,25 +133,6 @@ RUN cd /tmp && \
     cp microsocks /usr/local/bin/microsocks && \
     chmod +x /usr/local/bin/microsocks && \
     rm -rf /tmp/microsocks
-
-# ---------- Layer 2e: Forensics & CTF tools ----------
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        binwalk \
-        steghide \
-        libimage-exiftool-perl \
-        foremost \
-        strace \
-        ltrace \
-        gdb \
-    && rm -rf /var/lib/apt/lists/*
-
-# ---------- Layer 2f: Chromium for headless browser automation ----------
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        chromium \
-        chromium-driver \
-    && rm -rf /var/lib/apt/lists/*
 
 # ---------- Layer 3: Go tools ----------
 RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest || true && \
@@ -145,27 +144,22 @@ RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest || tru
     go install -v github.com/lobuhi/byp4xx@latest || true && \
     go install -v github.com/PentestPad/subzy@latest || true && \
     go install -v github.com/sensepost/gowitness@latest || true && \
-    go install -v github.com/jpillora/chisel@latest || true
+    go install -v github.com/jpillora/chisel@latest || true && \
+    go clean -cache -modcache 2>/dev/null || true
 
-# ---------- Layer 3a: Katana binary (pre-built — go install often fails) ----------
+# ---------- Layer 3a: Pre-built binaries (katana, ligolo-ng, kiterunner) ----------
 RUN cd /tmp && \
     KATANA_VER="1.1.0" && \
     wget -q "https://github.com/projectdiscovery/katana/releases/download/v${KATANA_VER}/katana_${KATANA_VER}_linux_amd64.zip" -O katana.zip && \
     unzip -o katana.zip katana -d /usr/local/bin/ && \
     chmod +x /usr/local/bin/katana && \
-    rm -f katana.zip || true
-
-# ---------- Layer 3b: Ligolo-ng proxy ----------
-RUN cd /tmp && \
+    rm -f katana.zip && \
     LIGOLO_VER="0.7.5" && \
     wget -q "https://github.com/nicocha30/ligolo-ng/releases/download/v${LIGOLO_VER}/ligolo-ng_proxy_${LIGOLO_VER}_linux_amd64.tar.gz" -O ligolo-proxy.tar.gz && \
     tar -xzf ligolo-proxy.tar.gz && \
     mv proxy /usr/local/bin/ligolo-proxy && \
     chmod +x /usr/local/bin/ligolo-proxy && \
-    rm -f ligolo-proxy.tar.gz LICENSE README.md || true
-
-# ---------- Layer 4: Kiterunner binary ----------
-RUN cd /tmp && \
+    rm -f ligolo-proxy.tar.gz LICENSE README.md && \
     wget -q "https://github.com/assetnote/kiterunner/releases/download/v1.0.2/kiterunner_1.0.2_linux_amd64.tar.gz" -O kiterunner.tar.gz && \
     tar -xzf kiterunner.tar.gz && \
     mv kr /usr/local/bin/kr && \
@@ -174,7 +168,6 @@ RUN cd /tmp && \
 
 # ---------- Layer 5: pipx tools ----------
 RUN pipx ensurepath && \
-    pipx install shodan || true && \
     pipx install ssh-audit || true && \
     pipx install arjun || true
 
@@ -186,7 +179,11 @@ COPY requirements.txt /app/requirements.txt
 RUN pip3 install --break-system-packages --no-cache-dir -r requirements.txt
 
 # ---------- Layer 7b: Install Playwright browsers ----------
-RUN playwright install chromium --with-deps 2>/dev/null || true
+RUN playwright install chromium --with-deps
+
+# Provide 'python' and 'pip' aliases (Kali only ships python3/pip3)
+RUN ln -sf /usr/bin/python3 /usr/local/bin/python && \
+    ln -sf /usr/bin/pip3 /usr/local/bin/pip
 
 # ---------- Layer 8: Application code ----------
 COPY zebbern-kali/ /app/zebbern-kali/
