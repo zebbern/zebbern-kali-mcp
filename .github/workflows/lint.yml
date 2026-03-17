@@ -28,7 +28,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Pylint on server code
-        run: pylint --rcfile=.pylintrc --exit-zero zebbern-kali/
+        run: pylint --rcfile=.pylintrc --fail-under=5.0 zebbern-kali/
 
       - name: Run Pylint on MCP client code
-        run: pylint --rcfile=.pylintrc --exit-zero mcp_tools/ mcp_server.py
+        run: pylint --rcfile=.pylintrc --fail-under=5.0 mcp_tools/ mcp_server.py
