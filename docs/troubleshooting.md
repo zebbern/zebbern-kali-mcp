@@ -193,6 +193,178 @@ sudo journalctl -u kali-mcp -n 50
 
 ---
 
+## Stuck Commands & Process Management (Docker)
+
+When the AI runs a command via `zebbern_exec` or `exec_stream` and it hangs
+(zombie process, listening socket, crashed tool), the AI has no sense of time —
+it will wait until the timeout (up to 1 hour). **You** have to intervene.
+
+### How to spot a stuck command
+
+- The VS Code tool call shows a spinner with no new output
+- The "Output" panel for the MCP tool stays empty or stopped updating
+- You know the command should have finished by now
+
+### Step 1: See what's running inside the container
+
+Open a **PowerShell / terminal** (not the AI chat) and run:
+
+```powershell
+# List all processes sorted by start time (newest first)
+docker exec zebbern-kali ps aux --sort=-start_time | head -30
+```
+
+```powershell
+# Or filter to just your suspected stuck process
+docker exec zebbern-kali ps aux | findstr "python3\|nmap\|ffuf\|nc\|listen"
+```
+
+```powershell
+# See how long each process has been running (ELAPSED column)
+docker exec zebbern-kali ps -eo pid,etime,cmd --sort=-etime | head -20
+```
+
+```powershell
+# Check which process is holding a specific port
+docker exec zebbern-kali ss -tlnp | findstr "9100"
+```
+
+### Step 2: Kill the stuck process
+
+**Option A — Direct kill (no message to AI):**
+
+```powershell
+# Kill by PID (replace 1229 with the actual PID from step 1)
+docker exec zebbern-kali kill -9 1229
+```
+
+**Option B — Kill via API with a message the AI reads:**
+
+The `/api/kill/<pid>` endpoint kills the process AND injects your message
+directly into the command result. The AI sees your message as part of the
+tool output — no need to type anything in the chat window.
+
+```powershell
+# Kill PID 1229 and tell the AI to use port 9101 instead
+curl "http://localhost:5000/api/kill/1229?message=port+stuck+use+9101"
+```
+
+```powershell
+# Kill with a longer message
+curl "http://localhost:5000/api/kill/1229?message=zombie+process+skip+this+step"
+```
+
+The killed command's response will include:
+```json
+{ "user_killed": true, "user_message": "port stuck use 9101", ... }
+```
+
+The AI reads `user_message` and adjusts its next step accordingly.
+
+**Other kill patterns:**
+
+```powershell
+# Kill by name pattern (e.g. all python3 listeners)
+docker exec zebbern-kali pkill -9 -f "ct_listen"
+```
+
+```powershell
+# Kill everything matching a pattern (be careful)
+docker exec zebbern-kali pkill -9 -f "nc -l"
+```
+
+```powershell
+# Nuclear option: kill ALL user commands (leaves Flask server running)
+docker exec zebbern-kali pkill -9 -f "^(?!.*kali_server).*python3"
+```
+
+### Step 3: Communicate the result back to the AI
+
+After you kill the process, one of two things happens:
+
+**A) The MCP tool call returns automatically.**
+When you kill the subprocess inside Docker, Flask detects the process died and
+returns the partial output + a non-zero exit code. The AI reads this result and
+sees the command was killed. You can then type a follow-up message to give context:
+
+> *"That command was stuck on port 9100 — the port was held by a zombie.
+> Use port 9101 instead."*
+
+The AI will incorporate your message and adjust.
+
+**B) The MCP tool call is still spinning (SSE stream didn't close).**
+Click the **Cancel** / **Stop** button on the tool call in VS Code. The AI receives
+`Cancelled` as the result. Then type your explanation:
+
+> *"I cancelled that — the nc listener was stuck. Skip that step and
+> move on to submitting the flag."*
+
+> *"Killed PID 1229 because it was a zombie holding port 9100.
+> Re-run the same command but on port 9101."*
+
+The AI reads your message as its next instruction and continues accordingly.
+You are effectively **steering the AI** by choosing when to kill and what to say.
+
+### Step 4: Clean up zombie ports (optional)
+
+If a port is stuck in TIME_WAIT after killing a process:
+
+```powershell
+# Check socket state
+docker exec zebbern-kali ss -tlnp | findstr "TIME_WAIT\|LISTEN"
+```
+
+TIME_WAIT sockets clear automatically after 60 seconds. If you can't wait,
+just use a different port — tell the AI which one.
+
+### Quick Reference Card
+
+| What you want | Command |
+|---|---|
+| List processes | `docker exec zebbern-kali ps aux --sort=-start_time \| head 20` |
+| Process runtime | `docker exec zebbern-kali ps -eo pid,etime,cmd --sort=-etime \| head 20` |
+| Who holds a port | `docker exec zebbern-kali ss -tlnp` |
+| Kill by PID | `docker exec zebbern-kali kill -9 <PID>` |
+| Kill + message to AI | `curl "http://localhost:5000/api/kill/<PID>?message=your+note"` |
+| List processes (API) | `curl http://localhost:5000/api/ps` |
+| Kill by name | `docker exec zebbern-kali pkill -9 -f "<pattern>"` |
+| Container resource usage | `docker stats zebbern-kali --no-stream` |
+| Container logs (Flask) | `docker logs zebbern-kali --tail 50` |
+| Restart entire container | `docker restart zebbern-kali` |
+
+### PowerShell Aliases (optional)
+
+Add these to your PowerShell profile (`$PROFILE`) for quick access:
+
+```powershell
+function kali-ps    { docker exec zebbern-kali ps aux --sort=-start_time | head -20 }
+function kali-ports { docker exec zebbern-kali ss -tlnp }
+function kali-top   { docker exec zebbern-kali top -b -n 1 | head -25 }
+function kali-kill  {
+    param([int]$pid, [string]$msg="")
+    if ($msg) {
+        $encoded = [System.Uri]::EscapeDataString($msg)
+        Invoke-RestMethod "http://localhost:5000/api/kill/$pid`?message=$encoded"
+    } else {
+        docker exec zebbern-kali kill -9 $pid
+        Write-Host "Killed PID $pid"
+    }
+}
+function kali-pkill { param([string]$pat) docker exec zebbern-kali pkill -9 -f $pat; Write-Host "Killed pattern: $pat" }
+function kali-logs  { docker logs zebbern-kali --tail 50 }
+```
+
+Then just:
+```powershell
+kali-ps                                    # see processes
+kali-kill 1229                             # kill stuck PID (direct)
+kali-kill 1229 "port stuck, use 9101"      # kill + inject message for AI
+kali-pkill "nc -l"                         # kill all netcat listeners
+kali-ports                                 # check port bindings
+```
+
+---
+
 ### Metasploit Issues
 
 !!! bug "Metasploit database not running"

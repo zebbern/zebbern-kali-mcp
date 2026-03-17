@@ -1,10 +1,83 @@
 """Command execution endpoints."""
 
+import os
+import signal
+import subprocess
+
 from flask import Blueprint, request, jsonify, Response, stream_with_context
 from core.config import logger
 from core.command_executor import execute_command, stream_command_execution
 
 bp = Blueprint("command", __name__)
+
+KILL_MSG_DIR = "/app/tmp/.kill_messages"
+os.makedirs(KILL_MSG_DIR, exist_ok=True)
+
+
+@bp.route("/api/ps", methods=["GET"])
+def list_processes():
+    """List running processes inside the container."""
+    try:
+        result = subprocess.run(
+            ["ps", "-eo", "pid,ppid,etime,rss,cmd", "--sort=-start_time"],
+            capture_output=True, text=True, timeout=5,
+        )
+        lines = result.stdout.strip().split("\n")
+        header = lines[0] if lines else ""
+        processes = []
+        for line in lines[1:]:
+            parts = line.split(None, 4)
+            if len(parts) >= 5:
+                processes.append({
+                    "pid": int(parts[0]),
+                    "ppid": int(parts[1]),
+                    "elapsed": parts[2],
+                    "rss_kb": int(parts[3]),
+                    "command": parts[4],
+                })
+        return jsonify({"success": True, "header": header, "processes": processes})
+    except Exception as e:
+        logger.error(f"Error listing processes: {e}")
+        return jsonify({"error": str(e), "success": False}), 500
+
+
+@bp.route("/api/kill/<int:pid>", methods=["POST", "GET"])
+def kill_process(pid):
+    """
+    Kill a process by PID. Optionally attach a user message that will be
+    injected into the killed command's response so the AI reads it.
+
+    Query param or JSON body:  message=<text>
+    Example:  curl 'http://localhost:5000/api/kill/1229?message=port+stuck+use+9101'
+    """
+    msg = ""
+    if request.is_json and request.json:
+        msg = request.json.get("message", "")
+    else:
+        msg = request.args.get("message", "")
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+        killed = True
+    except ProcessLookupError:
+        killed = False
+    except PermissionError:
+        return jsonify({"success": False, "error": f"Permission denied killing PID {pid}"}), 403
+
+    if msg:
+        try:
+            with open(os.path.join(KILL_MSG_DIR, str(pid)), "w") as f:
+                f.write(msg)
+        except OSError as e:
+            logger.warning(f"Could not write kill message for PID {pid}: {e}")
+
+    return jsonify({
+        "success": True,
+        "pid": pid,
+        "killed": killed,
+        "message_stored": bool(msg),
+        "note": f"PID {pid} {'killed' if killed else 'not found (already dead)'}" + (f" — message: {msg}" if msg else ""),
+    })
 
 
 @bp.route("/api/exec", methods=["POST"])

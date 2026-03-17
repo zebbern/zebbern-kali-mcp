@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Command Executor Manager for Kali Server."""
 
+import os
 import subprocess
 import threading
 from typing import Dict, Any, Callable
 from .config import logger, COMMAND_TIMEOUT
+
+KILL_MSG_DIR = "/app/tmp/.kill_messages"
 
 
 class CommandExecutor:
@@ -99,7 +102,7 @@ class CommandExecutor:
             # Always consider it a success if we have output, even with timeout
             success = True if self.timed_out and (self.stdout_data or self.stderr_data) else (self.return_code == 0)
 
-            return {
+            result = {
                 "stdout": self.stdout_data,
                 "stderr": self.stderr_data,
                 "return_code": self.return_code,
@@ -107,6 +110,8 @@ class CommandExecutor:
                 "timed_out": self.timed_out,
                 "partial_results": self.timed_out and (self.stdout_data or self.stderr_data)
             }
+            self._inject_kill_message(result)
+            return result
 
         except Exception as e:
             logger.error(f"Error executing command: {str(e)}")
@@ -118,6 +123,23 @@ class CommandExecutor:
                 "timed_out": False,
                 "partial_results": bool(self.stdout_data or self.stderr_data)
             }
+
+    def _inject_kill_message(self, result: Dict[str, Any]) -> None:
+        """Check if the user left a message when killing this process."""
+        if self.process is None:
+            return
+        msg_path = os.path.join(KILL_MSG_DIR, str(self.process.pid))
+        try:
+            if os.path.exists(msg_path):
+                with open(msg_path, "r") as f:
+                    user_msg = f.read().strip()
+                os.remove(msg_path)
+                if user_msg:
+                    result["user_killed"] = True
+                    result["user_message"] = user_msg
+                    logger.info(f"Kill message for PID {self.process.pid}: {user_msg}")
+        except OSError:
+            pass
 
     def execute_with_streaming(self, on_output: Callable[[str, str], None]) -> Dict[str, Any]:
         """Execute the command with streaming output via callback"""
@@ -167,7 +189,7 @@ class CommandExecutor:
             # Always consider it a success if we have output, even with timeout
             success = True if self.timed_out and (self.stdout_data or self.stderr_data) else (self.return_code == 0)
 
-            return {
+            result = {
                 "stdout": self.stdout_data,
                 "stderr": self.stderr_data,
                 "return_code": self.return_code,
@@ -176,6 +198,8 @@ class CommandExecutor:
                 "partial_results": self.timed_out and (self.stdout_data or self.stderr_data),
                 "streaming_enabled": True
             }
+            self._inject_kill_message(result)
+            return result
 
         except Exception as e:
             logger.error(f"Error executing command with streaming: {str(e)}")

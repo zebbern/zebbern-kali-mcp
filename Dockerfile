@@ -113,6 +113,8 @@ RUN apt-get update && \
         strace \
         ltrace \
         gdb \
+        massdns \
+        whatweb \
         chromium \
         chromium-driver \
     && rm -rf /var/lib/apt/lists/* \
@@ -141,6 +143,8 @@ RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest || tru
     go install -v github.com/ffuf/ffuf/v2@latest || true && \
     go install -v github.com/tomnomnom/assetfinder@latest || true && \
     go install -v github.com/tomnomnom/waybackurls@latest || true && \
+    go install -v github.com/lc/gau/v2/cmd/gau@latest || true && \
+    go install -v github.com/hahwul/dalfox/v2@latest || true && \
     go install -v github.com/lobuhi/byp4xx@latest || true && \
     go install -v github.com/PentestPad/subzy@latest || true && \
     go install -v github.com/sensepost/gowitness@latest || true && \
