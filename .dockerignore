@@ -8,6 +8,9 @@
 .git
 .gitignore
 
+# CI/CD & GitHub metadata
+.github/
+
 # Python bytecode and caches
 __pycache__
 *.pyc
@@ -39,7 +42,12 @@ install.py
 .pylintrc
 pyrightconfig.json
 mkdocs.yml
+.vscode/
 
 # Host-only sync/test scripts
 sync-to-kali.ps1
 test_exec.sh
+
+# Build metadata (not needed in container)
+pyproject.toml
+MANIFEST.in
