@@ -23,6 +23,17 @@ services:
       - kali-tmp:/app/tmp
       - ${VPN_DIR:-./vpn}:/vpn:ro
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "2.0"
     # -- CTF network helpers (uncomment as needed) --
     # dns:
     #   - 8.8.8.8

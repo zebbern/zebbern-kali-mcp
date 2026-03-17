@@ -197,4 +197,7 @@ RUN mkdir -p /app/tmp && chmod 777 /app/tmp
 
 EXPOSE 5000
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:5000/health || exit 1
+
 ENTRYPOINT ["python3", "zebbern-kali/kali_server.py"]
