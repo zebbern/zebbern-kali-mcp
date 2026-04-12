@@ -211,7 +211,7 @@ RUN ln -sf /usr/bin/python3 /usr/local/bin/python && \
 # ---------- Layer 8: Application code ----------
 COPY zebbern-kali/ /app/zebbern-kali/
 COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Create writable tmp directory for the application
 RUN mkdir -p /app/tmp && chmod 777 /app/tmp
