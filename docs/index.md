@@ -12,7 +12,7 @@
 
     [:octicons-arrow-right-24: Installation Guide](installation.md)
 
--   :material-cog:{ .lg .middle } **145+ MCP Tools**
+-   :material-cog:{ .lg .middle } **130+ MCP Tools**
 
     ---
 
@@ -56,7 +56,7 @@ graph LR
 
 | Component | Description |
 |-----------|-------------|
-| **MCP Client** | Python server (`mcp_server.py`) with 145+ tool functions that runs locally |
+| **MCP Client** | Python server (`mcp_server.py`) with 130+ tool functions that runs locally |
 | **Kali API Server** | Flask-based REST API running on Kali Linux with 100+ endpoints |
 | **Security Tools** | 22+ pre-installed tools: nmap, sqlmap, nuclei, metasploit, and more |
 
@@ -70,8 +70,8 @@ graph LR
 - **Web Security**: nikto, sqlmap, nuclei, ffuf, gobuster, dirb
 - **Credential Attacks**: hydra, john, hashcat
 - **Exploitation**: metasploit, searchsploit, msfvenom payloads
-- **Active Directory**: impacket, bloodhound, crackmapexec, kerberoasting
-- **API Security**: arjun, kiterunner, JWT analysis, GraphQL testing
+- **Active Directory**: impacket, bloodhound, netexec, certipy, bloodyAD, kerberoasting
+- **API Security**: JWT analysis, GraphQL testing, FFUF fuzzing
 - **VPN Management**: WireGuard/OpenVPN connect/disconnect with SOCKS5 proxy
 - **CTF Platform**: CTFd/rCTF integration, challenge management, flag submission
 - **Browser Automation**: Headless Chromium via Playwright for JS-heavy targets
@@ -146,7 +146,7 @@ After installation, add to VS Code's MCP configuration:
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  VS Code + GitHub Copilot                                │  │
 │  │       ↓ MCP (stdio)                                      │  │
-│  │  mcp_server.py (139 tools)                               │  │
+│  │  mcp_server.py (130+ tools)                               │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
                               ↓ HTTP
@@ -170,11 +170,11 @@ After installation, add to VS Code's MCP configuration:
 
 | Category | Tools | MCP Functions |
 |----------|-------|---------------|
-| **Reconnaissance** | nmap, subfinder, httpx, assetfinder | 13 |
-| **Web Application** | nikto, sqlmap, gobuster, dirb, ffuf | 9 |
-| **API Security** | arjun, nuclei, kiterunner, JWT analysis | 12 |
+| **Reconnaissance** | nmap, subfinder, httpx, assetfinder | 10 |
+| **Web Application** | nikto, sqlmap, gobuster, dirb, ffuf | 7 |
+| **API Security** | nuclei, JWT analysis, GraphQL, FFUF | 8 |
 | **Credential Attacks** | hydra, john, hashcat | 3 |
-| **Active Directory** | impacket, bloodhound, kerberoasting | 10 |
+| **Active Directory** | impacket, bloodhound, netexec, certipy | 10 |
 | **Exploitation** | metasploit, searchsploit, msfvenom | 11 |
 | **SSH/Remote** | ssh sessions, file transfer, tunneling | 8 |
 | **Reverse Shells** | netcat, pwncat, listeners | 11 |

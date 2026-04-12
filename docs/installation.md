@@ -116,8 +116,8 @@ sudo ./install.sh
    === "APT Packages"
        ```
        nmap, gobuster, dirb, nikto, sqlmap, metasploit-framework,
-       hydra, john, hashcat, wpscan, enum4linux, fierce, theharvester,
-       recon-ng, dnsenum, wafw00f, sslyze, bloodhound, crackmapexec,
+       hydra, john, hashcat, wpscan, enum4linux, theharvester,
+       recon-ng, dnsenum, sslyze, bloodhound,
        impacket-scripts, responder
        ```
 
@@ -129,19 +129,12 @@ sudo ./install.sh
        go install github.com/ffuf/ffuf/v2@latest
        go install github.com/tomnomnom/assetfinder@latest
        go install github.com/tomnomnom/waybackurls@latest
-       go install github.com/lobuhi/byp4xx@latest
-       go install github.com/PentestPad/subzy@latest
        ```
 
    === "pipx Tools"
        ```bash
        pipx install ssh-audit
-       pipx install arjun
-       ```
-
-   === "npm Tools"
-       ```bash
-       npm install -g newman
+       pipx install waymore
        ```
 
 4. **Setup Server**
@@ -303,8 +296,8 @@ sudo apt install -y python3 python3-pip python3-venv git golang nodejs npm pipx
 ```bash
 # APT tools
 sudo apt install -y nmap gobuster dirb nikto sqlmap metasploit-framework \
-  hydra john hashcat wpscan enum4linux fierce wafw00f bloodhound \
-  crackmapexec impacket-scripts
+  hydra john hashcat wpscan enum4linux bloodhound \
+  impacket-scripts
 
 # Go tools
 export PATH=$PATH:~/go/bin
@@ -314,17 +307,15 @@ go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 go install github.com/ffuf/ffuf/v2@latest
 go install github.com/tomnomnom/assetfinder@latest
 go install github.com/tomnomnom/waybackurls@latest
-go install github.com/lobuhi/byp4xx@latest
-go install github.com/PentestPad/subzy@latest
 
 # Symlink Go tools
 sudo ln -sf ~/go/bin/* /usr/local/bin/
 
 # pipx tools
 pipx install ssh-audit
-pipx install arjun
+pipx install waymore
 sudo ln -sf ~/.local/bin/ssh-audit /usr/local/bin/
-sudo ln -sf ~/.local/bin/arjun /usr/local/bin/
+sudo ln -sf ~/.local/bin/waymore /usr/local/bin/
 ```
 
 ### Step 4: Setup API Server

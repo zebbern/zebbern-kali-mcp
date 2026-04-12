@@ -68,26 +68,6 @@ def js_analyze_multiple():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@bp.route("/api/js/full-scan", methods=["POST"])
-def js_full_scan():
-    """Full scan: discover + analyze all JS files on target."""
-    try:
-        params = request.json or {}
-        url = params.get("url", "")
-
-        if not url:
-            return jsonify({"error": "url is required", "success": False}), 400
-
-        result = js_analyzer.full_scan(
-            url=url,
-            depth=params.get("depth", 2)
-        )
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"Error in JS full scan: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
-
-
 @bp.route("/api/js/reports", methods=["GET"])
 def js_list_reports():
     """List saved JS analysis reports."""

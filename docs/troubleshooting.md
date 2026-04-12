@@ -755,9 +755,9 @@ sudo journalctl -u kali-mcp | grep -i error
          - "1080:1080"
        ```
 
-    3. **Check microsocks process inside container:**
+    3. **Check SOCKS proxy process inside container:**
        ```bash
-       docker exec kali-mcp pgrep -a microsocks
+       docker exec zebbern-kali ss -tlnp | grep 1080
        ```
 
 ---

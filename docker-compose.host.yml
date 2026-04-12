@@ -1,0 +1,18 @@
+# docker-compose.host.yml — Host-networking override for CTF/pentest use
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
+#
+# This gives the container direct access to the host's network stack,
+# including VPN interfaces (tun0, wg0). Target machines can reach
+# Kali services directly — no port forwarding needed.
+#
+# Trade-off: loses Docker network isolation (acceptable for pentesting).
+# NOTE: Only works on Linux hosts. On Docker Desktop (Windows/macOS),
+#       use bridge mode with HTB_ROUTES instead.
+
+services:
+  kali-server:
+    network_mode: host
+    # !reset requires Docker Compose v2.24+ — older versions will fail
+    ports: !reset []

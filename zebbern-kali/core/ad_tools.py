@@ -12,6 +12,8 @@ Active Directory Tools Module
 import os
 import re
 import json
+import glob
+import shutil
 import subprocess
 import logging
 import socket
@@ -30,11 +32,11 @@ class ADTools:
         self.output_dir = output_dir
         self._ensure_dirs()
 
-        # Tool paths
-        self.impacket_path = "/usr/share/doc/python3-impacket/examples"
-        self.bloodhound_path = "/usr/bin/bloodhound-python"
-        self.crackmapexec_path = "/usr/bin/crackmapexec"
-        self.ldapsearch_path = "/usr/bin/ldapsearch"
+        # Tool paths — resolve dynamically, fall back to well-known locations
+        self.impacket_path = self._find_impacket_path()
+        self.bloodhound_path = shutil.which("bloodhound-python") or "/usr/bin/bloodhound-python"
+        self.crackmapexec_path = shutil.which("crackmapexec") or shutil.which("netexec") or "/usr/bin/crackmapexec"
+        self.ldapsearch_path = shutil.which("ldapsearch") or "/usr/bin/ldapsearch"
 
         # Check available tools
         self.available_tools = self._check_tools()
@@ -48,6 +50,23 @@ class ADTools:
         os.makedirs(os.path.join(self.output_dir, "ldap"), exist_ok=True)
         os.makedirs(os.path.join(self.output_dir, "smb"), exist_ok=True)
 
+    def _find_impacket_path(self) -> str:
+        """Locate the impacket examples/scripts directory dynamically."""
+        # Check if impacket scripts are directly on PATH (pip install)
+        sd = shutil.which("secretsdump.py")
+        if sd:
+            return os.path.dirname(sd)
+        # Check pip site-packages locations
+        candidates = (
+            glob.glob("/usr/local/lib/python3*/dist-packages/impacket/examples") +
+            glob.glob("/usr/lib/python3*/site-packages/impacket/examples") +
+            glob.glob("/usr/local/lib/python3*/site-packages/impacket/examples")
+        )
+        if candidates:
+            return candidates[0]
+        # Fallback to APT path
+        return "/usr/share/doc/python3-impacket/examples"
+
     def _check_tools(self) -> Dict[str, bool]:
         """Check which tools are available."""
         tools = {}
@@ -58,15 +77,27 @@ class ADTools:
             "psexec.py", "wmiexec.py", "smbexec.py", "dcomexec.py"
         ]
         for script in impacket_scripts:
-            path = os.path.join(self.impacket_path, script)
-            tools[script.replace('.py', '')] = os.path.exists(path)
+            name = script.replace('.py', '')
+            # Check on PATH first (pip-installed), then in impacket_path dir
+            tools[name] = bool(shutil.which(script)) or os.path.exists(
+                os.path.join(self.impacket_path, script)
+            )
 
         # Check other tools
-        tools["bloodhound-python"] = os.path.exists(self.bloodhound_path)
-        tools["crackmapexec"] = os.path.exists(self.crackmapexec_path)
-        tools["ldapsearch"] = os.path.exists(self.ldapsearch_path)
+        tools["bloodhound-python"] = bool(shutil.which("bloodhound-python")) or os.path.exists(self.bloodhound_path)
+        tools["crackmapexec"] = bool(shutil.which("crackmapexec")) or os.path.exists(self.crackmapexec_path)
+        tools["ldapsearch"] = bool(shutil.which("ldapsearch")) or os.path.exists(self.ldapsearch_path)
         tools["kerbrute"] = self._check_command("kerbrute")
         tools["responder"] = self._check_command("responder")
+
+        # Additional AD tools
+        tools["bloodyad"] = bool(shutil.which("bloodyad"))
+        tools["certipy"] = bool(shutil.which("certipy"))
+        tools["pywhisker"] = bool(shutil.which("pywhisker"))
+        tools["coercer"] = bool(shutil.which("coercer"))
+        tools["krbrelayx"] = bool(shutil.which("krbrelayx.py")) or bool(shutil.which("krbrelayx"))
+        tools["netexec"] = bool(shutil.which("netexec")) or bool(shutil.which("nxc"))
+        tools["ldapdomaindump"] = bool(shutil.which("ldapdomaindump"))
 
         logger.info(f"AD Tools available: {[k for k,v in tools.items() if v]}")
         return tools

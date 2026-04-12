@@ -51,21 +51,6 @@ def register(mcp: FastMCP, kali_client) -> None:
         return kali_client.safe_post("api/js/analyze-multiple", data)
 
     @mcp.tool()
-    def js_full_scan(url: str, depth: int = 2) -> Dict[str, Any]:
-        """
-        Full JS analysis pipeline: discover JS files, then analyze all of them.
-
-        Args:
-            url: Target URL to scan
-            depth: Crawl depth for JS discovery (default: 2)
-
-        Returns:
-            Complete analysis of all discovered JavaScript files
-        """
-        data = {"url": url, "depth": depth}
-        return kali_client.safe_post("api/js/full-scan", data)
-
-    @mcp.tool()
     def js_list_reports() -> Dict[str, Any]:
         """List all saved JS analysis reports."""
         return kali_client.safe_get("api/js/reports")

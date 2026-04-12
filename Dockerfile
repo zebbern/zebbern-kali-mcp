@@ -4,15 +4,11 @@
 #
 # Build:
 #   docker build -t zebbern-kali-mcp .
-#   docker build --build-arg INCLUDE_METASPLOIT=false -t zebbern-kali-mcp-light .
 #
 # Run:
 #   docker run -d -p 5000:5000 --name zebbern-kali zebbern-kali-mcp
 
 FROM kalilinux/kali-rolling
-
-# Metasploit opt-out: set to "false" to skip metasploit-framework install
-ARG INCLUDE_METASPLOIT=true
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -59,6 +55,7 @@ RUN apt-get update && \
         wget \
         jq \
         pipx \
+        unzip \
         golang-go \
         nodejs \
         npm \
@@ -80,17 +77,14 @@ RUN apt-get update && \
         sqlmap \
         hydra \
         john \
+        hashcat \
         wpscan \
         enum4linux \
-        fierce \
-        wafw00f \
         tcpdump \
         responder \
         smbclient \
         ldap-utils \
         crackmapexec \
-        impacket-scripts \
-        amass \
         masscan \
         sslscan \
         exploitdb \
@@ -110,31 +104,22 @@ RUN apt-get update && \
         steghide \
         libimage-exiftool-perl \
         foremost \
-        strace \
-        ltrace \
         gdb \
         massdns \
-        whatweb \
-        chromium \
-        chromium-driver \
+        faketime \
+        ruby \
+        ruby-dev \
+        libkrb5-dev \
     && rm -rf /var/lib/apt/lists/* \
-    && gunzip -f /usr/share/wordlists/rockyou.txt.gz 2>/dev/null || true
+    && (gunzip -f /usr/share/wordlists/rockyou.txt.gz 2>/dev/null || true)
 
-# ---------- Layer 2b: Conditional Metasploit install ----------
-RUN if [ "$INCLUDE_METASPLOIT" = "true" ]; then \
-        apt-get update && \
-        apt-get install -y --no-install-recommends metasploit-framework && \
-        rm -rf /var/lib/apt/lists/*; \
-    fi
+# ---------- Layer 2c: Ruby-based pentest tools ----------
+RUN gem install evil-winrm --no-document
 
-# ---------- Layer 2d2: microsocks SOCKS5 proxy (VPN bridge) ----------
-RUN cd /tmp && \
-    git clone --depth 1 https://github.com/rofl0r/microsocks.git && \
-    cd microsocks && \
-    make && \
-    cp microsocks /usr/local/bin/microsocks && \
-    chmod +x /usr/local/bin/microsocks && \
-    rm -rf /tmp/microsocks
+# ---------- Layer 2b: Metasploit Framework ----------
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends metasploit-framework && \
+    rm -rf /var/lib/apt/lists/*
 
 # ---------- Layer 3: Go tools ----------
 RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest || true && \
@@ -143,47 +128,81 @@ RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest || tru
     go install -v github.com/ffuf/ffuf/v2@latest || true && \
     go install -v github.com/tomnomnom/assetfinder@latest || true && \
     go install -v github.com/tomnomnom/waybackurls@latest || true && \
-    go install -v github.com/lc/gau/v2/cmd/gau@latest || true && \
-    go install -v github.com/hahwul/dalfox/v2@latest || true && \
-    go install -v github.com/lobuhi/byp4xx@latest || true && \
-    go install -v github.com/PentestPad/subzy@latest || true && \
     go install -v github.com/sensepost/gowitness@latest || true && \
     go install -v github.com/jpillora/chisel@latest || true && \
     go clean -cache -modcache 2>/dev/null || true
 
-# ---------- Layer 3a: Pre-built binaries (katana, ligolo-ng, kiterunner) ----------
-RUN cd /tmp && \
+# ---------- Layer 3a: Pre-built binaries (katana, ligolo-ng) ----------
+RUN (cd /tmp && \
     KATANA_VER="1.1.0" && \
     wget -q "https://github.com/projectdiscovery/katana/releases/download/v${KATANA_VER}/katana_${KATANA_VER}_linux_amd64.zip" -O katana.zip && \
     unzip -o katana.zip katana -d /usr/local/bin/ && \
     chmod +x /usr/local/bin/katana && \
-    rm -f katana.zip && \
+    rm -f katana.zip) || echo "WARN: katana install failed" && \
+    (cd /tmp && \
     LIGOLO_VER="0.7.5" && \
     wget -q "https://github.com/nicocha30/ligolo-ng/releases/download/v${LIGOLO_VER}/ligolo-ng_proxy_${LIGOLO_VER}_linux_amd64.tar.gz" -O ligolo-proxy.tar.gz && \
     tar -xzf ligolo-proxy.tar.gz && \
     mv proxy /usr/local/bin/ligolo-proxy && \
     chmod +x /usr/local/bin/ligolo-proxy && \
-    rm -f ligolo-proxy.tar.gz LICENSE README.md && \
-    wget -q "https://github.com/assetnote/kiterunner/releases/download/v1.0.2/kiterunner_1.0.2_linux_amd64.tar.gz" -O kiterunner.tar.gz && \
-    tar -xzf kiterunner.tar.gz && \
-    mv kr /usr/local/bin/kr && \
-    chmod +x /usr/local/bin/kr && \
-    rm -f kiterunner.tar.gz || true
+    rm -f ligolo-proxy.tar.gz LICENSE README.md) || echo "WARN: ligolo-proxy install failed"
+
+# ---------- Layer 3b: Ligolo-ng agents + Windows attack binaries ----------
+RUN mkdir -p /opt/ligolo-ng /opt/windows-tools && \
+    (cd /tmp && \
+    LIGOLO_VER="0.7.5" && \
+    wget -q "https://github.com/nicocha30/ligolo-ng/releases/download/v${LIGOLO_VER}/ligolo-ng_agent_${LIGOLO_VER}_linux_amd64.tar.gz" -O ligolo-agent-linux.tar.gz && \
+    tar -xzf ligolo-agent-linux.tar.gz && \
+    mv agent /opt/ligolo-ng/agent-linux && \
+    chmod +x /opt/ligolo-ng/agent-linux && \
+    rm -f ligolo-agent-linux.tar.gz LICENSE README.md) || echo "WARN: ligolo-agent-linux install failed" && \
+    (cd /tmp && \
+    LIGOLO_VER="0.7.5" && \
+    wget -q "https://github.com/nicocha30/ligolo-ng/releases/download/v${LIGOLO_VER}/ligolo-ng_agent_${LIGOLO_VER}_windows_amd64.zip" -O ligolo-agent-win.zip && \
+    unzip -o ligolo-agent-win.zip -d /tmp/ligolo-win && \
+    mv /tmp/ligolo-win/agent.exe /opt/ligolo-ng/agent.exe && \
+    rm -rf ligolo-agent-win.zip /tmp/ligolo-win) || echo "WARN: ligolo-agent-win install failed" && \
+    cp /usr/local/bin/ligolo-proxy /opt/ligolo-ng/proxy 2>/dev/null || true && \
+    (CHISEL_VER="1.10.1" && \
+    wget -q "https://github.com/jpillora/chisel/releases/download/v${CHISEL_VER}/chisel_${CHISEL_VER}_windows_amd64.gz" -O /tmp/chisel-win.gz && \
+    gunzip /tmp/chisel-win.gz && \
+    mv /tmp/chisel-win /opt/windows-tools/chisel.exe && \
+    chmod +x /opt/windows-tools/chisel.exe) || echo "WARN: chisel.exe install failed" && \
+    (wget -q "https://raw.githubusercontent.com/int0x33/nc.exe/master/nc64.exe" -O /opt/windows-tools/nc64.exe && \
+    chmod +x /opt/windows-tools/nc64.exe) || echo "WARN: nc64.exe install failed"
+
+# ---------- Layer 3c: PetitPotam & coercion tools ----------
+RUN git clone --depth 1 https://github.com/topotam/PetitPotam.git /opt/PetitPotam 2>/dev/null || true && \
+    ln -sf /opt/PetitPotam/PetitPotam.py /usr/local/bin/petitpotam || true
 
 # ---------- Layer 5: pipx tools ----------
 RUN pipx ensurepath && \
     pipx install ssh-audit || true && \
-    pipx install arjun || true
+    pipx install waymore || true
 
-# ---------- Layer 6: npm tools ----------
-RUN npm install -g newman
+# ---------- Fix: Remove pip EXTERNALLY-MANAGED restriction ----------
+RUN rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED && \
+    mkdir -p /etc/pip && \
+    printf '[global]\nbreak-system-packages = true\n' > /etc/pip/pip.conf
 
 # ---------- Layer 7: Python dependencies ----------
 COPY requirements.txt /app/requirements.txt
-RUN pip3 install --break-system-packages --no-cache-dir -r requirements.txt
+RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed -r requirements.txt && \
+    pip3 install --break-system-packages --no-cache-dir --no-deps \
+        bloodhound>=1.7.0 \
+        bloodyAD>=2.1.0 \
+        certipy-ad>=4.8.0 \
+        pywhisker>=0.1.0 \
+        coercer>=0.6.0 && \
+    git clone --depth 1 https://github.com/dirkjanm/krbrelayx.git /opt/krbrelayx && \
+    ln -sf /opt/krbrelayx/krbrelayx.py /usr/local/bin/krbrelayx && \
+    ln -sf /opt/krbrelayx/addspn.py /usr/local/bin/addspn && \
+    ln -sf /opt/krbrelayx/dnstool.py /usr/local/bin/dnstool && \
+    ln -sf /opt/krbrelayx/printerbug.py /usr/local/bin/printerbug
 
 # ---------- Layer 7b: Install Playwright browsers ----------
-RUN playwright install chromium --with-deps
+RUN playwright install chromium --with-deps && \
+    rm -rf /var/lib/apt/lists/*
 
 # Provide 'python' and 'pip' aliases (Kali only ships python3/pip3)
 RUN ln -sf /usr/bin/python3 /usr/local/bin/python && \
@@ -191,6 +210,8 @@ RUN ln -sf /usr/bin/python3 /usr/local/bin/python && \
 
 # ---------- Layer 8: Application code ----------
 COPY zebbern-kali/ /app/zebbern-kali/
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 # Create writable tmp directory for the application
 RUN mkdir -p /app/tmp && chmod 777 /app/tmp
@@ -198,6 +219,6 @@ RUN mkdir -p /app/tmp && chmod 777 /app/tmp
 EXPOSE 5000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:5000/health || exit 1
+  CMD curl -f http://localhost:${API_PORT:-5000}/health || exit 1
 
-ENTRYPOINT ["python3", "zebbern-kali/kali_server.py"]
+ENTRYPOINT ["/app/entrypoint.sh"]

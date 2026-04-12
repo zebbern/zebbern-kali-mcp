@@ -3,19 +3,20 @@
 A comprehensive **Model Context Protocol (MCP)** server for Kali Linux penetration testing. This project enables AI assistants (like GitHub Copilot) to directly execute security tools on a Kali Linux system through a standardized API.
 
 [![Documentation](https://img.shields.io/badge/docs-MkDocs-blue)](docs/)
-[![Tools](https://img.shields.io/badge/MCP%20Tools-145+-green)]()
+[![Tools](https://img.shields.io/badge/MCP%20Tools-130+-green)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 
 ## Features
 
-- **145+ MCP Tool Functions** across 20 modules — complete penetration testing toolkit
+- **130+ MCP Tool Functions** across 20 modules — complete penetration testing toolkit
 - **22+ External Tools** - Nmap, SQLMap, Hydra, Metasploit, Nuclei, and more
 - **VPN Management** - WireGuard & OpenVPN with auto SOCKS5 proxy for Windows bridging
 - **CTF Platform Integration** - CTFd & rCTF API support (challenges, flags, scoreboard)
 - **Browser Automation** - Headless Chromium via Playwright for SPA testing
-- **API Security Testing** - GraphQL introspection, JWT analysis, FFUF, Arjun
-- **Active Directory Tools** - BloodHound, Kerberoasting, Pass-the-Hash, LDAP enumeration
+- **API Security Testing** - GraphQL introspection, JWT analysis, FFUF
+- **Active Directory Tools** - BloodHound, Kerberoasting, Pass-the-Hash, LDAP, netexec, certipy, bloodyAD
 - **Network Pivoting** - Chisel, SSH tunneling, Ligolo-ng, ProxyChains
+- **Container Networking** - entrypoint.sh auto-routing, host networking option, TUN auto-creation
 - **SSH Audit** - Comprehensive SSH server security analysis
 - **Evidence Collection** - Screenshots, notes, and findings management
 - **Session Management** - Metasploit sessions, reverse shells, SSH connections
@@ -27,7 +28,7 @@ Full documentation available in the [docs/](docs/) folder:
 - [Docker Setup](docs/docker-install.md) - Zero-config container install
 - [VM Setup](docs/vm-install.md) - Native Kali Linux install
 - [Architecture](docs/architecture.md) - System design and components
-- [Tools Reference](docs/tools-reference.md) - All 145+ MCP tools documented
+- [Tools Reference](docs/tools-reference.md) - All 130+ MCP tools documented
 - [API Reference](docs/api-reference.md) - REST API endpoints
 - [Workflows](docs/workflows.md) - Practical pentest examples
 - [Security](docs/security.md) - Hardening recommendations
@@ -50,6 +51,8 @@ mkdocs serve
 curl -sLO https://raw.githubusercontent.com/zebbern/zebbern-kali-mcp/main/docker-compose.yml
 docker compose up -d
 ```
+
+> **Linux host networking:** For direct host network access (no port mapping needed), also grab `docker-compose.host.yml` and run `docker compose -f docker-compose.yml -f docker-compose.host.yml up -d`.
 
 **2. Add to VS Code** (`.vscode/mcp.json` or global MCP config):
 
@@ -107,6 +110,8 @@ The assistant calls tools through the MCP server — no manual commands needed.
 ## Installed Tools
 
 30+ security tools across reconnaissance, web/API testing, password cracking, exploitation, Active Directory, network pivoting, and security auditing — all pre-installed in Docker or installed via the VM setup script.
+
+Key AD tools: impacket (pinned 0.12.0), bloodyAD, certipy-ad, netexec, krbrelayx, coercer, pywhisker, ldapdomaindump, bloodhound.py. All AD tool paths are resolved dynamically via `shutil.which()`.
 
 **[Full Tool List →](docs/tools-reference.md)**
 

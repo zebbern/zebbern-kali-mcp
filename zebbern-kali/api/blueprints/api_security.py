@@ -266,23 +266,3 @@ def newman_run():
         logger.error(f"Newman error: {str(e)}")
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
-
-@bp.route("/api/api-security/full-scan", methods=["POST"])
-def full_api_scan():
-    """Perform comprehensive API security scan."""
-    try:
-        params = request.json or {}
-        target = params.get("target", "")
-        if not target:
-            return jsonify({"error": "target is required", "success": False}), 400
-
-        result = api_tester.full_api_scan(
-            target=target,
-            openapi_spec=params.get("openapi_spec", ""),
-            wordlist=params.get("wordlist", ""),
-            auth_header=params.get("auth_header", "")
-        )
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"Full API scan error: {str(e)}")
-        return jsonify({"error": f"Server error: {str(e)}"}), 500

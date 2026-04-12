@@ -55,12 +55,6 @@ Prompt: "Get wayback machine URLs for example.com"
 ```
 Tool: `tools_waybackurls`
 
-**7. Parameter Discovery**
-```
-Prompt: "Discover hidden parameters on https://example.com/api/search"
-```
-Tool: `tools_arjun`
-
 ### Phase 3: Vulnerability Scanning
 
 **8. Nuclei Scan**
@@ -246,49 +240,35 @@ Test API for security vulnerabilities.
 
 ### Phase 1: Discovery
 
-**1. Full API Scan**
-```
-Prompt: "Run full API security scan on https://api.example.com"
-```
-Tool: `api_full_scan`
-
-**2. Endpoint Discovery**
-```
-Prompt: "Discover API endpoints using kiterunner on https://api.example.com"
-```
-Tool: `api_kiterunner_scan`
-
-### Phase 2: Authentication Testing
-
-**3. JWT Analysis**
+**1. JWT Analysis**
 ```
 Prompt: "Analyze this JWT token: eyJhbGciOiJIUzI1NiIs..."
 ```
 Tool: `api_jwt_analyze`
 
-**4. JWT Cracking**
+**2. JWT Cracking**
 ```
 Prompt: "Try to crack the JWT secret"
 ```
 Tool: `api_jwt_crack`
 
-### Phase 3: Fuzzing
+### Phase 2: Fuzzing
 
-**5. Parameter Fuzzing**
+**3. Parameter Fuzzing**
 ```
 Prompt: "Fuzz https://api.example.com/users?id=FUZZ with numbers 1-100"
 ```
 Tool: `tools_ffuf`
 
-**6. Rate Limit Testing**
+**4. Rate Limit Testing**
 ```
 Prompt: "Test rate limiting on https://api.example.com/login"
 ```
 Tool: `api_test_rate_limit`
 
-### Phase 4: GraphQL
+### Phase 3: GraphQL
 
-**7. Introspection**
+**5. Introspection**
 ```
 Prompt: "Introspect GraphQL endpoint at https://api.example.com/graphql"
 ```

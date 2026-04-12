@@ -69,12 +69,6 @@ docker compose build
 docker compose up -d
 ```
 
-**Build without Metasploit:**
-```bash
-docker compose build --build-arg INCLUDE_METASPLOIT=false
-docker compose up -d
-```
-
 ---
 
 ## Environment Variables
@@ -85,14 +79,18 @@ Configure via a `.env` file alongside `docker-compose.yml`:
 |----------|---------|-------------|
 | `API_PORT` | `5000` | Port the Flask API listens on |
 | `DEBUG_MODE` | `0` | Set to `1` for Flask debug mode |
-| `BLOCKING_TIMEOUT` | `5` | Timeout for blocking operations (seconds) |
+| `BLOCKING_TIMEOUT` | `30` | Timeout for blocking operations (seconds) |
+| `HTB_ROUTES` | — | Comma-separated CIDRs to route via default gateway (e.g., `10.129.0.0/16,10.10.0.0/16`) |
+| `EXTRA_HOSTS` | — | Comma-separated `hostname:ip` pairs to add to `/etc/hosts` (e.g., `dc01.corp.htb:10.129.1.5`) |
 | `VPN_DIR` | — | Host directory with VPN configs (mounted at `/vpn`) |
-| `INCLUDE_METASPLOIT` | `true` | Set to `false` to exclude Metasploit (build-time only) |
 
 **Example `.env`:**
 ```env
 API_PORT=5000
 DEBUG_MODE=0
+BLOCKING_TIMEOUT=30
+HTB_ROUTES=10.129.0.0/16,10.10.0.0/16
+EXTRA_HOSTS=dc01.corp.htb:10.129.1.5,web01.corp.htb:10.129.1.10
 VPN_DIR=./vpn
 ```
 
@@ -105,12 +103,57 @@ VPN_DIR=./vpn
 | Port | Service | Description |
 |------|---------|-------------|
 | `5000` | Flask API | REST API — tool execution |
-| `1080` | SOCKS5 Proxy | microsocks — auto-starts when VPN connects |
+| `1080` | SOCKS5 Proxy | Auto-starts when VPN connects |
 
 Both ports map to `localhost` on your host machine:
 
 - API: `http://127.0.0.1:5000`
 - SOCKS proxy: `socks5://127.0.0.1:1080` (only active when VPN is up)
+
+### Container Entrypoint
+
+The container uses `entrypoint.sh` which automatically:
+
+- **Routes HTB networks** — set `HTB_ROUTES=10.129.0.0/16` to add routes via the default gateway
+- **Adds /etc/hosts entries** — set `EXTRA_HOSTS=dc01.corp.htb:10.129.1.5` for custom hostname resolution
+- **Creates Ligolo TUN interface** — auto-creates `/dev/net/tun` for pivoting
+- **Enables IP forwarding** — `net.ipv4.ip_forward=1`
+
+### Linux Host Networking
+
+For Linux hosts that need direct network access (no NAT), use the host networking override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
+```
+
+This sets `network_mode: host`, removes port mappings (not needed), and gives the container direct access to the host's network stack.
+
+### Container Capabilities
+
+The compose file grants these Linux capabilities:
+
+```yaml
+cap_add:
+  - NET_RAW       # Raw packet operations (nmap SYN scans)
+  - NET_ADMIN     # Network configuration, VPN tunnels, routing
+devices:
+  - /dev/net/tun:/dev/net/tun  # TUN device for VPN/Ligolo
+```
+
+### Resource Limits
+
+```yaml
+deploy:
+  resources:
+    limits:
+      memory: 8g
+      cpus: "2.0"
+ulimits:
+  nofile:
+    soft: 65535
+    hard: 65535
+```
 
 ### Reaching Targets
 
@@ -130,22 +173,6 @@ ports:
 
 ---
 
-## Linux Capabilities
-
-The container requires `NET_RAW` and `NET_ADMIN` (already set in `docker-compose.yml`):
-
-```yaml
-cap_add:
-  - NET_RAW
-  - NET_ADMIN
-devices:
-  - /dev/net/tun:/dev/net/tun
-```
-
-These enable raw packet operations (nmap), VPN tunnels, and network-level tools. They are scoped capabilities — safer than `--privileged`.
-
----
-
 ## VPN & SOCKS Proxy
 
 Mount your VPN configs and connect from inside the container:
@@ -160,7 +187,7 @@ VPN_DIR=./vpn
 # vpn_connect(config_path='/vpn/wg0.conf')
 ```
 
-When VPN connects, microsocks starts automatically on port 1080. From your host:
+When VPN connects, the SOCKS5 proxy starts automatically on port 1080. From your host:
 
 ```bash
 curl --proxy socks5://localhost:1080 http://10.42.0.1
@@ -293,4 +320,4 @@ Common causes:
 
 - VPN must be connected first — proxy only runs when VPN is active
 - Check port 1080 is mapped in `docker-compose.yml`
-- Verify microsocks process: `docker exec kali-mcp pgrep -a microsocks`
+- Check SOCKS proxy process: `docker exec zebbern-kali ss -tlnp | grep 1080`

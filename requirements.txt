@@ -27,5 +27,7 @@ sympy>=1.12
 gmpy2>=2.1.0
 pycryptodome>=3.19.0
 
-# Active Directory — BloodHound ingestor (bloodhound.py)
-bloodhound>=1.7.0
+# Active Directory — core dependency (brings in pyasn1, cryptography, ldap3, etc.)
+impacket==0.12.0
+ldapdomaindump>=0.9.0
+pywinrm>=0.4.0

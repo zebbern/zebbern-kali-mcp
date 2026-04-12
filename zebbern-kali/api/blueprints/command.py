@@ -187,7 +187,7 @@ def command():
                 },
             )
         else:
-            DEFAULT_TIMEOUT = 10
+            DEFAULT_TIMEOUT = 3600
             timeout = params.get("timeout", DEFAULT_TIMEOUT)
             result = execute_command(command, timeout=timeout)
             return jsonify(result)

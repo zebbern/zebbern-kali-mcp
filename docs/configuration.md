@@ -160,7 +160,7 @@ COMMAND_TIMEOUT = 300
 DEBUG_MODE = os.environ.get("DEBUG_MODE", "0") == "1"
 
 # Blocking timeout for interactive commands
-BLOCKING_TIMEOUT = int(os.environ.get("BLOCKING_TIMEOUT", 5))
+BLOCKING_TIMEOUT = int(os.environ.get("BLOCKING_TIMEOUT", 30))
 ```
 
 ### Environment Variables
@@ -171,7 +171,7 @@ Set these in the systemd service or shell:
 |----------|---------|-------------|
 | `API_PORT` | `5000` | Port for Flask API server |
 | `DEBUG_MODE` | `0` | Enable Flask debug mode (`1` = enabled) |
-| `BLOCKING_TIMEOUT` | `5` | Timeout for blocking operations |
+| `BLOCKING_TIMEOUT` | `30` | Timeout for blocking operations |
 | `VPN_DIR` | (none) | Host directory with VPN config files, mounted as `/vpn` in Docker |
 
 ### Modify Systemd Service
@@ -182,7 +182,7 @@ Edit `/etc/systemd/system/kali-mcp.service`:
 [Service]
 Environment=API_PORT=5000
 Environment=DEBUG_MODE=0
-Environment=BLOCKING_TIMEOUT=5
+Environment=BLOCKING_TIMEOUT=30
 Environment=PYTHONUNBUFFERED=1
 ```
 

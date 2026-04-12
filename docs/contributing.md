@@ -276,29 +276,7 @@ result = await tools_mytool(
 
 If adding new database tables:
 
-1. Update `core/target_database.py`:
-
-```python
-def init_db():
-    """Initialize database with all tables."""
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    # Add new table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS new_table (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            value TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-
-    conn.commit()
-    conn.close()
-```
-
-2. Add CRUD functions:
+1. Add CRUD functions to the appropriate core module:
 
 ```python
 def add_new_item(name: str, value: str) -> int:

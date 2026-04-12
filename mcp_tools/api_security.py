@@ -164,16 +164,4 @@ def register(mcp: FastMCP, kali_client) -> None:
         data = {"collection": collection, "environment": environment}
         return kali_client.safe_post("api/api-security/newman", data)
 
-    @mcp.tool()
-    def api_full_scan(url: str) -> Dict[str, Any]:
-        """
-        Run a comprehensive API security scan combining multiple tools.
 
-        Args:
-            url: Target API base URL
-
-        Returns:
-            Combined results from multiple API security tests
-        """
-        data = {"url": url}
-        return kali_client.safe_post("api/api-security/full-scan", data)

@@ -12,7 +12,7 @@ Zebbern-MCP follows a client-server architecture where an MCP client on your loc
 flowchart TB
     subgraph LOCAL["Your Machine (Windows/macOS/Linux)"]
         VSC[VS Code + Copilot]
-        MCP[mcp_server.py<br/>145+ MCP Tools]
+        MCP[mcp_server.py<br/>130+ MCP Tools]
         VSC <-->|MCP Protocol<br/>stdio| MCP
     end
 
@@ -57,7 +57,6 @@ mcp_server.py              # Entry point & KaliToolsClient
     ├── network_pivot.py    # Network pivoting tools
     ├── vpn.py              # VPN management (WireGuard/OpenVPN)
     ├── ctf_platform.py     # CTF platform integration
-    ├── browser.py          # Headless browser automation
     └── ... (see Tools Reference)
 ```
 
@@ -100,16 +99,12 @@ zebbern-kali/
 │       ├── file_ops.py     # File upload/download
 │       ├── payload.py      # Payload generation
 │       ├── exploit.py      # Exploit suggester
-│       ├── evidence.py     # Evidence collection
 │       ├── fingerprint.py  # Web fingerprinting
-│       ├── database.py     # Target database CRUD
-│       ├── sessions.py     # Session save/restore + I/O
 │       ├── js_analyzer.py  # JavaScript analysis
 │       ├── api_security.py # API security testing
 │       ├── ad.py           # Active Directory tools
 │       ├── pivot.py        # Network pivoting
 │       ├── ctf_platform.py # CTF platform integration (CTFd/rCTF)
-│       ├── browser.py      # Headless browser automation (Playwright)
 │       └── vpn.py          # VPN management (WireGuard/OpenVPN)
 ├── core/                   # Core functionality modules
 │   ├── config.py           # Configuration & logging
@@ -119,10 +114,7 @@ zebbern-kali/
 │   ├── metasploit_manager.py
 │   ├── payload_generator.py
 │   ├── exploit_suggester.py
-│   ├── evidence_collector.py
 │   ├── web_fingerprinter.py
-│   ├── target_database.py
-│   ├── session_manager.py
 │   ├── js_analyzer.py
 │   ├── api_security.py
 │   ├── ad_tools.py
@@ -227,22 +219,6 @@ Manages netcat/pwncat listeners:
 | `get_active_shells` | List captured shells |
 | `interact_shell` | Send commands to shell |
 
-#### Evidence Collector (`evidence_collector.py`)
-
-Stores and organizes penetration test artifacts:
-
-```
-evidence/
-├── screenshots/
-│   └── target_20260105_143022.png
-├── notes/
-│   └── note_001.md
-└── outputs/
-    └── nmap_scan_001.txt
-```
-
----
-
 ### 4. Database Schema
 
 SQLite database for persistent storage:
@@ -341,7 +317,6 @@ zebbern-mcp/
 │   ├── kali_tools.py
 │   ├── vpn.py              # VPN management tools
 │   ├── ctf_platform.py     # CTF platform tools
-│   ├── browser.py          # Browser automation tools
 │   └── ...
 │
 ├── zebbern-kali/           # API server (deployed to Kali / Docker)
@@ -396,7 +371,7 @@ zebbern-mcp/
 | 5000 | API Server | Inbound to Kali | REST API |
 | 22 | SSH | Outbound from Kali | Remote target access |
 | 4444+ | Reverse Shells | Inbound to Kali | Shell listeners |
-| 1080 | SOCKS5 Proxy | Outbound to clients | microsocks — auto-starts with VPN |
+| 1080 | SOCKS5 Proxy | Outbound to clients | Auto-starts with VPN |
 
 ---
 
@@ -411,8 +386,7 @@ zebbern-mcp/
 | **Process Execution** | subprocess, shlex |
 | **Serialization** | JSON |
 | **Service Manager** | systemd |
-| **SOCKS5 Proxy** | microsocks |
-| **Browser Automation** | Playwright + Chromium |
+| **SOCKS5 Proxy** | SOCKS5 proxy |
 | **VPN** | WireGuard, OpenVPN |
 
 ---

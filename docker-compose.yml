@@ -5,15 +5,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        INCLUDE_METASPLOIT: "${INCLUDE_METASPLOIT:-true}"
     ports:
       - "${API_PORT:-5000}:${API_PORT:-5000}"
       - "1080:1080"
     environment:
       - API_PORT=${API_PORT:-5000}
       - DEBUG_MODE=${DEBUG_MODE:-0}
-      - BLOCKING_TIMEOUT=${BLOCKING_TIMEOUT:-5}
+      - BLOCKING_TIMEOUT=${BLOCKING_TIMEOUT:-30}
+      - HTB_ROUTES=${HTB_ROUTES:-}
+      - EXTRA_HOSTS=${EXTRA_HOSTS:-}
     cap_add:
       - NET_RAW
       - NET_ADMIN
@@ -23,8 +23,14 @@ services:
       - kali-tmp:/app/tmp
       - ${VPN_DIR:-./vpn}:/vpn:ro
     restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    sysctls:
+      - net.ipv4.ip_forward=1
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD-SHELL", "curl -f http://localhost:${API_PORT:-5000}/health || exit 1"]
       interval: 30s
       timeout: 5s
       start_period: 10s
@@ -32,7 +38,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4g
+          memory: 8g
           cpus: "2.0"
     # -- CTF network helpers (uncomment as needed) --
     # dns:

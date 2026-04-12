@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-Complete reference for all 145+ MCP tools available in Zebbern-MCP.
+Complete reference for all 130+ MCP tools available in Zebbern-MCP.
 
 ---
 
@@ -9,9 +9,9 @@ Complete reference for all 145+ MCP tools available in Zebbern-MCP.
 | Category | Tools | Description |
 |----------|-------|-------------|
 | [Command Execution](#command-execution) | 2 | Direct command execution |
-| [Reconnaissance](#reconnaissance) | 13 | Network and host discovery |
-| [Web Application](#web-application) | 9 | Web vulnerability scanning |
-| [API Security](#api-security) | 12 | API testing and fuzzing |
+| [Reconnaissance](#reconnaissance) | 10 | Network and host discovery |
+| [Web Application](#web-application) | 7 | Web vulnerability scanning |
+| [API Security](#api-security) | 8 | API testing and fuzzing |
 | [Credential Attacks](#credential-attacks) | 3 | Password cracking and brute-force |
 | [SSH Security](#ssh-security) | 1 | SSH configuration auditing |
 | [Active Directory](#active-directory) | 10 | AD enumeration and attacks |
@@ -21,14 +21,12 @@ Complete reference for all 145+ MCP tools available in Zebbern-MCP.
 | [SSH Sessions](#ssh-sessions) | 8 | Remote SSH session control |
 | [Payloads](#payloads) | 5 | Payload generation |
 | [Pivoting](#pivoting) | 14 | Network tunneling and pivoting |
-| [Evidence](#evidence) | 6 | Artifact collection |
-| [Database](#database) | 14 | Targets, findings, credentials |
-| [Sessions](#sessions) | 6 | Session save/restore |
-| [JavaScript Analysis](#javascript-analysis) | 5 | JS file analysis |
+
+| [JavaScript Analysis](#javascript-analysis) | 4 | JS file analysis |
 | [System](#system) | 3 | Health and network info |
 | [VPN](#vpn) | 3 | VPN connection management |
 | [CTF Platform](#ctf-platform) | 7 | CTF challenge management |
-| [Browser Automation](#browser-automation) | 4 | Headless browser control |
+
 
 ---
 
@@ -168,19 +166,6 @@ Fetch historical URLs from Wayback Machine.
 
 ```python
 tools_waybackurls(
-    domain: str,
-    additional_args: str = ""
-) -> Dict
-```
-
----
-
-### `tools_fierce`
-
-DNS reconnaissance and zone transfer attempts.
-
-```python
-tools_fierce(
     domain: str,
     additional_args: str = ""
 ) -> Dict
@@ -360,65 +345,7 @@ tools_nuclei(
 
 ---
 
-### `tools_byp4xx`
-
-Bypass 403/401 responses.
-
-```python
-tools_byp4xx(
-    url: str,
-    method: str = "GET",
-    additional_args: str = ""
-) -> Dict
-```
-
----
-
-### `tools_subzy`
-
-Subdomain takeover detection.
-
-```python
-tools_subzy(
-    target: str,
-    additional_args: str = ""
-) -> Dict
-```
-
----
-
 ## API Security
-
-### `tools_arjun`
-
-Hidden parameter discovery.
-
-```python
-tools_arjun(
-    url: str,
-    method: str = "GET",
-    additional_args: str = ""
-) -> Dict
-```
-
----
-
-### `api_full_scan`
-
-Comprehensive API security scan.
-
-```python
-api_full_scan(
-    target: str,
-    openapi_spec: str = "",
-    wordlist: str = "",
-    auth_header: str = ""
-) -> Dict
-```
-
-Runs: Arjun, FFUF, Nuclei, Kiterunner, rate limit testing.
-
----
 
 ### `api_fuzz_openapi`
 
@@ -427,23 +354,6 @@ Fuzz API based on OpenAPI specification.
 ```python
 api_fuzz_openapi(
     spec_url: str,
-    additional_args: str = ""
-) -> Dict
-```
-
----
-
-### `api_kiterunner_scan`
-
-Discover API endpoints with Kiterunner.
-
-```python
-api_kiterunner_scan(
-    target: str,
-    wordlist: str = "",
-    assetnote: bool = True,
-    content_types: str = "json",
-    max_connection_per_host: int = 3,
     additional_args: str = ""
 ) -> Dict
 ```
@@ -502,20 +412,6 @@ api_test_rate_limit(
     url: str,
     requests_count: int = 100,
     delay_ms: int = 0
-) -> Dict
-```
-
----
-
-### `api_newman_run`
-
-Run Postman collection with Newman.
-
-```python
-api_newman_run(
-    collection: str,
-    environment: str = "",
-    iterations: int = 1
 ) -> Dict
 ```
 
@@ -603,6 +499,8 @@ tools_ssh_audit(
 ---
 
 ## Active Directory
+
+> All AD tool paths are resolved dynamically via `shutil.which()` — no hardcoded paths. The `ad_tools_status` endpoint reports which tools are available on the current system. Supported tools include: impacket (pinned 0.12.0), bloodyAD, certipy-ad, netexec, krbrelayx, coercer, pywhisker, ldapdomaindump, and bloodhound.py.
 
 ### `ad_asreproast`
 
@@ -758,18 +656,6 @@ Get exploit suggestions for a service.
 exploit_suggest_for_service(
     service: str,
     version: str = ""
-) -> Dict
-```
-
----
-
-### `exploit_analyze_nmap`
-
-Analyze nmap output and suggest exploits.
-
-```python
-exploit_analyze_nmap(
-    nmap_output: str
 ) -> Dict
 ```
 
@@ -1182,251 +1068,6 @@ tunnel_stop_all() -> Dict
 
 ---
 
-## Evidence
-
-### `evidence_screenshot`
-
-Take screenshot of web page.
-
-```python
-evidence_screenshot(
-    url: str,
-    full_page: bool = True,
-    wait_time: int = 3
-) -> Dict
-```
-
----
-
-### `evidence_add_note`
-
-Add note to evidence.
-
-```python
-evidence_add_note(
-    title: str,
-    content: str,
-    tags: List[str] = []
-) -> Dict
-```
-
----
-
-### `evidence_add_output`
-
-Save command output as evidence.
-
-```python
-evidence_add_output(
-    title: str,
-    output: str,
-    command: str = ""
-) -> Dict
-```
-
----
-
-### `evidence_list`
-
-List all evidence items.
-
-```python
-evidence_list() -> Dict
-```
-
----
-
-### `evidence_get`
-
-Get specific evidence item.
-
-```python
-evidence_get(evidence_id: str) -> Dict
-```
-
----
-
-### `evidence_delete`
-
-Delete evidence item.
-
-```python
-evidence_delete(evidence_id: str) -> Dict
-```
-
----
-
-## Database
-
-### `db_add_target`
-
-Add target to database.
-
-```python
-db_add_target(
-    name: str,
-    host: str,
-    notes: str = ""
-) -> Dict
-```
-
----
-
-### `db_list_targets`
-
-List all targets.
-
-```python
-db_list_targets() -> Dict
-```
-
----
-
-### `db_get_target`
-
-Get target details.
-
-```python
-db_get_target(target_id: int) -> Dict
-```
-
----
-
-### `db_add_finding`
-
-Add security finding.
-
-```python
-db_add_finding(
-    target_id: int,
-    title: str,
-    severity: str,
-    description: str,
-    remediation: str = ""
-) -> Dict
-```
-
-| severity | Description |
-|----------|-------------|
-| `critical` | Immediate action required |
-| `high` | Significant risk |
-| `medium` | Moderate risk |
-| `low` | Minor issue |
-| `info` | Informational |
-
----
-
-### `db_list_findings`
-
-List findings with optional filters.
-
-```python
-db_list_findings(
-    target_id: int = None,
-    severity: str = None
-) -> Dict
-```
-
----
-
-### `db_add_credential`
-
-Store discovered credential.
-
-```python
-db_add_credential(
-    service: str,
-    username: str,
-    password: str = "",
-    hash: str = "",
-    notes: str = ""
-) -> Dict
-```
-
----
-
-### `db_list_credentials`
-
-List stored credentials.
-
-```python
-db_list_credentials() -> Dict
-```
-
----
-
-### `db_get_scan_history`
-
-Get scan history for target.
-
-```python
-db_get_scan_history(target_id: int) -> Dict
-```
-
----
-
-### `db_export`
-
-Export database to JSON.
-
-```python
-db_export() -> Dict
-```
-
----
-
-## Sessions
-
-### `session_save`
-
-Save current session state.
-
-```python
-session_save(name: str) -> Dict
-```
-
----
-
-### `session_load`
-
-Load saved session.
-
-```python
-session_load(name: str) -> Dict
-```
-
----
-
-### `session_list`
-
-List saved sessions.
-
-```python
-session_list() -> Dict
-```
-
----
-
-### `session_delete`
-
-Delete saved session.
-
-```python
-session_delete(name: str) -> Dict
-```
-
----
-
-### `session_clear`
-
-Clear current session state.
-
-```python
-session_clear() -> Dict
-```
-
----
-
 ## JavaScript Analysis
 
 ### `js_discover`
@@ -1693,86 +1334,4 @@ Check current CTF platform connection status.
 ctf_status() -> Dict
 ```
 
----
 
-## Browser Automation
-
-### `browser_navigate`
-
-Navigate to a URL using headless Chromium and return rendered content, title, final URL, and cookies. Executes JavaScript and follows client-side redirects.
-
-```python
-browser_navigate(
-    url: str,
-    wait_for: str = "",
-    timeout: int = 30000,
-    headers: Dict[str, str] = None
-) -> Dict
-```
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `url` | str | Yes | Target URL to navigate to |
-| `wait_for` | str | No | CSS selector to wait for before returning |
-| `timeout` | int | No | Page load timeout in ms (default 30000) |
-| `headers` | dict | No | Extra HTTP headers to send |
-
----
-
-### `browser_screenshot`
-
-Capture a PNG screenshot of a web page with full JavaScript rendering.
-
-```python
-browser_screenshot(
-    url: str,
-    full_page: bool = True,
-    output_path: str = "/app/tmp/screenshot.png",
-    viewport_width: int = 1280,
-    viewport_height: int = 720
-) -> Dict
-```
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `url` | str | Yes | Target URL |
-| `full_page` | bool | No | Capture full scrollable page (default `True`) |
-| `output_path` | str | No | File path to save screenshot |
-| `viewport_width` | int | No | Viewport width in pixels (default 1280) |
-| `viewport_height` | int | No | Viewport height in pixels (default 720) |
-
----
-
-### `browser_execute_js`
-
-Navigate to a URL and execute JavaScript in the page context. Useful for XSS testing, DOM data extraction, and client-side API interaction.
-
-```python
-browser_execute_js(
-    url: str,
-    script: str
-) -> Dict
-```
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `url` | str | Yes | Target URL to navigate to first |
-| `script` | str | Yes | JavaScript code to execute |
-
----
-
-### `browser_intercept`
-
-Capture all network requests/responses during page load. Reveals hidden API calls, XHR requests, and loaded resources.
-
-```python
-browser_intercept(
-    url: str,
-    filter_types: List[str] = None
-) -> Dict
-```
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `url` | str | Yes | Target URL |
-| `filter_types` | list | No | Resource types to capture: `xhr`, `fetch`, `document`, `script`, etc. |
