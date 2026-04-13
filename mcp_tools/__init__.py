@@ -11,12 +11,12 @@ from ._client import KaliToolsClient
 from . import (
     ad_tools,
     api_security,
+    callback_catcher,
     command_exec,
     ctf_platform,
     exploit_suggester,
     file_operations,
     hosts_management,
-    js_analyzer,
     kali_tools,
     metasploit,
     network_pivot,
@@ -38,7 +38,6 @@ _MODULES = [
     ssh_manager,
     file_operations,
     web_fingerprinter,
-    js_analyzer,
     api_security,
     ad_tools,
     network_pivot,
@@ -46,6 +45,7 @@ _MODULES = [
     ctf_platform,
     vpn,
     hosts_management,
+    callback_catcher,
 ]
 
 

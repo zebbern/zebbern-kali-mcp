@@ -10,13 +10,13 @@ from .file_ops import bp as file_ops_bp
 from .payload import bp as payload_bp
 from .exploit import bp as exploit_bp
 from .fingerprint import bp as fingerprint_bp
-from .js_analyzer import bp as js_analyzer_bp
 from .api_security import bp as api_security_bp
 from .ad import bp as ad_bp
 from .pivot import bp as pivot_bp
 from .ctf_platform import bp as ctf_platform_bp
 from .vpn import bp as vpn_bp
 from .hosts_management import bp as hosts_bp
+from .callback import bp as callback_bp
 
 _blueprints = [
     health_bp,
@@ -29,13 +29,13 @@ _blueprints = [
     payload_bp,
     exploit_bp,
     fingerprint_bp,
-    js_analyzer_bp,
     api_security_bp,
     ad_bp,
     pivot_bp,
     ctf_platform_bp,
     vpn_bp,
     hosts_bp,
+    callback_bp,
 ]
 
 

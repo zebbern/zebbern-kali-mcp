@@ -35,7 +35,7 @@ class ADTools:
         # Tool paths — resolve dynamically, fall back to well-known locations
         self.impacket_path = self._find_impacket_path()
         self.bloodhound_path = shutil.which("bloodhound-python") or "/usr/bin/bloodhound-python"
-        self.crackmapexec_path = shutil.which("crackmapexec") or shutil.which("netexec") or "/usr/bin/crackmapexec"
+        self.netexec_path = shutil.which("netexec") or shutil.which("nxc") or shutil.which("crackmapexec") or "/usr/bin/netexec"
         self.ldapsearch_path = shutil.which("ldapsearch") or "/usr/bin/ldapsearch"
 
         # Check available tools
@@ -85,7 +85,7 @@ class ADTools:
 
         # Check other tools
         tools["bloodhound-python"] = bool(shutil.which("bloodhound-python")) or os.path.exists(self.bloodhound_path)
-        tools["crackmapexec"] = bool(shutil.which("crackmapexec")) or os.path.exists(self.crackmapexec_path)
+        tools["crackmapexec"] = bool(shutil.which("crackmapexec")) or bool(shutil.which("netexec")) or bool(shutil.which("nxc")) or os.path.exists(self.netexec_path)
         tools["ldapsearch"] = bool(shutil.which("ldapsearch")) or os.path.exists(self.ldapsearch_path)
         tools["kerbrute"] = self._check_command("kerbrute")
         tools["responder"] = self._check_command("responder")
@@ -664,10 +664,11 @@ class ADTools:
             valid_creds = []
             tested = 0
 
-            # Use crackmapexec if available
-            if self.available_tools.get("crackmapexec"):
+            # Use netexec/crackmapexec if available
+            if self.available_tools.get("crackmapexec") or self.available_tools.get("netexec"):
+                nxc_bin = shutil.which("netexec") or shutil.which("nxc") or shutil.which("crackmapexec") or "netexec"
                 cmd = [
-                    "crackmapexec", protocol,
+                    nxc_bin, protocol,
                     target,
                     "-u", userlist,
                     "-p", password,

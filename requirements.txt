@@ -26,9 +26,22 @@ pwntools>=4.11.0
 sympy>=1.12
 gmpy2>=2.1.0
 pycryptodome>=3.19.0
+z3-solver>=4.12.0
+
+# Binary analysis
+angr>=9.2.0
+
+# Packet crafting / network
+scapy>=2.5.0
+
+# Image processing (stego/forensics)
+Pillow>=10.0.0
+
+# Web scraping / HTML parsing
+beautifulsoup4>=4.12.0
 
 # Active Directory — core dependency (brings in pyasn1, cryptography, ldap3, etc.)
-impacket==0.12.0
+impacket==0.13.0
 ldapdomaindump>=0.9.0
 pywinrm>=0.4.0
 

@@ -78,7 +78,7 @@ class Config:
         "cewl", "crunch", "medusa", "ncrack",
         "tcpdump", "wireshark", "zaproxy",
         "responder", "smbclient", "ldap-utils",
-        "bloodhound", "crackmapexec", "impacket-scripts",
+        "bloodhound", "netexec", "impacket-scripts",
         "set", "gophish",
     ]
 

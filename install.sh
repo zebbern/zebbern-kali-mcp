@@ -189,7 +189,7 @@ install_pentest_tools() {
         smbclient \
         ldap-utils \
         bloodhound \
-        crackmapexec \
+        netexec \
         impacket-scripts \
         set \
         gophish \
