@@ -118,6 +118,7 @@ RUN apt-get update && \
         sshpass \
         xxd \
         expect \
+        netexec \
     && rm -rf /var/lib/apt/lists/* \
     && (gunzip -f /usr/share/wordlists/rockyou.txt.gz 2>/dev/null || true)
 
@@ -214,8 +215,7 @@ RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed -r re
     pip3 install --break-system-packages --no-cache-dir \
         fierce \
         arjun \
-        pexpect \
-        netexec && \
+        pexpect && \
     git clone --depth 1 https://github.com/dirkjanm/krbrelayx.git /opt/krbrelayx && \
     chmod +x /opt/krbrelayx/*.py && \
     ln -sf /opt/krbrelayx/krbrelayx.py /usr/local/bin/krbrelayx && \
