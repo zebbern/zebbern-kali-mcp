@@ -236,7 +236,7 @@ Everything below is pre-installed in the Docker image — no manual setup requir
 | **gmpy2** | High-precision math |
 | **z3-solver** | SMT constraint solver |
 | **sympy** | Symbolic mathematics |
-| **SageMath** | Full math framework for crypto CTF (apt) |
+| **SageMath** | Not bundled in the current Kali rolling image |
 | **RsaCtfTool** | RSA attack automation (`/opt/RsaCtfTool/`) |
 | **cado-nfs** | Integer factorization for large keys (`/opt/cado-nfs/`) |
 

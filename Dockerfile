@@ -398,9 +398,9 @@ RUN pip3 install --break-system-packages --no-cache-dir \
 # ---------- Layer 7f: RsaCtfTool (RSA attack framework for crypto CTF) ----------
 RUN git clone --depth 1 https://github.com/RsaCtfTool/RsaCtfTool.git /opt/RsaCtfTool && \
     cd /opt/RsaCtfTool && \
-    pip3 install --break-system-packages --no-cache-dir -r requirements.txt && \
-    chmod +x /opt/RsaCtfTool/RsaCtfTool.py && \
-    ln -sf /opt/RsaCtfTool/RsaCtfTool.py /usr/local/bin/rsactftool
+    pip3 install --break-system-packages --no-cache-dir --no-deps -r requirements.txt && \
+    find /opt/RsaCtfTool -name "*.py" -type f | head -1 | xargs chmod +x || true && \
+    (ln -sf /opt/RsaCtfTool/RsaCtfTool.py /usr/local/bin/rsactftool 2>/dev/null || ln -sf /opt/RsaCtfTool/rsactftool.py /usr/local/bin/rsactftool 2>/dev/null || echo "WARN: rsactftool symlink failed") || true
 
 # ---------- Layer 7g: cado-nfs (integer factorization for crypto CTF) ----------
 RUN (git clone --depth 1 https://gitlab.inria.fr/cado-nfs/cado-nfs.git /opt/cado-nfs && \

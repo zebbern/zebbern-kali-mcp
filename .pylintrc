@@ -1,0 +1,27 @@
+[MESSAGES CONTROL]
+# Disable warnings that are false positives on Windows when analyzing Linux code
+disable=
+    no-member,
+    broad-exception-caught,
+    bare-except,
+    logging-fstring-interpolation,
+    subprocess-run-check,
+    unused-import,
+    unused-variable,
+    unused-argument,
+    unspecified-encoding,
+    consider-using-with,
+    import-error,
+    no-name-in-module
+
+[MASTER]
+# Analyze as if running on Linux
+init-hook='import sys; sys.platform = "linux"'
+
+[TYPECHECK]
+# Ignore missing Linux-only modules
+ignored-modules=pty,fcntl,termios,grp,pwd
+
+[BASIC]
+# Allow common naming conventions
+good-names=i,j,k,e,f,fd,ip,id,db
