@@ -105,6 +105,8 @@ RUN apt-get update && \
         libimage-exiftool-perl \
         foremost \
         gdb \
+        dirb \
+        amass \
         massdns \
         faketime \
         ruby \
@@ -130,6 +132,7 @@ RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest || tru
     go install -v github.com/tomnomnom/waybackurls@latest || true && \
     go install -v github.com/sensepost/gowitness@latest || true && \
     go install -v github.com/jpillora/chisel@latest || true && \
+    go install -v github.com/PentestPad/subzy@latest || true && \
     go clean -cache -modcache 2>/dev/null || true
 
 # ---------- Layer 3a: Pre-built binaries (katana, ligolo-ng) ----------
@@ -175,6 +178,10 @@ RUN mkdir -p /opt/ligolo-ng /opt/windows-tools && \
 RUN git clone --depth 1 https://github.com/topotam/PetitPotam.git /opt/PetitPotam 2>/dev/null || true && \
     ln -sf /opt/PetitPotam/PetitPotam.py /usr/local/bin/petitpotam || true
 
+# ---------- Layer 3d: byp4xx (403 bypass tool) ----------
+RUN git clone --depth 1 https://github.com/lobuhi/byp4xx.git /opt/byp4xx 2>/dev/null || true && \
+    cd /opt/byp4xx && go build -o /usr/local/bin/byp4xx byp4xx.go
+
 # ---------- Layer 5: pipx tools ----------
 RUN pipx ensurepath && \
     pipx install ssh-audit || true && \
@@ -194,6 +201,9 @@ RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed -r re
         certipy-ad>=4.8.0 \
         pywhisker>=0.1.0 \
         coercer>=0.6.0 && \
+    pip3 install --break-system-packages --no-cache-dir \
+        fierce \
+        arjun && \
     git clone --depth 1 https://github.com/dirkjanm/krbrelayx.git /opt/krbrelayx && \
     ln -sf /opt/krbrelayx/krbrelayx.py /usr/local/bin/krbrelayx && \
     ln -sf /opt/krbrelayx/addspn.py /usr/local/bin/addspn && \
