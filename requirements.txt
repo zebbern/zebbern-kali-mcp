@@ -34,6 +34,3 @@ pywinrm>=0.4.0
 
 # Terminal automation
 pexpect>=4.8.0
-
-# Modern CrackMapExec replacement (Python 3.13 compatible)
-netexec>=1.1.0
