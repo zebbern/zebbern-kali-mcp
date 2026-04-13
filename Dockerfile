@@ -203,7 +203,7 @@ RUN rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED && \
 # ---------- Layer 7: Python dependencies ----------
 COPY requirements.txt /app/requirements.txt
 RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed -r requirements.txt && \
-    pip3 install --break-system-packages --no-cache-dir \
+    pip3 install --break-system-packages --no-cache-dir --ignore-installed \
         asysocks unicrypto unidns winacl \
         kerbad badauth badldap && \
     pip3 install --break-system-packages --no-cache-dir --no-deps \
