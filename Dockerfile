@@ -195,6 +195,9 @@ RUN rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED && \
 # ---------- Layer 7: Python dependencies ----------
 COPY requirements.txt /app/requirements.txt
 RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed -r requirements.txt && \
+    pip3 install --break-system-packages --no-cache-dir \
+        asysocks unicrypto unidns winacl \
+        kerbad badauth badldap && \
     pip3 install --break-system-packages --no-cache-dir --no-deps \
         bloodhound>=1.7.0 \
         bloodyAD>=2.1.0 \
@@ -208,7 +211,9 @@ RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed -r re
     ln -sf /opt/krbrelayx/krbrelayx.py /usr/local/bin/krbrelayx && \
     ln -sf /opt/krbrelayx/addspn.py /usr/local/bin/addspn && \
     ln -sf /opt/krbrelayx/dnstool.py /usr/local/bin/dnstool && \
-    ln -sf /opt/krbrelayx/printerbug.py /usr/local/bin/printerbug
+    ln -sf /opt/krbrelayx/printerbug.py /usr/local/bin/printerbug && \
+    git clone --depth 1 https://github.com/micahvandeusen/gMSADumper.git /opt/gMSADumper && \
+    ln -sf /opt/gMSADumper/gMSADumper.py /usr/local/bin/gMSADumper
 
 # ---------- Layer 7b: Install Playwright browsers ----------
 RUN playwright install chromium --with-deps && \
