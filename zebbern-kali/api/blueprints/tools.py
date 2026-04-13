@@ -1,6 +1,7 @@
 """Kali tool endpoints."""
 
 import json as json_lib
+import shutil
 import subprocess
 import traceback
 from flask import Blueprint, request, jsonify
@@ -72,7 +73,8 @@ def ssh_audit():
         policy_file = params.get("policy_file", "")
         additional_args = params.get("additional_args", "")
 
-        cmd = ["/usr/local/bin/ssh-audit"]
+        ssh_audit_bin = shutil.which("ssh-audit") or "/root/.local/bin/ssh-audit"
+        cmd = [ssh_audit_bin]
 
         if port != 22:
             cmd.extend(["-p", str(port)])

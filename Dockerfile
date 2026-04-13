@@ -208,6 +208,14 @@ RUN playwright install chromium --with-deps && \
 RUN ln -sf /usr/bin/python3 /usr/local/bin/python && \
     ln -sf /usr/bin/pip3 /usr/local/bin/pip
 
+# ---------- Layer 7c: Wordlist symlinks ----------
+# Many tools default to /usr/share/wordlists/dirb/ paths — create symlinks
+# from seclists (already installed) so tools work out of the box
+RUN mkdir -p /usr/share/wordlists/dirb && \
+    ln -sf /usr/share/seclists/Discovery/Web-Content/common.txt /usr/share/wordlists/dirb/common.txt && \
+    ln -sf /usr/share/seclists/Discovery/Web-Content/big.txt /usr/share/wordlists/dirb/big.txt && \
+    ln -sf /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt /usr/share/wordlists/dirb/directory-list-2.3-medium.txt
+
 # ---------- Layer 8: Application code ----------
 COPY zebbern-kali/ /app/zebbern-kali/
 COPY entrypoint.sh /app/entrypoint.sh
