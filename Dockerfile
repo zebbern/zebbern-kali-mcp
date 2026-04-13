@@ -112,6 +112,12 @@ RUN apt-get update && \
         ruby \
         ruby-dev \
         libkrb5-dev \
+        file \
+        tmux \
+        screen \
+        sshpass \
+        xxd \
+        expect \
     && rm -rf /var/lib/apt/lists/* \
     && (gunzip -f /usr/share/wordlists/rockyou.txt.gz 2>/dev/null || true)
 
@@ -176,6 +182,7 @@ RUN mkdir -p /opt/ligolo-ng /opt/windows-tools && \
 
 # ---------- Layer 3c: PetitPotam & coercion tools ----------
 RUN git clone --depth 1 https://github.com/topotam/PetitPotam.git /opt/PetitPotam 2>/dev/null || true && \
+    chmod +x /opt/PetitPotam/PetitPotam.py && \
     ln -sf /opt/PetitPotam/PetitPotam.py /usr/local/bin/petitpotam || true
 
 # ---------- Layer 3d: byp4xx (403 bypass tool) ----------
@@ -206,13 +213,17 @@ RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed -r re
         coercer>=0.6.0 && \
     pip3 install --break-system-packages --no-cache-dir \
         fierce \
-        arjun && \
+        arjun \
+        pexpect \
+        netexec && \
     git clone --depth 1 https://github.com/dirkjanm/krbrelayx.git /opt/krbrelayx && \
+    chmod +x /opt/krbrelayx/*.py && \
     ln -sf /opt/krbrelayx/krbrelayx.py /usr/local/bin/krbrelayx && \
     ln -sf /opt/krbrelayx/addspn.py /usr/local/bin/addspn && \
     ln -sf /opt/krbrelayx/dnstool.py /usr/local/bin/dnstool && \
     ln -sf /opt/krbrelayx/printerbug.py /usr/local/bin/printerbug && \
     git clone --depth 1 https://github.com/micahvandeusen/gMSADumper.git /opt/gMSADumper && \
+    chmod +x /opt/gMSADumper/gMSADumper.py && \
     ln -sf /opt/gMSADumper/gMSADumper.py /usr/local/bin/gMSADumper
 
 # ---------- Layer 7b: Install Playwright browsers ----------
