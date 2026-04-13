@@ -76,17 +76,7 @@ docker run -d -p 5000:5000 --name zebbern-kali zebbern-kali-mcp
 
 Restart VS Code — done. `uvx` auto-downloads the MCP client from PyPI.
 
-> **[Full Docker Guide →](docs/docker-install.md)** — env vars, VPN/SOCKS proxy, image variants, networking details.
-
-### Kali VM (Alternative)
-
-```bash
-git clone https://github.com/zebbern/zebbern-kali-mcp.git
-cd zebbern-kali-mcp
-sudo ./install.sh
-```
-
-Then point VS Code at your Kali IP — see **[Full VM Guide →](docs/vm-install.md)**.
+> Docker is the supported install path. See the setup sections below for env vars, VPN/SOCKS proxy, image variants, and networking details.
 
 ---
 
@@ -166,7 +156,7 @@ Everything below is pre-installed in the Docker image — no manual setup requir
 | Tool | Description |
 |------|-------------|
 | **netexec** | Primary SMB/LDAP/WinRM tool (replaces crackmapexec) |
-| **impacket** (0.13.0) | Python AD attack toolkit (secretsdump, psexec, wmiexec, etc.) |
+| **impacket** (0.13.0) | Python AD attack toolkit — ~50 scripts symlinked as `impacket-*` in PATH (secretsdump, psexec, wmiexec, etc.) |
 | **bloodhound.py** | AD relationship graphing — data collector |
 | **bloodyAD** | AD privilege escalation framework |
 | **certipy-ad** | AD Certificate Services (ADCS) exploitation |
@@ -222,9 +212,16 @@ Everything below is pre-installed in the Docker image — no manual setup requir
 |------|-------------|
 | **binwalk** | Firmware analysis and file extraction |
 | **steghide** | Steganography tool |
+| **stegseek** | Fast steghide cracker (wordlist-based) |
+| **zsteg** | PNG/BMP steganography detector (Ruby) |
 | **exiftool** | Metadata reader/writer |
 | **foremost** | File carving/recovery |
+| **volatility3** | Memory forensics framework (Python) |
+| **sleuthkit** | Disk forensics — `mmls`, `fls`, `icat`, `blkcat` |
 | **gdb** | GNU Debugger |
+| **radare2** | Reverse engineering framework (disassembly, debugging, patching) |
+| **imagemagick** | Image manipulation and analysis |
+| **tesseract-ocr** | Optical character recognition |
 
 ### Binary Analysis (Python)
 | Tool | Description |
@@ -239,6 +236,9 @@ Everything below is pre-installed in the Docker image — no manual setup requir
 | **gmpy2** | High-precision math |
 | **z3-solver** | SMT constraint solver |
 | **sympy** | Symbolic mathematics |
+| **SageMath** | Full math framework for crypto CTF (apt) |
+| **RsaCtfTool** | RSA attack automation (`/opt/RsaCtfTool/`) |
+| **cado-nfs** | Integer factorization for large keys (`/opt/cado-nfs/`) |
 
 ### Networking
 | Tool | Description |
@@ -264,6 +264,22 @@ Everything below is pre-installed in the Docker image — no manual setup requir
 | **LinPEAS** | Linux privilege escalation audit script | `/opt/privesc-tools/linpeas.sh` |
 | **WinPEAS** | Windows privilege escalation audit (x64, x86, .bat) | `/opt/privesc-tools/` |
 | **Mimikatz** | Windows credential extraction | `/opt/windows-tools/mimikatz/` |
+| **RunasCs.exe** | Windows runas with explicit credentials | `/opt/windows-tools/RunasCs.exe` |
+
+### Tunneling & Remote Access
+| Tool | Description |
+|------|-------------|
+| **cloudflared** | Cloudflare Tunnel client (expose services without port-forwarding) |
+| **ngrok** | Instant public URLs for local services |
+
+### Media & Containers
+| Tool | Description |
+|------|-------------|
+| **ffmpeg** | Audio/video processing and conversion |
+| **sox** | Sound processing and analysis (+ all format plugins) |
+| **podman** | Rootless container engine (needs `--privileged` at runtime) |
+| **numpy** | Numerical computing (Python) |
+| **scipy** | Scientific computing (Python) |
 
 ### Callback Catcher
 A **custom built-in HTTP + DNS callback listener** for isolated networks where external services like webhook.site can't reach your targets. Managed via the `callback_catcher` MCP module.
@@ -301,7 +317,7 @@ pexpect                    # Terminal automation
 python-dotenv              # Environment config
 ```
 
-Additional pip packages installed during build: `bloodyAD`, `certipy-ad`, `bloodhound`, `pywhisker`, `coercer`, `fierce`, `arjun`, `dementor`, `commix`, `ghauri`, `jwt-tool`, `graphw00f`, `clairvoyance`, `xnLinkFinder`, `paramspider`, `mitmproxy`, `waymore`, `ssh-audit`.
+Additional pip packages installed during build: `bloodyAD`, `certipy-ad`, `bloodhound`, `pywhisker`, `coercer`, `fierce`, `arjun`, `dementor`, `commix`, `ghauri`, `jwt-tool`, `graphw00f`, `clairvoyance`, `xnLinkFinder`, `paramspider`, `mitmproxy`, `waymore`, `ssh-audit`, `volatility3`, `numpy`, `scipy`.
 
 ---
 
@@ -383,7 +399,7 @@ zebbern-kali-mcp/
 │       └── kali_tools.py       #   Tool wrappers
 │
 ├── vpn/                        # Mount point for VPN configs
-└── docs/                       # Documentation (MkDocs)
+└── README.md                   # Project overview and setup guide
 ```
 
 ---
@@ -404,21 +420,7 @@ The assistant calls MCP tools, which make HTTP requests to the Flask API inside 
 
 ## Documentation
 
-Full documentation available in the [docs/](docs/) folder:
-
-- [Docker Setup](docs/docker-install.md) — Zero-config container install
-- [VM Setup](docs/vm-install.md) — Native Kali Linux install
-- [Architecture](docs/architecture.md) — System design and components
-- [Tools Reference](docs/tools-reference.md) — All MCP tools documented
-- [API Reference](docs/api-reference.md) — REST API endpoints
-- [Workflows](docs/workflows.md) — Practical pentest examples
-- [Security](docs/security.md) — Hardening recommendations
-- [Troubleshooting](docs/troubleshooting.md) — Common issues
-
-```bash
-pip install mkdocs mkdocs-material
-mkdocs serve
-```
+This README is the primary source of truth for setup, usage, and tool reference. The separate MkDocs site and legacy VM install docs were removed.
 
 ---
 
@@ -436,7 +438,7 @@ mkdocs serve
 
 ## Contributing
 
-Contributions welcome! Please read **[Contributing →](docs/contributing.md)** for guidelines.
+Contributions welcome! Please open a pull request with a clear summary of changes and any relevant test notes.
 
 ---
 

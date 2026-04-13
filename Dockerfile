@@ -126,8 +126,23 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/* \
     && (gunzip -f /usr/share/wordlists/rockyou.txt.gz 2>/dev/null || true)
 
+# ---------- Layer 2a: CTF tools (RE, forensics, stego, media, containers) ----------
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        radare2 \
+        sleuthkit \
+        stegseek \
+        imagemagick \
+        tesseract-ocr \
+        ffmpeg \
+        sox \
+        libsox-fmt-all \
+        podman \
+    && rm -rf /var/lib/apt/lists/*
+
 # ---------- Layer 2c: Ruby-based pentest tools ----------
 RUN gem install evil-winrm --no-document
+RUN gem install zsteg --no-document
 
 # ---------- Layer 2b: Metasploit Framework ----------
 RUN apt-get update && \
@@ -200,7 +215,21 @@ RUN mkdir -p /opt/ligolo-ng /opt/windows-tools && \
     mv /tmp/chisel-win /opt/windows-tools/chisel.exe && \
     chmod +x /opt/windows-tools/chisel.exe) && \
     (wget -q "https://raw.githubusercontent.com/int0x33/nc.exe/master/nc64.exe" -O /opt/windows-tools/nc64.exe && \
-    chmod +x /opt/windows-tools/nc64.exe)
+    chmod +x /opt/windows-tools/nc64.exe) && \
+    (RUNAS_VER=$(curl -sL https://api.github.com/repos/antonioCoco/RunasCs/releases/latest | jq -r '.tag_name' | sed 's/^v//') && \
+    wget -q "https://github.com/antonioCoco/RunasCs/releases/download/v${RUNAS_VER}/RunasCs.zip" -O /tmp/RunasCs.zip && \
+    unzip -o /tmp/RunasCs.zip -d /opt/windows-tools/ && \
+    rm -f /tmp/RunasCs.zip) || echo "WARN: RunasCs download failed"
+
+# ---------- Layer 3b1a: Tunnel tools (cloudflared, ngrok) ----------
+RUN CFVER=$(curl -sL https://api.github.com/repos/cloudflare/cloudflared/releases/latest | jq -r '.tag_name') && \
+    wget -q "https://github.com/cloudflare/cloudflared/releases/download/${CFVER}/cloudflared-linux-amd64" -O /usr/local/bin/cloudflared && \
+    chmod +x /usr/local/bin/cloudflared || echo "WARN: cloudflared install failed"
+
+RUN wget -q "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz" -O /tmp/ngrok.tgz && \
+    tar -xzf /tmp/ngrok.tgz -C /usr/local/bin/ && \
+    chmod +x /usr/local/bin/ngrok && \
+    rm -f /tmp/ngrok.tgz || echo "WARN: ngrok install failed"
 
 # ---------- Layer 3b2: Privilege escalation scripts (LinPEAS/WinPEAS) ----------
 RUN mkdir -p /opt/privesc-tools && \
@@ -267,6 +296,22 @@ RUN pip3 install --break-system-packages --no-cache-dir --ignore-installed -r re
     git clone --depth 1 https://github.com/micahvandeusen/gMSADumper.git /opt/gMSADumper && \
     chmod +x /opt/gMSADumper/gMSADumper.py && \
     ln -sf /opt/gMSADumper/gMSADumper.py /usr/local/bin/gMSADumper
+
+# ---------- Layer 7a0: Impacket command symlinks ----------
+# Impacket installs scripts as getTGT.py, secretsdump.py etc.
+# Create standard impacket-* symlinks so both naming conventions work
+RUN for script in getTGT getNPUsers getST secretsdump smbclient \
+        psexec wmiexec dcomexec atexec smbserver ntlmrelayx \
+        mssqlclient reg services smbexec addcomputer dacledit \
+        describeTicket exchanger findDelegation getArch getPac \
+        goldenPac karmaSMB lookupsid machine_account mqtt_check \
+        net netview nmapAnswerMachine ping ping6 raiseChild \
+        rbcd rdp_check rpcdump rpcmap sambaPipe samrdump \
+        serviceinstall sniffer sniff split ticketConverter \
+        ticketer tstool wmiquery; do \
+    [ -f "/usr/local/bin/${script}.py" ] && \
+        ln -sf "/usr/local/bin/${script}.py" "/usr/local/bin/impacket-${script}" || true; \
+    done
 
 # ---------- Layer 7a: Additional pentest pip tools ----------
 RUN pip3 install --break-system-packages --no-cache-dir \
@@ -343,6 +388,24 @@ RUN (apt-get update && \
     tar -xzf /tmp/caido.tar.gz -C /usr/local/bin/ && \
     rm -f /tmp/caido.tar.gz) || \
     echo "WARN: caido install failed — run as separate container: docker run --rm -it caido/caido"
+
+# ---------- Layer 7e: CTF Python packages (forensics, math, science) ----------
+RUN pip3 install --break-system-packages --no-cache-dir \
+        volatility3 \
+        numpy \
+        scipy
+
+# ---------- Layer 7f: RsaCtfTool (RSA attack framework for crypto CTF) ----------
+RUN git clone --depth 1 https://github.com/RsaCtfTool/RsaCtfTool.git /opt/RsaCtfTool && \
+    cd /opt/RsaCtfTool && \
+    pip3 install --break-system-packages --no-cache-dir -r requirements.txt && \
+    chmod +x /opt/RsaCtfTool/RsaCtfTool.py && \
+    ln -sf /opt/RsaCtfTool/RsaCtfTool.py /usr/local/bin/rsactftool
+
+# ---------- Layer 7g: cado-nfs (integer factorization for crypto CTF) ----------
+RUN (git clone --depth 1 https://gitlab.inria.fr/cado-nfs/cado-nfs.git /opt/cado-nfs && \
+    cd /opt/cado-nfs && \
+    make -j$(nproc)) || echo "WARN: cado-nfs build failed — install manually if needed"
 
 # ---------- Layer 8: Application code ----------
 COPY zebbern-kali/ /app/zebbern-kali/
