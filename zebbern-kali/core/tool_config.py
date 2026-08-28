@@ -14,17 +14,6 @@ STREAMING_TOOLS = [
     "bash"  # For testing with bash commands
 ]
 
-# Tools that are blocked and should not be executed via execute_command
-# These tools should use their dedicated managers instead
-BLOCKED_TOOLS = [
-    "ssh",
-    "scp",
-    "rsync",
-    "nc",
-    "netcat",
-    "telnet"
-]
-
 # Tool-specific timeout configurations (in seconds)
 TOOL_TIMEOUTS = {
     "ffuf": 1800,      # 30 minutes
@@ -61,15 +50,3 @@ def is_streaming_tool(tool_name: str) -> bool:
         True if tool requires streaming, False otherwise
     """
     return tool_name in STREAMING_TOOLS
-
-def is_blocked_tool(tool_name: str) -> bool:
-    """
-    Check if a tool is blocked from execution.
-    
-    Args:
-        tool_name: The name of the tool
-        
-    Returns:
-        True if tool is blocked, False otherwise
-    """
-    return tool_name in BLOCKED_TOOLS

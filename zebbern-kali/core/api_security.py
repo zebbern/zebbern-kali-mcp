@@ -21,12 +21,40 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Set
 from urllib.parse import urljoin, urlparse, parse_qs
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from .logging_utils import redact_command
 
 logger = logging.getLogger(__name__)
 
 # Suppress SSL warnings
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def _redact_http_header_credentials(command: List[str]) -> str:
+    """Render command metadata without exposing authentication headers."""
+    metadata_command = list(command)
+    wordlist_flag_marker = "__ZEBBERN_FFUF_WORDLIST_FLAG__"
+    for index, argument in enumerate(metadata_command):
+        if argument == "-w":
+            # FFUF uses -w for a wordlist, while credential-oriented tools
+            # commonly use it for a password. Preserve FFUF's useful path.
+            metadata_command[index] = wordlist_flag_marker
+            continue
+        if index == 0 or metadata_command[index - 1] not in ("-H", "--header"):
+            continue
+        header_name, separator, _value = argument.partition(":")
+        if separator and header_name.strip().casefold() in {
+            "api-key",
+            "authorization",
+            "cookie",
+            "proxy-authorization",
+            "set-cookie",
+            "x-access-token",
+            "x-api-key",
+            "x-auth-token",
+        }:
+            metadata_command[index] = f"{header_name}: [REDACTED]"
+    return redact_command(metadata_command).replace(wordlist_flag_marker, "-w")
 
 
 class APISecurityTester:
@@ -1050,7 +1078,7 @@ class APISecurityTester:
                 "total_found": len(results),
                 "results": results[:100],  # Limit output
                 "output_file": output_file,
-                "command": " ".join(cmd),
+                "command": _redact_http_header_credentials(cmd),
                 "timestamp": datetime.now().isoformat()
             }
 

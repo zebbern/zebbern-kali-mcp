@@ -12,7 +12,8 @@ import signal
 import sys
 from flask import Flask
 
-from core.config import API_PORT, DEBUG_MODE, VERSION, logger
+from core.config import API_LISTEN_HOST, API_PORT, DEBUG_MODE, VERSION, logger
+from api.auth import install_api_auth
 from api.routes import setup_routes
 
 
@@ -21,6 +22,13 @@ def signal_handler(signum, frame):
     logger.info(f"Received signal {signum}, shutting down gracefully...")
     
     from core.config import active_sessions, active_ssh_sessions
+    from core.job_manager import job_manager
+
+    logger.info("Stopping active background jobs...")
+    try:
+        job_manager.shutdown()
+    except Exception as exc:
+        logger.error(f"Error stopping background jobs: {exc}")
     
     logger.info("Cleaning up active reverse shell sessions...")
     for session_id, manager in list(active_sessions.items()):
@@ -42,9 +50,10 @@ def signal_handler(signum, frame):
     sys.exit(0)
 
 
-def create_app():
+def create_app(api_token=None):
     """Create and configure the Flask application."""
     app = Flask(__name__)
+    install_api_auth(app, api_token)
     setup_routes(app)
     return app
 
@@ -95,7 +104,7 @@ def main():
     logger.info("=" * 60)
     logger.info(f"Kali Linux Tools API Server v{VERSION}")
     logger.info("=" * 60)
-    logger.info(f"Starting server on port {port}")
+    logger.info(f"Starting server on {API_LISTEN_HOST}:{port}")
     logger.info(f"Debug mode: {debug}")
     
     from core.config import display_network_interfaces
@@ -109,7 +118,7 @@ def main():
     logger.info("=" * 60)
     
     try:
-        app.run(host="0.0.0.0", port=port, debug=debug)
+        app.run(host=API_LISTEN_HOST, port=port, debug=debug)
     except KeyboardInterrupt:
         logger.info("Server interrupted by user")
         signal_handler(signal.SIGINT, None)

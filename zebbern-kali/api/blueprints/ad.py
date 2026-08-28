@@ -175,7 +175,9 @@ def ldap_enum():
             username=params.get("username", ""),
             password=params.get("password", ""),
             anonymous=anonymous,
-            query=params.get("query", "")
+            query=params.get("query", ""),
+            use_starttls=params.get("use_starttls", False),
+            tls_verify=params.get("tls_verify", True),
         )
         return jsonify(result)
     except Exception as e:

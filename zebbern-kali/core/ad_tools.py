@@ -22,6 +22,8 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from .logging_utils import redact_command
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,7 +94,9 @@ class ADTools:
 
         # Additional AD tools
         tools["bloodyad"] = bool(shutil.which("bloodyad"))
-        tools["certipy"] = bool(shutil.which("certipy"))
+        tools["certipy"] = bool(
+            shutil.which("certipy") or shutil.which("certipy-ad")
+        )
         tools["pywhisker"] = bool(shutil.which("pywhisker"))
         tools["coercer"] = bool(shutil.which("coercer"))
         tools["krbrelayx"] = bool(shutil.which("krbrelayx.py")) or bool(shutil.which("krbrelayx"))
@@ -128,7 +132,7 @@ class ADTools:
                 "success": result.returncode == 0,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
-                "command": " ".join(cmd)
+                "command": redact_command(cmd)
             }
         except subprocess.TimeoutExpired:
             return {"success": False, "error": "Command timed out"}
@@ -537,17 +541,20 @@ class ADTools:
 
     def ldap_enum(self, dc_ip: str, domain: str, username: str = "",
                   password: str = "", anonymous: bool = True,
-                  query: str = "") -> Dict[str, Any]:
+                  query: str = "", use_starttls: bool = False,
+                  tls_verify: bool = True) -> Dict[str, Any]:
         """
         Enumerate LDAP for users, groups, and computers.
 
         Args:
-            dc_ip: Domain Controller IP
+            dc_ip: Domain Controller IP or hostname
             domain: Domain name
             username: Optional username for authenticated bind
             password: Optional password
             anonymous: Allow anonymous bind
             query: Custom LDAP query
+            use_starttls: Upgrade the LDAP connection to TLS
+            tls_verify: Verify the StartTLS server certificate
 
         Returns:
             LDAP enumeration results
@@ -577,13 +584,20 @@ class ADTools:
             if query:
                 queries["custom"] = query
 
+            successful_queries = 0
+            custom_query_failed = False
+
             for query_name, ldap_filter in queries.items():
-                cmd = [
-                    "ldapsearch", "-x",
+                cmd = ["ldapsearch", "-x"]
+                if use_starttls:
+                    cmd.append("-ZZ")
+                    if not tls_verify:
+                        cmd.extend(["-o", "tls-reqcert=never"])
+                cmd.extend([
                     "-H", f"ldap://{dc_ip}",
                     "-b", base_dn,
-                    ldap_filter
-                ]
+                    ldap_filter,
+                ])
 
                 if username and password:
                     cmd.extend(["-D", f"{username}@{domain}", "-w", password])
@@ -593,11 +607,26 @@ class ADTools:
                         cmd, capture_output=True, text=True, timeout=60
                     )
 
+                    if result.returncode != 0:
+                        stderr = result.stderr or ""
+                        if password:
+                            stderr = stderr.replace(password, "[REDACTED]")
+                        results["queries"][query_name] = {
+                            "filter": ldap_filter,
+                            "returncode": result.returncode,
+                            "stderr": stderr,
+                        }
+                        if query_name == "custom":
+                            custom_query_failed = True
+                        continue
+
+                    successful_queries += 1
+
                     # Parse LDAP output
                     entries = []
                     current_entry = {}
 
-                    for line in result.stdout.split('\n'):
+                    for line in (result.stdout or "").split('\n'):
                         if line.startswith("dn: "):
                             if current_entry:
                                 entries.append(current_entry)
@@ -616,7 +645,17 @@ class ADTools:
                     }
 
                 except Exception as e:
-                    results["queries"][query_name] = {"error": str(e)}
+                    error = str(e)
+                    if password:
+                        error = error.replace(password, "[REDACTED]")
+                    results["queries"][query_name] = {
+                        "filter": ldap_filter,
+                        "error": error,
+                    }
+                    if query_name == "custom":
+                        custom_query_failed = True
+
+            results["success"] = successful_queries > 0 and not custom_query_failed
 
             # Save results
             output_file = os.path.join(
@@ -683,8 +722,12 @@ class ADTools:
                         cmd, capture_output=True, text=True, timeout=len(users) * 5
                     )
 
+                    safe_output = result.stdout
+                    if password:
+                        safe_output = safe_output.replace(password, "[REDACTED]")
+
                     # Parse output for successful logins
-                    for line in result.stdout.split('\n'):
+                    for line in safe_output.split('\n'):
                         if "[+]" in line or "Pwn3d" in line:
                             valid_creds.append({
                                 "line": line.strip(),
@@ -696,9 +739,8 @@ class ADTools:
                         "target": target,
                         "protocol": protocol,
                         "users_tested": len(users),
-                        "password": password,
                         "valid_credentials": valid_creds,
-                        "output": result.stdout,
+                        "output": safe_output,
                         "timestamp": datetime.now().isoformat()
                     }
 
@@ -731,7 +773,6 @@ class ADTools:
                     if result.returncode == 0 or "Sharename" in result.stdout:
                         valid_creds.append({
                             "username": user,
-                            "password": password,
                             "domain": domain
                         })
 
@@ -746,7 +787,6 @@ class ADTools:
                 "success": True,
                 "target": target,
                 "users_tested": tested,
-                "password": password,
                 "valid_credentials": valid_creds,
                 "timestamp": datetime.now().isoformat()
             }

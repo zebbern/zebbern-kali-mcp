@@ -136,8 +136,9 @@ class NetworkPivotManager:
                 
                 for k, v in state.get("tunnels", {}).items():
                     self.tunnels[k] = Tunnel(**v)
-                    # Mark as stopped since we restarted
+                    # A restored PID may already belong to another process.
                     self.tunnels[k].status = "stopped"
+                    self.tunnels[k].pid = 0
                 
                 for k, v in state.get("pivots", {}).items():
                     self.pivots[k] = Pivot(**v)
@@ -340,7 +341,11 @@ class NetworkPivotManager:
             
             if result.returncode == 0:
                 # Find the PID
-                pid = self._find_ssh_tunnel_pid(local_port)
+                pid = self._find_ssh_tunnel_pid(
+                    port=local_port,
+                    forward_flag="-L",
+                    forward_spec=f"{local_port}:{remote_host}:{remote_port}",
+                )
                 
                 tunnel_id = self._generate_id("ssh_local")
                 
@@ -410,6 +415,10 @@ class NetworkPivotManager:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             
             if result.returncode == 0:
+                pid = self._find_ssh_tunnel_pid(
+                    forward_flag="-R",
+                    forward_spec=f"{remote_port}:{local_host}:{local_port}",
+                )
                 tunnel_id = self._generate_id("ssh_remote")
                 
                 tunnel = Tunnel(
@@ -418,7 +427,7 @@ class NetworkPivotManager:
                     local_port=local_port,
                     remote_host=ssh_host,
                     remote_port=remote_port,
-                    pid=0,  # SSH forks
+                    pid=pid or 0,
                     status="active",
                     created_at=datetime.now().isoformat(),
                     description=f"SSH remote forward from {ssh_host}:{remote_port}"
@@ -477,7 +486,11 @@ class NetworkPivotManager:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             
             if result.returncode == 0:
-                pid = self._find_ssh_tunnel_pid(socks_port)
+                pid = self._find_ssh_tunnel_pid(
+                    port=socks_port,
+                    forward_flag="-D",
+                    forward_spec=str(socks_port),
+                )
                 
                 tunnel_id = self._generate_id("ssh_socks")
                 
@@ -768,11 +781,12 @@ class NetworkPivotManager:
         """List all tunnels."""
         # Update status of tunnels
         for tunnel_id, tunnel in self.tunnels.items():
-            if tunnel.pid > 0:
-                if self._is_process_running(tunnel.pid):
-                    tunnel.status = "active"
-                else:
-                    tunnel.status = "stopped"
+            if (
+                tunnel.status == "active"
+                and tunnel.pid > 0
+                and not self._is_process_running(tunnel.pid)
+            ):
+                tunnel.status = "stopped"
         
         tunnels = list(self.tunnels.values())
         
@@ -802,21 +816,76 @@ class NetworkPivotManager:
                 return {"success": False, "error": f"Tunnel {tunnel_id} not found"}
             
             tunnel = self.tunnels[tunnel_id]
-            
-            if tunnel.pid > 0:
+
+            if tunnel.status != "active":
+                self.processes.pop(tunnel_id, None)
+                tunnel.pid = 0
+                self._save_state()
+                return {
+                    "success": True,
+                    "tunnel_id": tunnel_id,
+                    "message": f"Tunnel {tunnel_id} is already stopped",
+                    "timestamp": datetime.now().isoformat()
+                }
+
+            process = self.processes.get(tunnel_id)
+            if process is not None:
+                process_group = getattr(process, "pid", None)
+                uses_process_group = bool(process_group and hasattr(os, "killpg"))
+                group_escalated = False
+                try:
+                    if uses_process_group:
+                        os.killpg(process_group, signal.SIGTERM)
+                    else:
+                        process.terminate()
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    if uses_process_group:
+                        try:
+                            os.killpg(process_group, getattr(signal, "SIGKILL", 9))
+                        except ProcessLookupError:
+                            pass
+                        group_escalated = True
+                    else:
+                        process.kill()
+                    process.wait(timeout=5)
+                if uses_process_group and not group_escalated:
+                    try:
+                        os.killpg(process_group, 0)
+                    except ProcessLookupError:
+                        pass
+                    else:
+                        try:
+                            os.killpg(process_group, getattr(signal, "SIGKILL", 9))
+                        except ProcessLookupError:
+                            pass
+                self.processes.pop(tunnel_id, None)
+            elif tunnel.pid > 0:
+                if not tunnel.tunnel_type.startswith("ssh_"):
+                    return {
+                        "success": False,
+                        "error": f"Tunnel {tunnel_id} has no managed process handle"
+                    }
+
+                # OpenSSH's -f option detaches after authentication, so there is
+                # no Popen handle to retain. Restored state clears all PIDs;
+                # therefore, an active SSH PID belongs to this manager lifetime.
                 try:
                     os.kill(tunnel.pid, signal.SIGTERM)
                 except ProcessLookupError:
                     pass
-            
-            if tunnel_id in self.processes:
-                try:
-                    self.processes[tunnel_id].terminate()
-                except:
-                    pass
-                del self.processes[tunnel_id]
-            
+                else:
+                    deadline = time.monotonic() + 5
+                    while self._is_process_running(tunnel.pid) and time.monotonic() < deadline:
+                        time.sleep(0.05)
+                    if self._is_process_running(tunnel.pid):
+                        os.kill(tunnel.pid, signal.SIGKILL)
+
             tunnel.status = "stopped"
+            tunnel.pid = 0
             self._save_state()
             
             return {
@@ -963,9 +1032,19 @@ tcp_connect_time_out 8000
         """Check if a process is running."""
         try:
             os.kill(pid, 0)
-            return True
-        except:
+        except OSError:
             return False
+
+        try:
+            with open(f"/proc/{pid}/stat", "r", encoding="utf-8") as stat_file:
+                process_stat = stat_file.read()
+            closing_paren = process_stat.rfind(")")
+            if closing_paren >= 0 and process_stat[closing_paren + 2:closing_paren + 3] == "Z":
+                return False
+        except OSError:
+            pass
+
+        return True
     
     def _get_local_ip(self) -> str:
         """Get local IP address."""
@@ -978,17 +1057,47 @@ tcp_connect_time_out 8000
         except:
             return "127.0.0.1"
     
-    def _find_ssh_tunnel_pid(self, port: int) -> Optional[int]:
-        """Find PID of SSH tunnel listening on port."""
-        try:
-            result = subprocess.run(
-                ["lsof", "-i", f":{port}", "-t"],
-                capture_output=True, text=True
-            )
-            if result.stdout.strip():
-                return int(result.stdout.strip().split('\n')[0])
-        except:
-            pass
+    def _find_ssh_tunnel_pid(
+        self,
+        port: Optional[int] = None,
+        forward_flag: str = "",
+        forward_spec: str = "",
+    ) -> Optional[int]:
+        """Find a detached SSH tunnel by its local port or forwarding arguments."""
+        if port is not None:
+            try:
+                result = subprocess.run(
+                    ["lsof", "-i", f":{port}", "-t"],
+                    capture_output=True, text=True
+                )
+                if result.stdout.strip():
+                    return int(result.stdout.strip().split('\n')[0])
+            except (OSError, ValueError):
+                pass
+
+        if forward_flag and forward_spec:
+            try:
+                for entry in os.scandir("/proc"):
+                    if not entry.name.isdigit():
+                        continue
+                    try:
+                        with open(os.path.join(entry.path, "cmdline"), "rb") as command_file:
+                            argv = [
+                                part.decode("utf-8", errors="replace")
+                                for part in command_file.read().split(b"\0")
+                                if part
+                            ]
+                    except (OSError, PermissionError):
+                        continue
+                    if (
+                        argv
+                        and os.path.basename(argv[0]) == "ssh"
+                        and forward_flag in argv
+                        and forward_spec in argv
+                    ):
+                        return int(entry.name)
+            except OSError:
+                pass
         return None
 
 

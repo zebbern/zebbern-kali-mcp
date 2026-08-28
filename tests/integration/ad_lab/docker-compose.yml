@@ -1,0 +1,42 @@
+services:
+  ad-dc:
+    build:
+      context: ./tests/integration/ad_lab
+      dockerfile: Dockerfile
+    hostname: ad-dc
+    environment:
+      AD_REALM: MCP.TEST
+      AD_DOMAIN: MCP
+      AD_ADMIN_PASSWORD: LabAdmin-2026!
+      AD_USER: fixture-user
+      AD_USER_PASSWORD: FixtureUser-2026!
+      AD_DC_IP: 172.30.250.10
+    networks:
+      ad-lab:
+        ipv4_address: 172.30.250.10
+    ports: []
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - smbclient -L //127.0.0.1 -U "Administrator%$${AD_ADMIN_PASSWORD}" >/dev/null || exit 1
+      interval: 5s
+      timeout: 5s
+      start_period: 20s
+      retries: 30
+
+  kali-server:
+    dns:
+      - 172.30.250.10
+    depends_on:
+      ad-dc:
+        condition: service_healthy
+    networks:
+      default: {}
+      ad-lab: {}
+
+networks:
+  ad-lab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.250.0/24

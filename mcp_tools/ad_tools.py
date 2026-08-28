@@ -147,6 +147,7 @@ def register(mcp: FastMCP, kali_client) -> None:
     def ad_ldap_enum(
         domain: str, username: str, password: str,
         dc_ip: str = "", query: str = "users",
+        use_starttls: bool = False, tls_verify: bool = True,
     ) -> Dict[str, Any]:
         """
         Enumerate Active Directory via LDAP.
@@ -155,12 +156,15 @@ def register(mcp: FastMCP, kali_client) -> None:
             domain: AD domain
             username: Domain username
             password: Domain password
-            dc_ip: Domain Controller IP
+            dc_ip: Domain Controller IP or hostname
             query: Query type (users, groups, computers, spns, admins, all)
+            use_starttls: Upgrade the LDAP connection to TLS
+            tls_verify: Verify the StartTLS server certificate
         """
         data = {
             "domain": domain, "username": username, "password": password,
             "dc_ip": dc_ip, "query": query,
+            "use_starttls": use_starttls, "tls_verify": tls_verify,
         }
         return kali_client.safe_post("api/ad/ldap-enum", data)
 

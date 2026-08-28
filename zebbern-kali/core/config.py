@@ -6,17 +6,17 @@ import logging
 import sys
 
 # Version information
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 # Configuration
 API_PORT = int(os.environ.get("API_PORT", 5000))
+API_LISTEN_HOST = os.environ.get("API_LISTEN_HOST", "0.0.0.0")
 DEBUG_MODE = os.environ.get("DEBUG_MODE", "0").lower() in ("1", "true", "yes", "y")
 COMMAND_TIMEOUT = 300  # 5 minutes default timeout
-BLOCKING_TIMEOUT = int(os.environ.get("BLOCKING_TIMEOUT", 5))  # seconds
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,  # Changed to DEBUG for troubleshooting
+    level=logging.DEBUG if DEBUG_MODE else logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout)
@@ -68,4 +68,3 @@ def display_network_interfaces():
     else:
         logger.warning("⚠️  No suitable IP addresses found for reverse shell operations")
         logger.info("💡 Make sure you have at least one non-loopback network interface UP")
-

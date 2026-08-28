@@ -1,0 +1,159 @@
+name: Publish PyPI 1.0.1
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pypi-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-input:
+    name: Validate release request
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require the protected release target
+        env:
+          REQUESTED_REF: ${{ github.ref }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          test "$REQUESTED_REF" = "refs/heads/main"
+          test "$REQUESTED_VERSION" = "1.0.1"
+
+  build-verify:
+    name: Build, test, and qualify artifacts
+    needs: validate-input
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Install test and release tools
+        run: |
+          python -m pip install build==1.6.0 setuptools==84.0.0 twine==7.0.0 wheel==0.48.0
+          python -m pip install -e ".[test]"
+
+      - name: Run full test suite
+        run: python -m pytest -q -p no:cacheprovider
+
+      - name: Build release artifacts
+        run: python -m build --no-isolation --outdir release/dist
+
+      - name: Check distribution metadata
+        run: python -m twine check release/dist/*
+
+      - name: Verify release artifacts and write manifest
+        run: >-
+          python .github/scripts/verify_release_artifacts.py build
+          --dist-dir release/dist
+          --source-root .
+          --manifest release/manifest.json
+
+      - name: Clean wheel install
+        run: |
+          python -m venv "$RUNNER_TEMP/release-wheel-venv"
+          "$RUNNER_TEMP/release-wheel-venv/bin/python" -m pip install --no-cache-dir release/dist/zebbern_kali_mcp-1.0.1-py3-none-any.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/release-wheel-venv/bin/python" -c "from pathlib import Path; import mcp_server, mcp_tools, site; roots = [Path(p).resolve() for p in site.getsitepackages()]; assert any(Path(mcp_server.__file__).resolve().is_relative_to(root) for root in roots); assert any(Path(mcp_tools.__file__).resolve().is_relative_to(root) for root in roots)"
+          "$RUNNER_TEMP/release-wheel-venv/bin/python" -m mcp_server --help
+
+      - name: Upload qualified immutable artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pypi-release-${{ inputs.version }}
+          path: |
+            release/dist/*
+            release/manifest.json
+          if-no-files-found: error
+
+  gate:
+    name: Revalidate artifact and PyPI absence
+    needs: build-verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Download qualified artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: pypi-release-${{ inputs.version }}
+          path: release
+
+      - name: Revalidate immutable manifest
+        run: python .github/scripts/verify_release_artifacts.py manifest --dist-dir release/dist --manifest release/manifest.json
+
+      - name: Require PyPI version absence
+        run: python .github/scripts/verify_release_artifacts.py pypi-absent --version 1.0.1
+
+  publish:
+    name: Publish to PyPI
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - name: Download qualified artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: pypi-release-${{ inputs.version }}
+          path: release
+
+      - name: Publish with Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          packages-dir: release/dist/
+          print-hash: true
+
+  post-publish-verify:
+    name: Verify official PyPI manifest
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Download qualified artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: pypi-release-${{ inputs.version }}
+          path: release
+
+      - name: Verify exact official PyPI filenames and SHA-256 values
+        run: >-
+          python .github/scripts/verify_release_artifacts.py post-publish
+          --manifest release/manifest.json
+          --version 1.0.1
+          --retries 20
+          --delay 10
+          --timeout 5

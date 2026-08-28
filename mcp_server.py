@@ -10,7 +10,7 @@ import logging
 
 from mcp.server.fastmcp import FastMCP
 
-from mcp_tools import register_all
+from mcp_tools import PROFILE_NAMES, register_all
 from mcp_tools._client import KaliToolsClient
 
 # Configure logging
@@ -24,18 +24,36 @@ logger = logging.getLogger(__name__)
 # Default configuration
 DEFAULT_KALI_SERVER = os.environ.get("KALI_API_URL", "http://127.0.0.1:5000")
 DEFAULT_REQUEST_TIMEOUT = 300  # 5 minutes
+DEFAULT_API_TOKEN = os.environ.get("KALI_API_TOKEN", "")
 
 
-def setup_mcp_server(kali_client: KaliToolsClient) -> FastMCP:
-    """Create the FastMCP server and register all tools from the mcp_tools package."""
+def default_tool_profile() -> str:
+    """Return the validated environment-selected tool profile."""
+    profile = os.environ.get("MCP_TOOL_PROFILE", "auto").lower()
+    if profile not in PROFILE_NAMES:
+        choices = ", ".join(PROFILE_NAMES)
+        raise ValueError(
+            f"MCP_TOOL_PROFILE must be one of: {choices}; received {profile!r}"
+        )
+    return profile
+
+
+def setup_mcp_server(
+    kali_client: KaliToolsClient, profile: str = "auto", health=None
+) -> FastMCP:
+    """Create the FastMCP server and register the selected tool profile."""
     mcp = FastMCP("kali-tools")
-    register_all(mcp, kali_client)
+    register_all(mcp, kali_client, profile=profile, health=health)
     return mcp
 
 
-def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Run the Kali MCP Client")
+def build_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser."""
+    profile_default = default_tool_profile()
+    parser = argparse.ArgumentParser(
+        prog="zebbern-kali-mcp",
+        description="Run the Kali MCP Client",
+    )
     parser.add_argument(
         "--server", type=str, default=DEFAULT_KALI_SERVER,
         help=f"Kali API server URL (default: {DEFAULT_KALI_SERVER})",
@@ -44,8 +62,24 @@ def parse_args():
         "--timeout", type=int, default=DEFAULT_REQUEST_TIMEOUT,
         help=f"Request timeout in seconds (default: {DEFAULT_REQUEST_TIMEOUT})",
     )
+    parser.add_argument(
+        "--profile",
+        choices=PROFILE_NAMES,
+        default=profile_default,
+        help=f"MCP tool profile (default: {profile_default})",
+    )
+    parser.add_argument(
+        "--api-token",
+        default=DEFAULT_API_TOKEN,
+        help="API token (default: KALI_API_TOKEN environment variable)",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    return parser.parse_args()
+    return parser
+
+
+def parse_args(argv=None):
+    """Parse command-line arguments."""
+    return build_parser().parse_args(argv)
 
 
 def main():
@@ -56,7 +90,7 @@ def main():
         logger.setLevel(logging.DEBUG)
         logger.debug("Debug logging enabled")
 
-    kali_client = KaliToolsClient(args.server, args.timeout)
+    kali_client = KaliToolsClient(args.server, args.timeout, api_token=args.api_token)
 
     # Check server health
     health = kali_client.check_health()
@@ -71,8 +105,8 @@ def main():
             if missing:
                 logger.warning(f"Missing tools: {', '.join(missing)}")
 
-    mcp = setup_mcp_server(kali_client)
-    logger.info("Starting Kali MCP server")
+    mcp = setup_mcp_server(kali_client, profile=args.profile, health=health)
+    logger.info("Starting Kali MCP server with '%s' tool profile", args.profile)
     mcp.run()
 
 

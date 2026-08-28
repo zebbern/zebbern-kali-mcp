@@ -7,6 +7,8 @@ import subprocess
 from flask import Blueprint, request, jsonify, Response, stream_with_context
 from core.config import logger
 from core.command_executor import execute_command, stream_command_execution
+from core.job_manager import job_manager
+from core.logging_utils import redact_command
 
 bp = Blueprint("command", __name__)
 
@@ -98,20 +100,17 @@ def unrestricted_exec():
         import time
 
         if background:
-            process = subprocess.Popen(
+            job = job_manager.start(
                 command,
                 shell=shell,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
                 cwd=cwd,
+                timeout=timeout,
             )
             return jsonify({
-                "success": True,
-                "pid": process.pid,
-                "command": command,
+                **job,
                 "background": True,
-                "message": f"Command started in background with PID {process.pid}",
-            })
+                "message": f"Command started as job {job['job_id']}",
+            }), 202
 
         start_time = time.time()
 
@@ -128,11 +127,11 @@ def unrestricted_exec():
             execution_time = time.time() - start_time
 
             return jsonify({
-                "success": True,
+                "success": result.returncode == 0,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
                 "return_code": result.returncode,
-                "command": command,
+                "command": redact_command(command),
                 "execution_time": round(execution_time, 2),
                 "timed_out": False,
             })
@@ -141,13 +140,69 @@ def unrestricted_exec():
             return jsonify({
                 "success": False,
                 "error": f"Command timed out after {timeout} seconds",
-                "command": command,
+                "command": redact_command(command),
                 "timed_out": True,
             })
 
     except Exception as e:
         logger.error(f"Unrestricted exec error: {str(e)}")
         return jsonify({"error": str(e), "success": False}), 500
+
+
+def _job_not_found(job_id):
+    return jsonify({
+        "error": f"Unknown job: {job_id}",
+        "success": False,
+        "job_id": job_id,
+    }), 404
+
+
+@bp.route("/api/jobs/<job_id>", methods=["GET"])
+def get_job(job_id):
+    """Return the current state of a background command job."""
+    try:
+        return jsonify(job_manager.get(job_id))
+    except KeyError:
+        return _job_not_found(job_id)
+
+
+@bp.route("/api/jobs/<job_id>/output", methods=["GET"])
+@bp.route("/api/sessions/<job_id>/output", methods=["GET"])
+def get_job_output(job_id):
+    """Poll recent bounded output from a background job."""
+    try:
+        timeout = float(request.args.get("timeout", 0))
+        lines = int(request.args.get("lines", 100))
+        return jsonify(job_manager.read_output(job_id, timeout=timeout, lines=lines))
+    except KeyError:
+        return _job_not_found(job_id)
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc), "success": False}), 400
+
+
+@bp.route("/api/jobs/<job_id>/input", methods=["POST"])
+@bp.route("/api/sessions/<job_id>/input", methods=["POST"])
+def send_job_input(job_id):
+    """Send text to a running background job's stdin."""
+    params = request.get_json(silent=True) or {}
+    input_text = params.get("input")
+    if not isinstance(input_text, str):
+        return jsonify({"error": "Input parameter is required", "success": False}), 400
+    try:
+        result = job_manager.send_input(job_id, input_text)
+        return jsonify(result), (200 if result["success"] else 409)
+    except KeyError:
+        return _job_not_found(job_id)
+
+
+@bp.route("/api/jobs/<job_id>/cancel", methods=["POST"])
+def cancel_job(job_id):
+    """Cancel a running background job and its process group."""
+    try:
+        result = job_manager.cancel(job_id)
+        return jsonify(result), (200 if result["success"] else 409)
+    except KeyError:
+        return _job_not_found(job_id)
 
 
 @bp.route("/api/system/network-info", methods=["GET"])
@@ -172,6 +227,7 @@ def command():
 
         command = params["command"]
         streaming = params.get("streaming", False)
+        timeout = params.get("timeout", 3600)
 
         from core.tool_config import is_streaming_tool
         tool_name = command.split()[0] if command.strip() else ""
@@ -179,7 +235,9 @@ def command():
 
         if should_stream:
             return Response(
-                stream_with_context(stream_command_execution(command, streaming)),
+                stream_with_context(
+                    stream_command_execution(command, streaming, timeout=timeout)
+                ),
                 content_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -187,8 +245,6 @@ def command():
                 },
             )
         else:
-            DEFAULT_TIMEOUT = 3600
-            timeout = params.get("timeout", DEFAULT_TIMEOUT)
             result = execute_command(command, timeout=timeout)
             return jsonify(result)
 

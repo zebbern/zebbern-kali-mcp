@@ -5,15 +5,29 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INCLUDE_METASPLOIT: ${INCLUDE_METASPLOIT:-true}
+        INCLUDE_CADO_NFS: ${INCLUDE_CADO_NFS:-true}
     ports:
-      - "${API_PORT:-5000}:${API_PORT:-5000}"
-      - "1080:1080"
+      - "${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-5000}:${API_PORT:-5000}"
+      - "${SOCKS_BIND_ADDRESS:-127.0.0.1}:${SOCKS_PORT:-1080}:1080"
     environment:
-      - API_PORT=${API_PORT:-5000}
-      - DEBUG_MODE=${DEBUG_MODE:-0}
-      - BLOCKING_TIMEOUT=${BLOCKING_TIMEOUT:-30}
-      - HTB_ROUTES=${HTB_ROUTES:-}
-      - EXTRA_HOSTS=${EXTRA_HOSTS:-}
+      API_LISTEN_HOST: ${API_LISTEN_HOST:-0.0.0.0}
+      API_PORT: ${API_PORT:-5000}
+      DEBUG_MODE: ${DEBUG_MODE:-0}
+      HTB_ROUTES: ${HTB_ROUTES:-}
+      EXTRA_HOSTS: ${EXTRA_HOSTS:-}
+      KALI_API_TOKEN: ${KALI_API_TOKEN:-}
+      REQUIRED_TOOLS: ${REQUIRED_TOOLS:-}
+      JOB_MAX_COUNT: ${JOB_MAX_COUNT:-256}
+      JOB_OUTPUT_MAX_LINES: ${JOB_OUTPUT_MAX_LINES:-2000}
+      JOB_OUTPUT_MAX_CHARS: ${JOB_OUTPUT_MAX_CHARS:-2097152}
+      JOB_OUTPUT_MAX_LINE_CHARS: ${JOB_OUTPUT_MAX_LINE_CHARS:-4096}
+      JOB_INPUT_MAX_BYTES: ${JOB_INPUT_MAX_BYTES:-65536}
+      JOB_INPUT_QUEUE_SIZE: ${JOB_INPUT_QUEUE_SIZE:-16}
+      JOB_OUTPUT_MAX_WAIT: ${JOB_OUTPUT_MAX_WAIT:-30}
+      CTF_MAX_DOWNLOAD_BYTES: ${CTF_MAX_DOWNLOAD_BYTES:-104857600}
+      SOCKS_LISTEN_HOST: ${SOCKS_LISTEN_HOST:-0.0.0.0}
     cap_add:
       - NET_RAW
       - NET_ADMIN
@@ -30,7 +44,7 @@ services:
     sysctls:
       - net.ipv4.ip_forward=1
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:${API_PORT:-5000}/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:${API_PORT:-5000}/live || exit 1"]
       interval: 5m
       timeout: 5s
       start_period: 30s

@@ -6,6 +6,7 @@ import subprocess
 import threading
 from typing import Dict, Any, Callable
 from .config import logger, COMMAND_TIMEOUT
+from .logging_utils import redact_command
 
 KILL_MSG_DIR = "/app/tmp/.kill_messages"
 
@@ -56,7 +57,7 @@ class CommandExecutor:
 
     def execute(self) -> Dict[str, Any]:
         """Execute the command and handle timeout gracefully"""
-        logger.info(f"Executing command: {self.command}")
+        logger.info("Executing command: %s", redact_command(self.command))
 
         try:
             self.process = subprocess.Popen(
@@ -143,7 +144,7 @@ class CommandExecutor:
 
     def execute_with_streaming(self, on_output: Callable[[str, str], None]) -> Dict[str, Any]:
         """Execute the command with streaming output via callback"""
-        logger.info(f"Executing command with streaming: {self.command}")
+        logger.info("Executing command with streaming: %s", redact_command(self.command))
 
         try:
             self.process = subprocess.Popen(
@@ -226,7 +227,7 @@ def execute_command(command: str, on_output: Callable[[str, str], None] = None, 
     Returns:
         A dictionary containing the stdout, stderr, and return code
     """
-    from .tool_config import is_streaming_tool, is_blocked_tool, get_tool_timeout
+    from .tool_config import is_streaming_tool, get_tool_timeout
 
     # Parse the command to detect the tool
     command_parts = command.strip().split()
@@ -240,18 +241,6 @@ def execute_command(command: str, on_output: Callable[[str, str], None] = None, 
         }
 
     tool_name = command_parts[0]
-
-    # Check if the tool is blocked
-    if is_blocked_tool(tool_name):
-        logger.warning(f"Command '{tool_name}' is not allowed. Use the appropriate manager.")
-        return {
-            "success": False,
-            "error": f"The command '{tool_name}' is not allowed. Please use the appropriate manager (e.g., SSH Manager for ssh commands).",
-            "stdout": "",
-            "stderr": "",
-            "return_code": -1,
-            "blocked": True
-        }
 
     # Get tool-specific timeout if not provided
     if timeout is None:
@@ -272,7 +261,7 @@ def execute_command(command: str, on_output: Callable[[str, str], None] = None, 
 
 def execute_command_argv(argv: list, on_output: Callable[[str, str], None] = None, timeout: int = None) -> Dict[str, Any]:
     """
-    Execute a command using argv list (safer than shell string for complex arguments).
+    Execute a command using an argv list, quoting arguments for shell execution.
 
     Args:
         argv: List of command arguments (e.g., ['nmap', '-sV', '192.168.1.1'])
@@ -293,9 +282,7 @@ def execute_command_argv(argv: list, on_output: Callable[[str, str], None] = Non
             "return_code": -1
         }
 
-    # SECURITY FIX: Keep tool name unquoted so execute_command can properly detect blocked tools
-    # The tool name (argv[0]) must remain unquoted for security checks to work
-    # Only quote the arguments (argv[1:]) to handle special characters safely
+    # Keep the tool name unquoted and quote arguments to handle special characters safely.
     tool_name = argv[0]
     if len(argv) > 1:
         quoted_args = ' '.join(shlex.quote(arg) for arg in argv[1:])
@@ -303,26 +290,34 @@ def execute_command_argv(argv: list, on_output: Callable[[str, str], None] = Non
     else:
         command = tool_name
 
-    # Use the existing execute_command function which will properly validate the tool name
+    # Use the existing execute_command function for timeout and streaming behavior.
     return execute_command(command, on_output=on_output, timeout=timeout)
 
 
-def stream_command_execution(command: str, streaming: bool = False):
+def stream_command_execution(
+    command: str,
+    streaming: bool = False,
+    timeout: int = None,
+):
     """
-    Execute a command with streaming support and blocking detection.
+    Execute a command with optional streaming support.
 
     Args:
         command: The command to execute
         streaming: Whether streaming was explicitly requested
+        timeout: Optional execution timeout override
 
     Yields:
         Server-sent events for streaming response
     """
+    import json
     import queue
     import threading
-    import time
     from .tool_config import is_streaming_tool
-    from .config import BLOCKING_TIMEOUT
+
+    def sse_event(event_type: str, **fields) -> str:
+        payload = {"type": event_type, **fields}
+        return f"data: {json.dumps(payload)}\n\n"
 
     # Check if streaming is requested or auto-detect
     tool_name = command.split()[0] if command.strip() else ""
@@ -330,70 +325,83 @@ def stream_command_execution(command: str, streaming: bool = False):
 
     if not should_stream:
         # Non-streaming execution
-        result = execute_command(command)
-        yield f"data: {{\"type\": \"result\", \"success\": {str(result['success']).lower()}, \"return_code\": {result['return_code']}, \"timed_out\": {str(result.get('timed_out', False)).lower()}}}\n\n"
-        yield f"data: {{\"type\": \"complete\"}}\n\n"
+        result = execute_command(command, timeout=timeout)
+        yield sse_event(
+            "result",
+            success=result["success"],
+            return_code=result["return_code"],
+            timed_out=result.get("timed_out", False),
+        )
+        yield sse_event("complete")
         return
 
-    # Streaming execution with blocking detection
-    output_queue = queue.Queue()
-    output_received = threading.Event()
+    # Bound the handoff queue and apply backpressure when the client is slow.
+    output_queue = queue.Queue(maxsize=1024)
+    consumer_closed = threading.Event()
+    done = object()
+
+    def enqueue(item) -> bool:
+        while not consumer_closed.is_set():
+            try:
+                output_queue.put(item, timeout=0.2)
+                return True
+            except queue.Full:
+                continue
+        return False
 
     def handle_output(source, line):
-        output_received.set()  # Mark that we received output
-        escaped_line = line.replace('"', '\\"')
-        output_queue.put(f'data: {{"type": "output", "source": "{source}", "line": "{escaped_line}"}}\n\n')
+        enqueue(sse_event("output", source=source, line=line))
 
     # Execute command in separate thread
     result_container = {}
-    command_terminated = threading.Event()
 
     def execute_in_thread():
         try:
-            result = execute_command(command, on_output=handle_output)
+            result = execute_command(
+                command,
+                on_output=handle_output,
+                timeout=timeout,
+            )
             result_container['result'] = result
         except Exception as e:
             result_container['error'] = str(e)
         finally:
-            output_queue.put("DONE")
+            enqueue(done)
 
-    thread = threading.Thread(target=execute_in_thread)
+    thread = threading.Thread(
+        target=execute_in_thread,
+        daemon=True,
+        name="command-stream-worker",
+    )
     thread.start()
 
-    start_time = time.time()
-    blocking_detected = False
-    # Use a longer initial timeout for streaming — many tools need >5s startup
-    stream_startup_timeout = max(BLOCKING_TIMEOUT, 30)
-
-    # Yield outputs as they come
-    while True:
-        try:
-            item = output_queue.get(timeout=1)
-            if item == "DONE":
+    try:
+        while True:
+            try:
+                item = output_queue.get(timeout=1)
+            except queue.Empty:
+                yield sse_event("heartbeat")
+                continue
+            if item is done:
                 break
             yield item
-            # Reset start time when we receive output
-            start_time = time.time()
-        except queue.Empty:
-            # Check if no output has been received within startup timeout
-            if not output_received.is_set() and (time.time() - start_time) > stream_startup_timeout:
-                blocking_detected = True
-                yield f'data: {{"type": "error", "message": "No output received within {stream_startup_timeout}s — command may be blocking."}}\n\n'
-                yield f'data: {{"type": "complete"}}\n\n'
-                command_terminated.set()
-                return
-            yield "data: {\"type\": \"heartbeat\"}\n\n"
-            continue
 
-    if not blocking_detected:
-        # Wait for thread to complete
         thread.join()
 
-        # Send final result
         if 'result' in result_container:
             result = result_container['result']
-            yield f"data: {{\"type\": \"result\", \"success\": {str(result['success']).lower()}, \"return_code\": {result['return_code']}, \"timed_out\": {str(result.get('timed_out', False)).lower()}}}\n\n"
+            yield sse_event(
+                "result",
+                success=result["success"],
+                return_code=result["return_code"],
+                timed_out=result.get("timed_out", False),
+            )
         elif 'error' in result_container:
-            yield f"data: {{\"type\": \"error\", \"message\": \"Server error: {result_container['error']}\"}}\n\n"
+            yield sse_event(
+                "error",
+                message=f"Server error: {result_container['error']}",
+            )
 
-        yield f"data: {{\"type\": \"complete\"}}\n\n"
+        yield sse_event("complete")
+    finally:
+        consumer_closed.set()

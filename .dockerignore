@@ -48,6 +48,11 @@ mkdocs.yml
 sync-to-kali.ps1
 test_exec.sh
 
+# Host VPN and tunnel configuration (never send credentials to the builder)
+vpn/
+*.ovpn
+*.conf
+
 # Build metadata (not needed in container)
 pyproject.toml
 MANIFEST.in

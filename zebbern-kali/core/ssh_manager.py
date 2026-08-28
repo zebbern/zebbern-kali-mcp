@@ -9,6 +9,7 @@ import select
 import uuid
 from typing import Dict, Any
 from .config import logger
+from .logging_utils import redact_command
 
 
 class SSHSessionManager:
@@ -154,11 +155,13 @@ class SSHSessionManager:
             }
 
         try:
-            # Log command but truncate if it's very long (like base64 payloads)
-            if len(command) > 100:
-                log_command = f"{command[:50]}...{command[-20:]}"
+            # Redact before truncating so a truncated flag/value pair cannot
+            # bypass credential detection.
+            command_metadata = redact_command(command)
+            if len(command_metadata) > 100:
+                log_command = f"{command_metadata[:50]}...{command_metadata[-20:]}"
             else:
-                log_command = command
+                log_command = command_metadata
             logger.info(f"Executing SSH command: {log_command}")
             self.command_count += 1
 
@@ -240,7 +243,7 @@ class SSHSessionManager:
                                 return {
                                     "success": True,
                                     "output": output,
-                                    "command": command,
+                                    "command": command_metadata,
                                     "session_id": self.session_id,
                                     "execution_time": time.time() - start_time
                                 }
@@ -284,7 +287,7 @@ class SSHSessionManager:
             return {
                 "success": True,
                 "output": output,
-                "command": command,
+                "command": command_metadata,
                 "session_id": self.session_id,
                 "execution_time": time.time() - start_time,
                 "timeout": True

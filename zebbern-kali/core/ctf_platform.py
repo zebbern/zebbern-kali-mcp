@@ -3,6 +3,11 @@
 
 import os
 import json
+import tempfile
+from email.message import Message
+from pathlib import Path
+from urllib.parse import unquote, urljoin, urlsplit
+
 import requests
 from typing import Dict, Any, Optional, List
 from core.config import logger
@@ -14,6 +19,14 @@ _platform_config: Dict[str, Any] = {
     "platform_type": None,  # "ctfd" or "rctf"
     "session": None,
 }
+
+DEFAULT_MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
+MAX_DOWNLOAD_REDIRECTS = 5
+_REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+
+
+class _DownloadTooLarge(Exception):
+    pass
 
 
 def _get_session() -> requests.Session:
@@ -45,6 +58,60 @@ def _api(path: str) -> str:
     """Build full API URL."""
     base = (_platform_config.get("url") or "").rstrip("/")
     return f"{base}{path}"
+
+
+def _origin(url: str) -> tuple[str, Optional[str], Optional[int]]:
+    parsed = urlsplit(url)
+    scheme = parsed.scheme.lower()
+    default_port = 443 if scheme == "https" else 80 if scheme == "http" else None
+    return scheme, parsed.hostname.lower() if parsed.hostname else None, parsed.port or default_port
+
+
+def _is_http_url(url: str) -> bool:
+    parsed = urlsplit(url)
+    return parsed.scheme.lower() in {"http", "https"} and parsed.hostname is not None
+
+
+def _download_limit(params: Dict[str, Any]) -> tuple[Optional[int], Optional[str]]:
+    configured_value = os.environ.get(
+        "CTF_MAX_DOWNLOAD_BYTES",
+        str(DEFAULT_MAX_DOWNLOAD_BYTES),
+    )
+    try:
+        configured_limit = int(configured_value)
+    except (TypeError, ValueError):
+        return None, "CTF_MAX_DOWNLOAD_BYTES must be a positive integer"
+    if configured_limit < 1:
+        return None, "CTF_MAX_DOWNLOAD_BYTES must be a positive integer"
+
+    if "max_bytes" not in params:
+        return configured_limit, None
+
+    requested_limit = params["max_bytes"]
+    if type(requested_limit) is not int or requested_limit < 1:
+        return None, "max_bytes must be a positive integer"
+    if requested_limit > configured_limit:
+        return (
+            None,
+            f"max_bytes cannot exceed the configured limit of {configured_limit} bytes",
+        )
+    return requested_limit, None
+
+
+def _download_filename(file_url: str, content_disposition: str) -> str:
+    candidate = ""
+    if content_disposition:
+        message = Message()
+        message["Content-Disposition"] = content_disposition
+        candidate = message.get_filename() or ""
+    if not candidate:
+        candidate = unquote(Path(urlsplit(file_url).path).name)
+
+    candidate = candidate.replace("\\", "/").rsplit("/", 1)[-1]
+    candidate = candidate.replace("\x00", "").strip()
+    if candidate in {"", ".", ".."}:
+        return "challenge_file"
+    return candidate
 
 
 def connect(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -259,13 +326,20 @@ def download_file(params: Dict[str, Any]) -> Dict[str, Any]:
     if not _platform_config.get("url"):
         return {"success": False, "error": "Not connected — call ctf_connect first"}
 
+    max_bytes, limit_error = _download_limit(params)
+    if limit_error:
+        return {"success": False, "error": limit_error}
+
     session = _get_session()
-    output_dir = params.get("output_dir", "/app/tmp/ctf_files")
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = Path(params.get("output_dir", "/app/tmp/ctf_files")).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     file_url = params.get("file_url")
     challenge_id = params.get("challenge_id")
 
+    temporary_path: Optional[Path] = None
+    external_session = None
+    resp = None
     try:
         if not file_url and challenge_id:
             # Fetch challenge to get file list
@@ -280,34 +354,114 @@ def download_file(params: Dict[str, Any]) -> Dict[str, Any]:
         if not file_url:
             return {"success": False, "error": "file_url or challenge_id is required"}
 
-        # Handle relative URLs
-        if file_url.startswith("/"):
-            file_url = _platform_config["url"] + file_url
+        base_url = _platform_config["url"].rstrip("/") + "/"
+        file_url = urljoin(base_url, file_url)
+        if not _is_http_url(file_url):
+            return {"success": False, "error": "Download URL must use HTTP or HTTPS"}
 
-        resp = session.get(file_url, headers=_headers(), timeout=60, stream=True)
+        redirects_followed = 0
+        while True:
+            same_origin = _origin(file_url) == _origin(base_url)
+            if same_origin:
+                request_session = session
+                request_headers = _headers()
+            else:
+                if external_session is None:
+                    external_session = requests.Session()
+                    external_session.verify = params.get("verify_ssl", True)
+                request_session = external_session
+                request_headers = {}
+
+            resp = request_session.get(
+                file_url,
+                headers=request_headers,
+                timeout=60,
+                stream=True,
+                allow_redirects=False,
+            )
+            if resp.status_code not in _REDIRECT_STATUS_CODES:
+                break
+
+            location = resp.headers.get("Location")
+            if not location:
+                break
+            if redirects_followed >= MAX_DOWNLOAD_REDIRECTS:
+                return {"success": False, "error": "Too many download redirects"}
+
+            next_url = urljoin(file_url, location)
+            close = getattr(resp, "close", None)
+            if close:
+                close()
+            resp = None
+            if not _is_http_url(next_url):
+                return {"success": False, "error": "Download URL must use HTTP or HTTPS"}
+            file_url = next_url
+            redirects_followed += 1
+
         if resp.status_code != 200:
             return {"success": False, "error": f"HTTP {resp.status_code} fetching file"}
 
-        # Determine filename from URL or Content-Disposition
-        filename = file_url.split("/")[-1].split("?")[0] or "challenge_file"
-        cd = resp.headers.get("Content-Disposition", "")
-        if "filename=" in cd:
-            filename = cd.split("filename=")[-1].strip('" ')
+        content_length = resp.headers.get("Content-Length")
+        if content_length:
+            try:
+                if int(content_length) > max_bytes:
+                    raise _DownloadTooLarge
+            except ValueError:
+                pass
 
-        filepath = os.path.join(output_dir, filename)
-        with open(filepath, "wb") as f:
+        filename = _download_filename(
+            file_url,
+            resp.headers.get("Content-Disposition", ""),
+        )
+        filepath = (output_dir / filename).resolve()
+        if filepath.parent != output_dir:
+            return {"success": False, "error": "Download filename escapes output directory"}
+
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=output_dir,
+            prefix=f".{filename}.",
+            suffix=".part",
+            delete=False,
+        ) as f:
+            temporary_path = Path(f.name)
+            downloaded = 0
             for chunk in resp.iter_content(chunk_size=8192):
+                if not chunk:
+                    continue
+                downloaded += len(chunk)
+                if downloaded > max_bytes:
+                    raise _DownloadTooLarge
                 f.write(chunk)
+        os.replace(temporary_path, filepath)
+        temporary_path = None
 
-        file_size = os.path.getsize(filepath)
         return {
             "success": True,
-            "filepath": filepath,
+            "filepath": str(filepath),
             "filename": filename,
-            "size_bytes": file_size,
+            "size_bytes": downloaded,
+        }
+    except _DownloadTooLarge:
+        return {
+            "success": False,
+            "error": f"Download exceeds maximum size of {max_bytes} bytes",
         }
     except requests.RequestException as e:
         return {"success": False, "error": f"Download failed: {str(e)}"}
+    except (OSError, ValueError) as e:
+        return {"success": False, "error": f"Download failed: {str(e)}"}
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        if resp is not None:
+            close = getattr(resp, "close", None)
+            if close:
+                close()
+        if external_session is not None:
+            close = getattr(external_session, "close", None)
+            if close:
+                close()
 
 
 def scoreboard(params: Dict[str, Any]) -> Dict[str, Any]:

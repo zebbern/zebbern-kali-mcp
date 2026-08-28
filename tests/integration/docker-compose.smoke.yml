@@ -1,0 +1,5 @@
+services:
+  kali-server:
+    container_name: ${SMOKE_CONTAINER_NAME}
+    image: ${KALI_SMOKE_IMAGE}
+    restart: "no"

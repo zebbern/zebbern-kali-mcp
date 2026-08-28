@@ -3,16 +3,22 @@
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
 #
-# This gives the container direct access to the host's network stack,
-# including VPN interfaces (tun0, wg0). Target machines can reach
-# Kali services directly — no port forwarding needed.
+# Native Docker Engine on Linux and the current Windows Docker Desktop 4.84 setup
+# are qualified host-network platforms. Native Linux gives the container direct
+# access to the host network stack, including VPN interfaces.
 #
-# Trade-off: loses Docker network isolation (acceptable for pentesting).
-# NOTE: Only works on Linux hosts. On Docker Desktop (Windows/macOS),
-#       use bridge mode with HTB_ROUTES instead.
+# Docker Desktop 4.34+ requires the explicit Settings > Resources > Network
+# host-networking opt-in and restart. Desktop support is TCP/UDP only (layer 4),
+# cannot bind a specific host-interface IP, is incompatible with Enhanced
+# Container Isolation, and supports Linux containers. The current Windows
+# Docker Desktop 4.84 setup passed the full and lean live host-network smoke.
 
 services:
   kali-server:
     network_mode: host
+    environment:
+      API_LISTEN_HOST: ${API_LISTEN_HOST:-127.0.0.1}
+      SOCKS_LISTEN_HOST: ${SOCKS_LISTEN_HOST:-127.0.0.1}
     # !reset requires Docker Compose v2.24+ — older versions will fail
     ports: !reset []
+    sysctls: !reset []

@@ -23,11 +23,11 @@ def register(mcp: FastMCP, kali_client) -> None:
             command: The command to execute (can be any shell command, pipes, chains, etc.)
             timeout: Timeout in seconds (default: 3600 = 1 hour)
             cwd: Optional working directory for the command
-            background: If True, run fire-and-forget — returns immediately with a task_id
+            background: If True, return immediately with a trackable job_id
 
         Returns:
             Command output with stdout, stderr, return_code, execution_time.
-            When background=True, returns immediately with a task_id instead.
+            When background=True, returns job_id, pid, and initial status instead.
         """
         data: Dict[str, Any] = {"command": command, "timeout": timeout}
         if cwd:
@@ -50,10 +50,11 @@ def register(mcp: FastMCP, kali_client) -> None:
         Returns:
             Streaming output collected in real-time with all events
         """
-        url = f"{kali_client.server_url}/api/command"
+        response = None
         try:
-            response = requests.post(
-                url,
+            response = kali_client.request(
+                "POST",
+                "api/command",
                 json={"command": command, "streaming": True, "timeout": timeout},
                 headers={"Accept": "text/event-stream"},
                 stream=True,
@@ -98,6 +99,11 @@ def register(mcp: FastMCP, kali_client) -> None:
         except requests.exceptions.RequestException as e:
             logger.error(f"Streaming request failed: {str(e)}")
             return {"error": f"Streaming request failed: {str(e)}", "success": False}
+        finally:
+            if response is not None:
+                close = getattr(response, "close", None)
+                if close:
+                    close()
 
     @mcp.tool()
     def health() -> Dict[str, Any]:
@@ -108,6 +114,24 @@ def register(mcp: FastMCP, kali_client) -> None:
             Server health information
         """
         return kali_client.check_health()
+
+    @mcp.tool()
+    def job_status(job_id: str) -> Dict[str, Any]:
+        """Return state and exit metadata for a background command job."""
+        return kali_client.safe_get(f"api/jobs/{job_id}")
+
+    @mcp.tool()
+    def job_output(job_id: str, timeout: int = 0, lines: int = 100) -> Dict[str, Any]:
+        """Poll recent bounded stdout and stderr from a background job."""
+        return kali_client.safe_get(
+            f"api/jobs/{job_id}/output",
+            params={"timeout": timeout, "lines": lines},
+        )
+
+    @mcp.tool()
+    def job_cancel(job_id: str) -> Dict[str, Any]:
+        """Cancel a running background job and its child process group."""
+        return kali_client.safe_post(f"api/jobs/{job_id}/cancel", {})
 
     @mcp.tool()
     def system_network_info() -> Dict[str, Any]:
@@ -122,23 +146,19 @@ def register(mcp: FastMCP, kali_client) -> None:
     @mcp.tool()
     def send_input(session_id: str, input_text: str, session_type: str = "auto") -> Dict[str, Any]:
         """
-        Send text input to any active interactive session (msfconsole, SSH, mysql,
-        python REPL, shell, etc.). This is a generic primitive that works with ANY
-        session type managed by the backend — it is not limited to Metasploit.
+        Send text input to a running background command job.
 
         Use this together with read_output() to have a full interactive conversation
         with a long-running process:
-          1. Start a session (e.g. via msf_session_create or zebbern_exec with background=True)
+          1. Start a job with zebbern_exec(..., background=True)
           2. send_input(session_id, "some command\\n")
           3. read_output(session_id) to collect the response
 
         Args:
-            session_id: The session identifier returned when the session was created.
+            session_id: The job identifier returned by zebbern_exec.
             input_text: The text to send to the session's stdin. Include a trailing
                         newline (\\n) if the target process expects one.
-            session_type: Hint for the backend on how to handle the session.
-                          'auto' (default) lets the backend detect the type.
-                          Other values: 'msfconsole', 'ssh', 'shell', 'mysql', 'python'.
+            session_type: Compatibility hint retained for existing clients.
 
         Returns:
             dict with at minimum:
@@ -147,16 +167,14 @@ def register(mcp: FastMCP, kali_client) -> None:
               - error (str, optional): present only on failure
         """
         return kali_client.safe_post(
-            f"api/sessions/{session_id}/input",
+            f"api/jobs/{session_id}/input",
             {"input": input_text, "type": session_type},
         )
 
     @mcp.tool()
     def read_output(session_id: str, timeout: int = 5, lines: int = 100) -> Dict[str, Any]:
         """
-        Read / poll output from any active interactive session by its ID.
-        Works with msfconsole, SSH, mysql, python REPL, shell, or any other
-        session type managed by the backend.
+        Read or poll bounded output from a background command job.
 
         Typical workflow:
           1. send_input(session_id, "whoami\\n")
@@ -183,6 +201,6 @@ def register(mcp: FastMCP, kali_client) -> None:
               - error (str, optional): present only on failure
         """
         return kali_client.safe_get(
-            f"api/sessions/{session_id}/output",
+            f"api/jobs/{session_id}/output",
             params={"timeout": timeout, "lines": lines},
         )

@@ -1,5 +1,6 @@
 """VPN management — WireGuard and OpenVPN connection lifecycle."""
 
+import ipaddress
 import os
 import re
 import shutil
@@ -13,8 +14,12 @@ WIREGUARD_DIR = Path("/etc/wireguard")
 OPENVPN_PID_DIR = Path("/run/openvpn")
 SOCKS_PID_FILE = Path("/run/microsocks.pid")
 SOCKS_DEFAULT_PORT = 1080
+SOCKS_DEFAULT_LISTEN_HOST = "0.0.0.0"
 
 _IFACE_RE = re.compile(r"^[a-zA-Z0-9_-]{1,15}$")
+_HOST_LABEL_RE = re.compile(
+    r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$"
+)
 
 
 def _validate_interface(interface: str) -> str:
@@ -58,8 +63,30 @@ def detect_vpn_type(config_path: str) -> str:
 # SOCKS5 Proxy (microsocks)
 # ---------------------------------------------------------------------------
 
+def _validate_socks_listen_host(listen_host: str) -> str:
+    try:
+        ipaddress.ip_address(listen_host)
+        return listen_host
+    except ValueError:
+        hostname = listen_host[:-1] if listen_host.endswith(".") else listen_host
+        labels = hostname.split(".")
+        if (
+            not hostname
+            or len(listen_host) > 253
+            or not all(_HOST_LABEL_RE.fullmatch(label) for label in labels)
+        ):
+            raise ValueError(
+                "SOCKS_LISTEN_HOST must be an IPv4 address, IPv6 address, "
+                "or valid hostname"
+            ) from None
+        return listen_host
+
+
 def start_socks_proxy(port: int = SOCKS_DEFAULT_PORT) -> dict:
-    """Start microsocks SOCKS5 proxy bound to 0.0.0.0."""
+    """Start microsocks SOCKS5 proxy on the configured listener address."""
+    listen_host = _validate_socks_listen_host(
+        os.getenv("SOCKS_LISTEN_HOST", SOCKS_DEFAULT_LISTEN_HOST)
+    )
     if not shutil.which("microsocks"):
         logger.warning("microsocks binary not found — SOCKS proxy not started")
         return {"running": False, "reason": "microsocks not installed"}
@@ -68,13 +95,23 @@ def start_socks_proxy(port: int = SOCKS_DEFAULT_PORT) -> dict:
     stop_socks_proxy()
 
     proc = subprocess.Popen(
-        ["microsocks", "-i", "0.0.0.0", "-p", str(port)],
+        ["microsocks", "-i", listen_host, "-p", str(port)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     SOCKS_PID_FILE.write_text(str(proc.pid))
-    logger.info("microsocks SOCKS5 proxy started on 0.0.0.0:%d (PID %d)", port, proc.pid)
-    return {"running": True, "port": port, "pid": proc.pid}
+    logger.info(
+        "microsocks SOCKS5 proxy started on %s:%d (PID %d)",
+        listen_host,
+        port,
+        proc.pid,
+    )
+    return {
+        "running": True,
+        "listen_host": listen_host,
+        "port": port,
+        "pid": proc.pid,
+    }
 
 
 def stop_socks_proxy() -> dict:

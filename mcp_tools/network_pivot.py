@@ -31,7 +31,7 @@ def register(mcp: FastMCP, kali_client) -> None:
             tunnels: Tunnel specifications (e.g., 'R:8888:10.10.10.5:80')
             fingerprint: Server fingerprint for verification
         """
-        data = {"server_url": server_url, "tunnels": tunnels, "fingerprint": fingerprint}
+        data = {"server": server_url, "tunnels": tunnels, "fingerprint": fingerprint}
         return kali_client.safe_post("api/pivot/chisel/client", data)
 
     @mcp.tool()
@@ -55,7 +55,7 @@ def register(mcp: FastMCP, kali_client) -> None:
         data = {
             "ssh_host": ssh_host, "local_port": local_port,
             "remote_host": remote_host, "remote_port": remote_port,
-            "username": username, "password": password, "key_file": key_file,
+            "ssh_user": username, "password": password, "key_file": key_file,
         }
         return kali_client.safe_post("api/pivot/ssh/local", data)
 
@@ -80,7 +80,7 @@ def register(mcp: FastMCP, kali_client) -> None:
         data = {
             "ssh_host": ssh_host, "remote_port": remote_port,
             "local_host": local_host, "local_port": local_port,
-            "username": username, "password": password, "key_file": key_file,
+            "ssh_user": username, "password": password, "key_file": key_file,
         }
         return kali_client.safe_post("api/pivot/ssh/remote", data)
 
@@ -102,7 +102,7 @@ def register(mcp: FastMCP, kali_client) -> None:
         """
         data = {
             "ssh_host": ssh_host, "socks_port": socks_port,
-            "username": username, "password": password, "key_file": key_file,
+            "ssh_user": username, "password": password, "key_file": key_file,
         }
         return kali_client.safe_post("api/pivot/ssh/dynamic", data)
 
@@ -180,8 +180,8 @@ def register(mcp: FastMCP, kali_client) -> None:
             notes: Additional notes
         """
         data = {
-            "name": name, "pivot_host": pivot_host, "method": method,
-            "subnet": subnet, "notes": notes,
+            "name": name, "host": pivot_host, "method": method,
+            "internal_network": subnet, "notes": notes,
         }
         return kali_client.safe_post("api/pivot/add", data)
 
@@ -197,5 +197,7 @@ def register(mcp: FastMCP, kali_client) -> None:
         Returns:
             Proxychains configuration content
         """
-        data = {"socks_port": socks_port, "proxy_type": proxy_type}
+        data = {
+            "proxies": [{"type": proxy_type, "host": "127.0.0.1", "port": socks_port}]
+        }
         return kali_client.safe_post("api/pivot/proxychains", data)

@@ -88,7 +88,7 @@ def register(mcp: FastMCP, kali_client) -> None:
             requests_count: Number of requests to send (default: 100)
             method: HTTP method (default: GET)
         """
-        data = {"url": url, "requests": requests_count, "method": method}
+        data = {"url": url, "requests_count": requests_count, "method": method}
         return kali_client.safe_post("api/api-security/rate-limit", data)
 
     @mcp.tool()
@@ -123,7 +123,7 @@ def register(mcp: FastMCP, kali_client) -> None:
         """
         data = {
             "url": url, "wordlist": wordlist, "method": method,
-            "mc": mc, "headers": headers, "data": data_str,
+            "match_codes": mc, "headers": headers, "data": data_str,
         }
         return kali_client.safe_post("api/api-security/ffuf", data)
 
@@ -136,7 +136,7 @@ def register(mcp: FastMCP, kali_client) -> None:
             url: Target base URL
             wordlist: Custom wordlist or kiterunner routes file
         """
-        data = {"url": url, "wordlist": wordlist}
+        data = {"target": url, "wordlist": wordlist}
         return kali_client.safe_post("api/api-security/kiterunner", data)
 
     @mcp.tool()
@@ -149,7 +149,7 @@ def register(mcp: FastMCP, kali_client) -> None:
             tags: Nuclei template tags (default: api)
             severity: Filter by severity (critical, high, medium, low)
         """
-        data = {"url": url, "tags": tags, "severity": severity}
+        data = {"target": url, "tags": tags, "severity": severity}
         return kali_client.heavy_tool_post("api/api-security/nuclei", data)
 
     @mcp.tool()
@@ -163,5 +163,4 @@ def register(mcp: FastMCP, kali_client) -> None:
         """
         data = {"collection": collection, "environment": environment}
         return kali_client.safe_post("api/api-security/newman", data)
-
 

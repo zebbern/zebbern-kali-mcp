@@ -39,27 +39,38 @@ The project is a **two-part client → server system**:
 
 ## Quick Start
 
-### Docker + uvx (Recommended)
+### Source checkout + uvx
 
 **1. Start the Kali backend:**
 
 ```bash
-# Download just the compose file — no full clone needed
-curl -sLO https://raw.githubusercontent.com/zebbern/zebbern-kali-mcp/main/docker-compose.yml
-docker compose up -d
+# Clone the source and build the local image.
+git clone https://github.com/zebbern/zebbern-kali-mcp.git
+cd zebbern-kali-mcp
+docker compose up -d --build
 ```
 
 Or build and run directly:
 
 ```bash
 docker build -t zebbern-kali-mcp .
-docker run -d -p 5000:5000 --name zebbern-kali zebbern-kali-mcp
+docker run -d --name zebbern-kali \
+  --cap-add NET_RAW --cap-add NET_ADMIN \
+  --device /dev/net/tun:/dev/net/tun \
+  --sysctl net.ipv4.ip_forward=1 \
+  -p 127.0.0.1:5000:5000 \
+  -p 127.0.0.1:1080:1080 \
+  -v zebbern-kali-tmp:/app/tmp \
+  -v "$(pwd)/vpn:/vpn:ro" \
+  zebbern-kali-mcp
 ```
 
-> **Linux host networking:** For direct host network access (no port mapping needed), also grab `docker-compose.host.yml` and run:
+> **Host networking:** Native Docker Engine on Linux and the current Windows Docker Desktop 4.84 setup are qualified host-network platforms. Run:
 > ```bash
 > docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
 > ```
+>
+> On Docker Desktop 4.34 or later, enable host networking in **Settings > Resources > Network** and restart Docker Desktop before running the overlay. The current Windows Docker Desktop 4.84 setup is qualified with that opt-in. Desktop support is limited to TCP and UDP (layer 4), does not work with Enhanced Container Isolation, supports Linux containers only, and cannot bind a specific host-interface IP. Native Linux Docker Engine retains direct host-network semantics.
 
 **2. Add to VS Code** (`.vscode/mcp.json` or global MCP config):
 
@@ -104,11 +115,26 @@ Restart VS Code — done. `uvx` auto-downloads the MCP client from PyPI.
 | 16 | `hosts_management` | `/etc/hosts` management inside the container |
 | 17 | `output_parser` | Structured parsing of tool output for AI consumption |
 
+The default `auto` profile starts with the complete `full` tool set. With a valid capability schema version 1 response, it omits only public tools explicitly reported as unavailable. Unknown, malformed, older, or unreachable capability data fails open and keeps the complete tool set. Discovery is a startup snapshot; restart the MCP client to refresh it.
+
+On a lean image, `auto` omits exactly `msf_session_create`, `msf_session_destroy`, `msf_session_destroy_all`, `msf_session_execute`, `msf_session_list`, `payload_generate`, and `payload_templates`. These are the persistent Metasploit session tools and the two `msfvenom` payload tools. Other payload tools remain registered. Use a focused profile only when a smaller tool list helps the agent choose tools more reliably:
+
+| Profile | Focus |
+|---------|-------|
+| `core` | Command execution, files, hosts, and output parsing |
+| `recon` | Core plus scanners, fingerprinting, and exploit suggestions |
+| `web` | Core plus web/API testing and callback capture |
+| `ad` | Core plus AD, pivoting, SSH, shells, payloads, and VPN |
+| `ctf` | Core plus scanners, CTF platforms, payloads, shells, VPN, and callbacks |
+| `full` | All 17 modules; complete operator override |
+
+The explicit profiles are `core`, `recon`, `web`, `ad`, `ctf`, and `full`. Select one with `--profile web` or `MCP_TOOL_PROFILE=web`. Use `--profile full` to register every current MCP tool regardless of discovery results. An invalid profile fails during startup.
+
 ---
 
 ## Installed Tools
 
-Everything below is pre-installed in the Docker image — no manual setup required.
+The image installs the tools below. Core tool failures stop the build. Explicitly optional extras may be skipped with a warning; check `/ready` and the relevant tool-status endpoint for runtime availability.
 
 ### Network Scanning
 | Tool | Description |
@@ -205,7 +231,7 @@ Everything below is pre-installed in the Docker image — no manual setup requir
 |------|-------------|
 | **mitmproxy** | Scriptable HTTP/HTTPS proxy (mitmdump) |
 | **OWASP ZAP** | Automated web app security scanner (zaproxy) |
-| **Caido** | Modern web proxy (CLI) |
+| **Caido** | Optional modern web proxy (CLI); readiness key: `caido-cli` |
 
 ### Forensics & CTF
 | Tool | Description |
@@ -269,7 +295,7 @@ Everything below is pre-installed in the Docker image — no manual setup requir
 ### Tunneling & Remote Access
 | Tool | Description |
 |------|-------------|
-| **cloudflared** | Cloudflare Tunnel client (expose services without port-forwarding) |
+| **cloudflared** | Optional Cloudflare Tunnel client; readiness key: `cloudflared` |
 | **ngrok** | Instant public URLs for local services |
 
 ### Media & Containers
@@ -283,6 +309,8 @@ Everything below is pre-installed in the Docker image — no manual setup requir
 
 ### Callback Catcher
 A **custom built-in HTTP + DNS callback listener** for isolated networks where external services like webhook.site can't reach your targets. Managed via the `callback_catcher` MCP module.
+
+The default listeners use TCP `8888` and UDP `5353`. A target can reach them directly through a VPN interface inside the container or with Linux host networking. In bridge mode, publish the selected callback ports on an address reachable by the target, for example `8888:8888/tcp` and `5353:5353/udp`; these ports are not published by default.
 
 ### Browser Automation
 | Tool | Description |
@@ -328,12 +356,29 @@ Additional pip packages installed during build: `bloodyAD`, `certipy-ad`, `blood
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `API_PORT` | `5000` | Flask server port |
+| `API_BIND_ADDRESS` | `127.0.0.1` | Host address used by the Compose API port publication |
+| `API_LISTEN_HOST` | `0.0.0.0` | API listener inside bridge mode; host-network mode defaults to `127.0.0.1` |
 | `DEBUG_MODE` | `0` | Enable debug logging |
-| `BLOCKING_TIMEOUT` | `30` | Default command timeout (seconds) |
+| `KALI_API_TOKEN` | — | Optional shared API token; required on `/api/*` only when configured |
+| `REQUIRED_TOOLS` | — | Comma-separated binaries that must exist for `/ready` to return ready |
+| `JOB_MAX_COUNT` | `256` | Maximum retained background jobs |
+| `JOB_OUTPUT_MAX_LINES` | `2000` | Maximum retained output events per job |
+| `JOB_OUTPUT_MAX_CHARS` | `2097152` | Maximum retained output characters per job |
+| `JOB_OUTPUT_MAX_LINE_CHARS` | `4096` | Maximum retained characters per output event |
+| `JOB_INPUT_MAX_BYTES` | `65536` | Maximum input bytes accepted per job request |
+| `JOB_INPUT_QUEUE_SIZE` | `16` | Maximum queued input requests per job |
+| `JOB_OUTPUT_MAX_WAIT` | `30` | Maximum long-poll wait for job output |
+| `CTF_MAX_DOWNLOAD_BYTES` | `104857600` | Maximum CTF file download size; calls can request a lower limit |
 | `HTB_ROUTES` | — | Comma-separated CIDRs to route (e.g. `10.129.0.0/16,10.10.0.0/16`) |
 | `EXTRA_HOSTS` | — | Comma-separated `hostname:ip` pairs added to `/etc/hosts` |
 | `VPN_DIR` | `./vpn` | Host directory mounted at `/vpn` (read-only) for VPN configs |
+| `SOCKS_BIND_ADDRESS` | `127.0.0.1` | Host address used by the Compose SOCKS port publication |
+| `SOCKS_PORT` | `1080` | Published host SOCKS port |
+| `SOCKS_LISTEN_HOST` | `0.0.0.0` | SOCKS listener inside bridge mode; host-network mode defaults to `127.0.0.1` |
 | `KALI_API_URL` | `http://127.0.0.1:5000` | MCP client: URL of the Kali Flask server |
+| `MCP_TOOL_PROFILE` | `auto` | MCP profile: `auto` (capability-aware default), `core`, `recon`, `web`, `ad`, `ctf`, or `full` |
+| `INCLUDE_METASPLOIT` | `true` | Build argument: `true` creates the full default; `false` creates lean |
+| `INCLUDE_CADO_NFS` | `true` | Build argument: capability default; `false` is a faster development build without only CADO-NFS |
 
 ### Docker Compose
 
@@ -341,11 +386,44 @@ Additional pip packages installed during build: `bloodyAD`, `certipy-ad`, `blood
 # Standard (bridge networking, port-mapped)
 docker compose up -d
 
-# Host networking (Linux only — direct access to host network/VPN interfaces)
+# Host networking (qualified on native Linux Docker Engine and Windows Docker Desktop 4.84)
 docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
+
+# Lean qualified variant; both qualified variants include CADO-NFS
+INCLUDE_METASPLOIT=false INCLUDE_CADO_NFS=true docker compose build
+
+# Faster development build without only CADO-NFS
+INCLUDE_CADO_NFS=false docker compose build
 ```
 
-The compose file grants `NET_RAW` + `NET_ADMIN` capabilities and provides `/dev/net/tun` for VPN and Ligolo support.
+The Compose build defaults are `INCLUDE_METASPLOIT=true` and `INCLUDE_CADO_NFS=true`. Both qualified full and lean variants include CADO-NFS. When `INCLUDE_CADO_NFS=true`, source retrieval, build, or executable verification failure stops the image build. Setting it to `false` intentionally removes only CADO-NFS.
+
+The Kali base image, Go modules, Git sources, and moving standalone downloads are pinned. Kali rolling APT packages and Python transitive dependency resolution are not bit-identical snapshots.
+
+The compose file grants `NET_RAW` + `NET_ADMIN` capabilities and provides `/dev/net/tun` for VPN and Ligolo support. In bridge mode, API and SOCKS publications bind to loopback. In host-network mode, both services listen on loopback. Native Linux Docker Engine and the current Windows Docker Desktop 4.84 setup are qualified. Docker Desktop requires version 4.34 or later, an explicit host-networking opt-in and restart, and Linux containers; it supports TCP and UDP only, cannot use Enhanced Container Isolation, and cannot bind a specific host-interface IP. Native Linux Docker Engine retains direct host-network semantics. Set the corresponding bind or listen variable when another host must connect.
+
+For a remote API, set the same `KALI_API_TOKEN` value in the backend and MCP client environments. You can also pass `--api-token` to the MCP client. Direct REST clients send this value in the `X-API-Key` header. Health endpoints remain unauthenticated for Docker and orchestrator checks.
+
+### Updating pinned build inputs
+
+1. Resolve an authoritative upstream version or commit.
+2. Update one Docker argument and its checksum when present.
+3. Run Docker contract tests and `docker build --check .`.
+4. Build full and lean with CADO-NFS enabled.
+5. Run image, bridge, AD, native Linux host-network, and current Windows Docker Desktop host-network smoke.
+6. Compare tool names, image IDs/sizes, and common layers before accepting the update.
+
+### Live qualification fixtures
+
+Run the qualified fixtures against the specified locally built images:
+
+```bash
+python tests/integration/run_smoke.py --image zebbern-kali-mcp:goal-full --network-mode bridge --expect-variant full
+python tests/integration/run_ad_lab.py --image zebbern-kali-mcp:goal-lean
+python tests/integration/run_smoke.py --image zebbern-kali-mcp:goal-full --network-mode host --expect-variant full
+```
+
+The AD fixture is local, disposable, and has no host-published ports. It proves only local DNS, authenticated LDAP discovery, and the public MCP/API enumeration path. It does not qualify other Active Directory operations. Host networking is qualified on native Linux Docker Engine and the current Windows Docker Desktop 4.84 setup after the explicit opt-in and restart. Desktop remains limited to TCP and UDP layer 4, Linux containers, no Enhanced Container Isolation, and no binding to a specific host-interface IP. `linux/amd64` is the only qualified image architecture.
 
 ---
 
@@ -353,7 +431,7 @@ The compose file grants `NET_RAW` + `NET_ADMIN` capabilities and provides `/dev/
 
 | Decision | Rationale |
 |----------|-----------|
-| **Fail-fast build** | Dockerfile fails the build if tools can't install — no `\|\| echo WARN` fallbacks on critical tools. You know immediately if something is broken. |
+| **Fail-fast core build** | Core tool failures stop the image build. Explicitly optional extras use warning fallbacks and remain visible through readiness or tool-status checks. |
 | **netexec over crackmapexec** | crackmapexec is deprecated. netexec is installed from the Kali repos as the primary SMB/LDAP/WinRM tool. |
 | **Custom callback catcher** | For isolated CTF/pentest networks where webhook.site or interactsh can't reach your targets. Built-in HTTP + DNS listener. |
 | **AI-agent optimized output** | `NO_COLOR=1`, `TERM=dumb`, `FORCE_COLOR=0`, `CI=true`, `PWNLIB_NOTERM=1` — suppresses banners, colors, progress bars, and interactive prompts so AI agents get clean, parseable text. |
@@ -368,7 +446,7 @@ The compose file grants `NET_RAW` + `NET_ADMIN` capabilities and provides `/dev/
 zebbern-kali-mcp/
 ├── Dockerfile                  # Multi-layer Kali image build
 ├── docker-compose.yml          # Standard bridge-mode deployment
-├── docker-compose.host.yml     # Host networking overlay (Linux)
+├── docker-compose.host.yml     # Host networking overlay
 ├── entrypoint.sh               # Container init (routes, hosts, TUN, IP forwarding)
 ├── requirements.txt            # Python dependencies for the container
 ├── pyproject.toml              # PyPI package config for the MCP client
@@ -416,6 +494,17 @@ Once installed, ask your AI assistant to use the Kali tools:
 
 The assistant calls MCP tools, which make HTTP requests to the Flask API inside Docker — no manual commands needed.
 
+`zebbern_exec` and streaming command execution (`exec_stream`) accept shell commands including `ssh`, `scp`, `rsync`, `netcat`, and `telnet`. This contract accepts the commands; it does not assert that every command is bundled in every image variant. Dedicated SSH, pivot, and payload managers are structured conveniences, not mandatory restrictions. Set the command timeout for the operation. The backend keeps background-job input and output bounded, redacts common credential forms from command diagnostics, and cancels a job's process group on cancellation or timeout.
+
+Long-running or interactive commands can use the background job workflow:
+
+1. Call `zebbern_exec(..., background=true)` and keep the returned `job_id`.
+2. Poll `job_output(job_id)` or check `job_status(job_id)`.
+3. Use `send_input(job_id, text)` for interactive stdin.
+4. Call `job_cancel(job_id)` when the work is no longer needed.
+
+Job state and bounded output are kept in memory. Restarting the backend clears them.
+
 ---
 
 ## Documentation
@@ -426,13 +515,9 @@ This README is the primary source of truth for setup, usage, and tool reference.
 
 ## Security Warning
 
-> ⚠️ **This server provides unrestricted access to powerful penetration testing tools.**
+> **This server intentionally provides unrestricted command execution and powerful penetration-testing tools.**
 
-- **Never** expose to the public internet
-- Only run on isolated networks or authorized test environments
-- Use strong authentication if accessible remotely
-- Ensure you have proper authorization before testing any systems
-- The container runs as `root` — this is intentional for pentest tools but increases risk
+The local default binds the API and SOCKS ports to `127.0.0.1`. Remote use is supported: choose an explicit bind address, configure `KALI_API_TOKEN`, and place TLS or a trusted private network in front when traffic crosses an untrusted network. The container runs as `root` because several networking and assessment features require it. Use the tool only on systems you are authorized to test.
 
 ---
 
