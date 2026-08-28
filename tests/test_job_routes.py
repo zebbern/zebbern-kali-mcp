@@ -1,6 +1,8 @@
 import importlib.util
 import math
+import subprocess
 import sys
+import textwrap
 import time
 from pathlib import Path
 
@@ -23,6 +25,57 @@ def load_command_blueprint():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def test_server_import_does_not_write_container_only_directory():
+    code = textwrap.dedent(
+        f"""
+        import os
+        import sys
+        import types
+
+        real_makedirs = os.makedirs
+
+        def deny_container_kill_directory(path, *args, **kwargs):
+            if os.fspath(path) == "/app/tmp/.kill_messages":
+                raise PermissionError("container path is unavailable")
+            return real_makedirs(path, *args, **kwargs)
+
+        os.makedirs = deny_container_kill_directory
+        if sys.platform == "win32":
+            sys.modules.setdefault("pty", types.ModuleType("pty"))
+        sys.path.insert(0, {str(BACKEND_ROOT)!r})
+        import kali_server
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_kill_route_creates_message_directory_on_demand(monkeypatch, tmp_path):
+    module = load_command_blueprint()
+    message_dir = tmp_path / "kill-messages"
+    module.KILL_MSG_DIR = str(message_dir)
+    monkeypatch.setattr(module.os, "kill", lambda _pid, _signal: None)
+    monkeypatch.setattr(module.signal, "SIGKILL", 9, raising=False)
+    app = Flask(__name__)
+    app.register_blueprint(module.bp)
+
+    response = app.test_client().post(
+        "/api/kill/123",
+        json={"message": "use port 9101"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["message_stored"] is True
+    assert (message_dir / "123").read_text() == "use port 9101"
 
 
 @pytest.fixture

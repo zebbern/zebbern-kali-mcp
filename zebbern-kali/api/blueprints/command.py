@@ -13,7 +13,6 @@ from core.logging_utils import redact_command
 bp = Blueprint("command", __name__)
 
 KILL_MSG_DIR = "/app/tmp/.kill_messages"
-os.makedirs(KILL_MSG_DIR, exist_ok=True)
 
 
 @bp.route("/api/ps", methods=["GET"])
@@ -68,6 +67,7 @@ def kill_process(pid):
 
     if msg:
         try:
+            os.makedirs(KILL_MSG_DIR, exist_ok=True)
             with open(os.path.join(KILL_MSG_DIR, str(pid)), "w") as f:
                 f.write(msg)
         except OSError as e:
