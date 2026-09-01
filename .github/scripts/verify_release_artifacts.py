@@ -1,4 +1,4 @@
-"""Verify the exact files that are eligible for the 1.0.4 PyPI release.
+"""Verify the exact files that are eligible for the declared PyPI release.
 
 This module intentionally uses only the Python standard library.  The same
 checks are used before uploading an Actions artifact and after downloading it
@@ -21,10 +21,27 @@ from pathlib import Path, PurePosixPath
 from tarfile import TarError, TarFile
 
 
-VERSION = "1.0.4"
+def _declared_version(pyproject: Path | None = None) -> str:
+    """Read the release version from pyproject.toml, the single source of truth.
+
+    Deriving it here keeps a version bump to one edit; pinning it in this file
+    and in the workflow meant five, where a missed one fails late and unhelpfully.
+    """
+    path = pyproject or Path(__file__).resolve().parents[2] / "pyproject.toml"
+    text = path.read_text(encoding="utf-8")
+    project = re.search(r"(?ms)^\[project\]\s*$(.*?)(?=^\[|\Z)", text)
+    if project is None:
+        raise SystemExit(f"{path} has no [project] table")
+    declared = re.search(r'(?m)^version\s*=\s*"([^"]+)"', project.group(1))
+    if declared is None:
+        raise SystemExit(f"{path} declares no project version")
+    return declared.group(1)
+
+
+VERSION = _declared_version()
 PROJECT_NAME = "zebbern-kali-mcp"
-WHEEL_NAME = "zebbern_kali_mcp-1.0.4-py3-none-any.whl"
-SDIST_NAME = "zebbern_kali_mcp-1.0.4.tar.gz"
+WHEEL_NAME = f"zebbern_kali_mcp-{VERSION}-py3-none-any.whl"
+SDIST_NAME = f"zebbern_kali_mcp-{VERSION}.tar.gz"
 EXPECTED_ARTIFACTS = (SDIST_NAME, WHEEL_NAME)
 PYPI_JSON_URL = f"https://pypi.org/pypi/{PROJECT_NAME}/{{version}}/json"
 
@@ -40,7 +57,7 @@ _EXPECTED_TEST_REQUIREMENTS = {
     'pytest>=8,<9; extra == "test"',
 }
 _ENTRY_POINT = "zebbern-kali-mcp = mcp_server:main"
-_DIST_INFO_DIR = "zebbern_kali_mcp-1.0.4.dist-info"
+_DIST_INFO_DIR = f"zebbern_kali_mcp-{VERSION}.dist-info"
 _CREDENTIAL_FILE = re.compile(
     r"^(?:"
     r"\.env(?:\..+)?|"
@@ -389,6 +406,10 @@ def verify_pypi_release(manifest_path: Path | str, version: str = VERSION, *, re
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Verify release artifacts and their PyPI publication.")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser(
+        "declared-version",
+        help="Print the version pyproject.toml declares, for the release workflow to check against",
+    )
     build = subparsers.add_parser("build")
     build.add_argument("--dist-dir", type=Path, required=True)
     build.add_argument("--source-root", type=Path, required=True)
@@ -411,7 +432,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        if args.command == "build":
+        if args.command == "declared-version":
+            print(VERSION)
+        elif args.command == "build":
             verify_build(args.dist_dir, args.source_root, args.manifest)
         elif args.command == "manifest":
             revalidate_manifest(args.dist_dir, args.manifest)
