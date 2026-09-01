@@ -24,7 +24,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE: ghcr.io/zebbern/zebbern-kali-mcp:latest
+  # Pinned digest, not a floating tag, so the gate is reproducible and cannot
+  # race a concurrent docker-publish. Re-pin as a release-prep step when the
+  # certified image changes: resolve the published tag with
+  # `docker buildx imagetools inspect <image>:<tag>` and take its top-level
+  # Digest. A stale pin means the gate certifies an older image than the
+  # published tag serves, so re-pin next to the version bump.
+  IMAGE: ghcr.io/zebbern/zebbern-kali-mcp@sha256:0b51b0cbd789def99b6590c0fa8a0e5907adcca32d13fb0ac9358e7ec8232b41
 
 jobs:
   integration:
@@ -78,7 +84,13 @@ jobs:
             --check-trim
 
       - name: Start a backend for the live suite
+        env:
+          # Same pinned digest the smoke layer certified. A digest pull leaves no
+          # local tag, so without this compose would not find :latest and would
+          # rebuild the image from the Dockerfile.
+          ZKM_IMAGE: ${{ env.IMAGE }}
         run: |
+          docker compose config --images
           docker compose up -d
           for _ in $(seq 1 60); do
             if curl -sf http://127.0.0.1:5000/live >/dev/null; then

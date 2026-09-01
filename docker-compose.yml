@@ -1,7 +1,11 @@
 services:
   kali-server:
     container_name: zebbern-kali
-    image: ghcr.io/zebbern/zebbern-kali-mcp:latest
+    # Defaults to :latest for local use. CI overrides it with the same immutable
+    # digest the integration gate certifies, so the live layer and the smoke
+    # layer exercise the same bits; a digest pull creates no local tag, so
+    # without this compose would rebuild from the Dockerfile instead.
+    image: ${ZKM_IMAGE:-ghcr.io/zebbern/zebbern-kali-mcp:latest}
     build:
       context: .
       dockerfile: Dockerfile
