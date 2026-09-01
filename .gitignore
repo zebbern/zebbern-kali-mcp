@@ -101,6 +101,14 @@ ipython_config.py
 #   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
 #poetry.lock
 
+# uv
+#   Deliberately ignored. This is a library published to PyPI with open
+#   dependency ranges, so a lockfile constrains no consumer and is not shipped
+#   in the sdist or wheel. No workflow, Makefile or hook reads it either -- CI
+#   installs with pip throughout -- so committing it would add a file nothing
+#   verifies and that drifts silently on every dependency change.
+uv.lock
+
 # pdm
 #   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
 #pdm.lock
