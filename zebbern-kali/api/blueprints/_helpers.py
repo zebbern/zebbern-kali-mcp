@@ -26,11 +26,20 @@ def streaming_tool_response(run_func, params):
     """
     output_queue = queue.Queue()
 
+    def _frame(payload):
+        """Serialize one SSE frame.
+
+        Clients parse one JSON object per `data:` line, so every interpolated
+        field has to be escaped. Hand-building the frame with f-strings escaped
+        the output line but not the error message, and an exception carrying a
+        newline or a quote produced a split or unparseable frame.
+        """
+        return f"data: {_json.dumps(payload)}\n\n"
+
     def generate_output():
         def handle_output(source, line):
-            escaped = _json.dumps(line)[1:-1]
             output_queue.put(
-                f'data: {{"type": "output", "source": "{source}", "line": "{escaped}"}}\n\n'
+                _frame({"type": "output", "source": source, "line": line})
             )
 
         result_container = {}
@@ -61,17 +70,22 @@ def streaming_tool_response(run_func, params):
 
         if "result" in result_container:
             r = result_container["result"]
-            yield (
-                f'data: {{"type": "result", "success": {str(r["success"]).lower()}, '
-                f'"return_code": {r.get("return_code", 0)}}}\n\n'
+            yield _frame(
+                {
+                    "type": "result",
+                    "success": bool(r["success"]),
+                    "return_code": r.get("return_code", 0),
+                }
             )
         elif "error" in result_container:
-            yield (
-                f'data: {{"type": "error", "message": '
-                f'"Server error: {result_container["error"]}"}}\n\n'
+            yield _frame(
+                {
+                    "type": "error",
+                    "message": f"Server error: {result_container['error']}",
+                }
             )
 
-        yield 'data: {"type": "complete"}\n\n'
+        yield _frame({"type": "complete"})
 
     return Response(
         stream_with_context(generate_output()),
