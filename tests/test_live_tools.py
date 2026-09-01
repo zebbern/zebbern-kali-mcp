@@ -12,6 +12,7 @@ Docker. Run them with a backend up:
 """
 
 import os
+import socket
 import sys
 import time
 import uuid
@@ -30,6 +31,18 @@ PROFILE = "full"
 # lab is only reachable through the Docker host gateway.
 LAB_HOST = os.environ.get("ZKM_LAB_HOST", "host.docker.internal")
 LAB_HTTP_PORT = int(os.environ.get("ZKM_LAB_PORT", "8888"))
+
+
+def _lab_is_up() -> bool:
+    """Is a web lab listening on the host?
+
+    The container reaches it via the Docker host gateway, but the test runner
+    sees the same service on loopback, so this is a sound proxy. CI has no lab,
+    so the target-dependent cases skip there rather than failing.
+    """
+    with socket.socket() as probe:
+        probe.settimeout(2)
+        return probe.connect_ex(("127.0.0.1", LAB_HTTP_PORT)) == 0
 
 
 def _backend_is_up() -> bool:
@@ -125,6 +138,12 @@ def test_hosts_entries_round_trip_across_processes():
     assert not any(hostname in entry["hostnames"] for entry in remaining["entries"])
 
 
+needs_lab = pytest.mark.skipif(
+    not _lab_is_up(), reason=f"no web lab on 127.0.0.1:{LAB_HTTP_PORT}"
+)
+
+
+@needs_lab
 def test_nmap_reaches_the_host_lab_through_the_container():
     result = _call(
         "tools_nmap", target=LAB_HOST, ports=str(LAB_HTTP_PORT), scan_type="-sT -Pn"
@@ -135,6 +154,7 @@ def test_nmap_reaches_the_host_lab_through_the_container():
     assert f"{LAB_HTTP_PORT}/tcp open" in result["stdout"]
 
 
+@needs_lab
 def test_fingerprint_identifies_the_lab_web_server():
     result = _call("fingerprint_url", url=f"http://{LAB_HOST}:{LAB_HTTP_PORT}")
 
