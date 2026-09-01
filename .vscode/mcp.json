@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "kali-tools": {
+      "command": "uvx",
+      "args": ["zebbern-kali-mcp"],
+      "env": {
+        "KALI_API_URL": "http://127.0.0.1:5000"
+      }
+    }
+  }
+}
