@@ -46,6 +46,11 @@ Issues = "https://github.com/zebbern/zebbern-kali-mcp/issues"
 [project.scripts]
 zebbern-kali-mcp = "mcp_server:main"
 
+[tool.pytest.ini_options]
+markers = [
+    "live: exercises a running Kali backend; skipped when none answers",
+]
+
 [tool.setuptools]
 py-modules = ["mcp_server"]
 
