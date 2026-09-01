@@ -88,6 +88,14 @@ jobs:
             release/manifest.json
           if-no-files-found: error
 
+  integration:
+    name: Container and live-tool gate
+    needs: validate-input
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/integration.yml
+
   gate:
     name: Revalidate artifact and PyPI absence
     needs: build-verify
@@ -117,7 +125,7 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    needs: gate
+    needs: [gate, integration]
     runs-on: ubuntu-latest
     permissions:
       id-token: write

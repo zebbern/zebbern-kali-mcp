@@ -64,3 +64,25 @@ def test_no_stale_version_literals_survive_in_the_verifier(literal):
     source = Path(verifier.__file__).read_text(encoding="utf-8")
 
     assert literal not in source
+
+
+def test_publish_is_gated_on_the_integration_workflow():
+    """A release must not ship without the container and live suites running.
+
+    `pytest -q` alone cannot prove this: the live tests skip themselves when no
+    backend answers, so the release job passes without executing a single tool.
+    """
+    workflow = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "./.github/workflows/integration.yml" in workflow
+    assert "needs: [gate, integration]" in workflow
+
+
+def test_integration_workflow_runs_both_layers():
+    integration = (ROOT / ".github" / "workflows" / "integration.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "run_smoke.py" in integration, "container smoke missing"
+    assert "--check-trim" in integration, "trim profile not asserted against a real image"
+    assert "pytest -m live" in integration, "live tool execution missing"
