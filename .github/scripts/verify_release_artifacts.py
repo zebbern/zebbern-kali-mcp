@@ -1,4 +1,4 @@
-"""Verify the exact files that are eligible for the 1.0.2 PyPI release.
+"""Verify the exact files that are eligible for the 1.0.3 PyPI release.
 
 This module intentionally uses only the Python standard library.  The same
 checks are used before uploading an Actions artifact and after downloading it
@@ -21,10 +21,10 @@ from pathlib import Path, PurePosixPath
 from tarfile import TarError, TarFile
 
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 PROJECT_NAME = "zebbern-kali-mcp"
-WHEEL_NAME = "zebbern_kali_mcp-1.0.2-py3-none-any.whl"
-SDIST_NAME = "zebbern_kali_mcp-1.0.2.tar.gz"
+WHEEL_NAME = "zebbern_kali_mcp-1.0.3-py3-none-any.whl"
+SDIST_NAME = "zebbern_kali_mcp-1.0.3.tar.gz"
 EXPECTED_ARTIFACTS = (SDIST_NAME, WHEEL_NAME)
 PYPI_JSON_URL = f"https://pypi.org/pypi/{PROJECT_NAME}/{{version}}/json"
 
@@ -40,7 +40,7 @@ _EXPECTED_TEST_REQUIREMENTS = {
     'pytest>=8,<9; extra == "test"',
 }
 _ENTRY_POINT = "zebbern-kali-mcp = mcp_server:main"
-_DIST_INFO_DIR = "zebbern_kali_mcp-1.0.2.dist-info"
+_DIST_INFO_DIR = "zebbern_kali_mcp-1.0.3.dist-info"
 _CREDENTIAL_FILE = re.compile(
     r"^(?:"
     r"\.env(?:\..+)?|"

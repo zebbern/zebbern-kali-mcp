@@ -25,7 +25,7 @@ def test_cli_parser_uses_published_program_name():
 def test_installed_distribution_exposes_console_entry_point():
     distribution = importlib.metadata.distribution("zebbern-kali-mcp")
 
-    assert distribution.version == "1.0.2"
+    assert distribution.version == "1.0.3"
     entry_points = {
         entry_point.name: entry_point.value
         for entry_point in distribution.entry_points
