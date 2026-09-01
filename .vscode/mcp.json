@@ -1,9 +1,0 @@
-{
-  "servers": {
-    "kali-tools": {
-      "command": "python",
-      "args": ["mcp_server.py"],
-      "cwd": "${workspaceFolder}"
-    }
-  }
-}
