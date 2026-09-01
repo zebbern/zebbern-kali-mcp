@@ -50,6 +50,26 @@ ALL_MODULES = (
 
 logger = logging.getLogger(__name__)
 
+_MODULES_BY_NAME: dict[str, ModuleType] = {
+    module.__name__.rsplit(".", 1)[-1]: module for module in ALL_MODULES
+}
+MODULE_NAMES = tuple(_MODULES_BY_NAME)
+
+
+def parse_module_exclusions(value: str | None) -> frozenset[str]:
+    """Parse a comma-separated module exclusion list, rejecting unknown names."""
+    if not value:
+        return frozenset()
+    names = {part.strip().lower() for part in value.split(",") if part.strip()}
+    unknown = sorted(names - set(MODULE_NAMES))
+    if unknown:
+        supported = ", ".join(MODULE_NAMES)
+        raise ValueError(
+            f"Unknown MCP tool module(s): {', '.join(unknown)}. "
+            f"Supported modules: {supported}"
+        )
+    return frozenset(names)
+
 _AUTO_FILTERABLE_TOOLS = frozenset(
     {
         "msf_session_create",
@@ -119,16 +139,25 @@ _PROFILES: dict[str, tuple[ModuleType, ...]] = {
 PROFILE_NAMES = tuple(_PROFILES)
 
 
-def modules_for_profile(profile: str) -> tuple[ModuleType, ...]:
-    """Return the ordered tool modules for a named convenience profile."""
+def modules_for_profile(
+    profile: str, exclude: frozenset[str] = frozenset()
+) -> tuple[ModuleType, ...]:
+    """Return the ordered tool modules for a profile, minus ``exclude``."""
     normalized = profile.strip().lower()
     try:
-        return _PROFILES[normalized]
+        modules = _PROFILES[normalized]
     except KeyError as exc:
         supported = ", ".join(PROFILE_NAMES)
         raise ValueError(
             f"Unknown MCP tool profile {profile!r}. Supported profiles: {supported}"
         ) from exc
+    if not exclude:
+        return modules
+    return tuple(
+        module
+        for module in modules
+        if module.__name__.rsplit(".", 1)[-1] not in exclude
+    )
 
 
 def _unavailable_auto_tools(
@@ -191,8 +220,9 @@ def register_all(
     kali_client: KaliToolsClient,
     profile: str = "auto",
     health: Mapping[str, Any] | None = None,
+    exclude: frozenset[str] = frozenset(),
 ) -> None:
-    """Register the modules selected by ``profile`` on the MCP server."""
+    """Register the modules selected by ``profile``, minus ``exclude``."""
     if profile.strip().lower() == "auto":
         unavailable = _unavailable_auto_tools(health)
         if unavailable is None:
@@ -204,5 +234,7 @@ def register_all(
             logger.info("Auto profile omitted tools: %s", ", ".join(sorted(unavailable)))
         mcp = _CapabilityFilteringMCP(mcp, unavailable)
 
-    for module in modules_for_profile(profile):
+    if exclude:
+        logger.info("Excluded tool modules: %s", ", ".join(sorted(exclude)))
+    for module in modules_for_profile(profile, exclude):
         module.register(mcp, kali_client)
