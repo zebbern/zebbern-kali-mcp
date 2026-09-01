@@ -131,6 +131,18 @@ On a lean image, `auto` omits exactly `msf_session_create`, `msf_session_destroy
 
 The explicit profiles are `core`, `recon`, `web`, `ad`, `ctf`, `trim`, and `full`. Select one with `--profile web` or `MCP_TOOL_PROFILE=web`. Use `--profile full` to register every current MCP tool regardless of discovery results. An invalid profile fails during startup.
 
+### Excluding modules from any profile
+
+`--exclude-module` (or `MCP_EXCLUDE_MODULES`) subtracts named modules from whichever profile is selected, so you can tune the surface without waiting for a new profile. Use it when another MCP server in your setup already covers a capability — a hosted webhook/interactsh service makes `callback_catcher` redundant, and an agent that parses stdout itself does not need `output_parser`.
+
+```bash
+zebbern-kali-mcp --profile web --exclude-module callback_catcher      # 57 tools
+zebbern-kali-mcp --profile full --exclude-module callback_catcher,output_parser  # 121, same as trim
+MCP_EXCLUDE_MODULES=callback_catcher zebbern-kali-mcp --profile ctf    # 75 tools
+```
+
+Names are case-insensitive and whitespace-tolerant; an unknown module name fails at startup with the full list of valid names. Exclusion composes with `auto`, applying after capability discovery.
+
 `trim` is the full tool set minus the two modules that duplicate capabilities most MCP hosts already provide: `callback_catcher` (9 tools, overlapping hosted webhook/interactsh services) and `output_parser` (1 tool, duplicating the agent's own stdout parsing). It registers 121 of the 131 tools. Prefer `full` when the host has no webhook capability of its own, or when the engagement runs on an isolated network with no egress — the built-in callback listener is the only one that works there.
 
 ---
@@ -380,6 +392,7 @@ Additional pip packages installed during build: `bloodyAD`, `certipy-ad`, `blood
 | `SOCKS_LISTEN_HOST` | `0.0.0.0` | SOCKS listener inside bridge mode; host-network mode defaults to `127.0.0.1` |
 | `KALI_API_URL` | `http://127.0.0.1:5000` | MCP client: URL of the Kali Flask server |
 | `MCP_TOOL_PROFILE` | `auto` | MCP profile: `auto` (capability-aware default), `core`, `recon`, `web`, `ad`, `ctf`, `trim`, or `full` |
+| `MCP_EXCLUDE_MODULES` | *(empty)* | Comma-separated tool modules to drop from the selected profile, e.g. `callback_catcher,output_parser` |
 | `INCLUDE_METASPLOIT` | `true` | Build argument: `true` creates the full default; `false` creates lean |
 | `INCLUDE_CADO_NFS` | `true` | Build argument: capability default; `false` is a faster development build without only CADO-NFS |
 

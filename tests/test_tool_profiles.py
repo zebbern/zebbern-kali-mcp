@@ -4,7 +4,9 @@ import pytest
 
 import mcp_server
 from mcp_tools import (
+    MODULE_NAMES,
     PROFILE_NAMES,
+    parse_module_exclusions,
     _CapabilityFilteringMCP,
     modules_for_profile,
     register_all,
@@ -30,9 +32,9 @@ class RecordingMCP:
         return decorator
 
 
-def registered_names(profile: str, health=None) -> set[str]:
+def registered_names(profile: str, health=None, exclude=frozenset()) -> set[str]:
     recording = RecordingMCP()
-    register_all(recording, object(), profile, health)
+    register_all(recording, object(), profile, health, exclude=exclude)
     return set(recording.tools)
 
 
@@ -227,7 +229,7 @@ def test_setup_forwards_the_same_health_snapshot(monkeypatch):
         def __init__(self, name):
             calls["server_name"] = name
 
-    def fake_register_all(mcp, kali_client, profile, health):
+    def fake_register_all(mcp, kali_client, profile, health, exclude):
         calls.update(mcp=mcp, kali_client=kali_client, profile=profile, health=health)
 
     monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
@@ -275,13 +277,14 @@ def test_main_forwards_health_snapshot_to_server_setup(monkeypatch):
                 "timeout": 12,
                 "api_token": "token",
                 "profile": "full",
+                "exclude_module": frozenset(),
             },
         )(),
     )
     monkeypatch.setattr(mcp_server, "KaliToolsClient", FakeClient)
 
-    def fake_setup(client, profile, health):
-        calls.update(setup_client=client, profile=profile, health=health)
+    def fake_setup(client, profile, health, exclude):
+        calls.update(setup_client=client, profile=profile, health=health, exclude=exclude)
         return FakeServer()
 
     monkeypatch.setattr(mcp_server, "setup_mcp_server", fake_setup)
@@ -353,3 +356,75 @@ def test_trim_profile_is_selectable_from_the_environment(monkeypatch):
     monkeypatch.setenv("MCP_TOOL_PROFILE", "trim")
 
     assert mcp_server.parse_args([]).profile == "trim"
+
+
+def test_exclude_module_subtracts_from_any_profile():
+    web = registered_names("web")
+    trimmed = registered_names("web", exclude=frozenset({"callback_catcher"}))
+
+    assert len(web) == 66
+    assert len(trimmed) == 57
+    assert not any(name.startswith("callback_") for name in trimmed)
+    assert trimmed < web
+
+
+def test_exclude_module_composes_with_full_to_match_trim():
+    assert registered_names(
+        "full", exclude=frozenset({"callback_catcher", "output_parser"})
+    ) == registered_names("trim")
+
+
+def test_exclude_module_composes_with_auto_capability_filtering():
+    tools = registered_names(
+        "auto", lean_health(), exclude=frozenset({"callback_catcher"})
+    )
+
+    assert not any(name.startswith("callback_") for name in tools)
+    assert UNAVAILABLE_LEAN & tools == set()
+
+
+def test_exclude_module_without_names_changes_nothing():
+    assert registered_names("web", exclude=frozenset()) == registered_names("web")
+
+
+def test_module_names_covers_every_registered_module():
+    assert set(MODULE_NAMES) == set(module_names("full"))
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    (
+        (None, frozenset()),
+        ("", frozenset()),
+        ("callback_catcher", frozenset({"callback_catcher"})),
+        ("  Callback_Catcher , OUTPUT_PARSER ", frozenset({"callback_catcher", "output_parser"})),
+        ("vpn,,vpn", frozenset({"vpn"})),
+    ),
+)
+def test_parse_module_exclusions_normalizes_input(value, expected):
+    assert parse_module_exclusions(value) == expected
+
+
+def test_parse_module_exclusions_rejects_an_unknown_module():
+    with pytest.raises(ValueError, match="Unknown MCP tool module"):
+        parse_module_exclusions("callback_catcher,not_a_module")
+
+
+def test_exclude_module_is_a_cli_flag():
+    args = mcp_server.parse_args(["--exclude-module", "callback_catcher,vpn"])
+
+    assert args.exclude_module == frozenset({"callback_catcher", "vpn"})
+    assert mcp_server.parse_args([]).exclude_module == frozenset()
+
+
+def test_exclude_module_defaults_from_the_environment(monkeypatch):
+    monkeypatch.setenv("MCP_EXCLUDE_MODULES", "callback_catcher")
+
+    assert mcp_server.parse_args([]).exclude_module == frozenset({"callback_catcher"})
+
+
+def test_invalid_environment_exclusion_is_rejected_before_startup(monkeypatch):
+    monkeypatch.setenv("MCP_EXCLUDE_MODULES", "nope")
+
+    with pytest.raises(ValueError, match="Unknown MCP tool module"):
+        mcp_server.build_parser()

@@ -23,12 +23,19 @@ def _origin(url: str) -> tuple[str, str, Optional[int]]:
     )
 
 
+def _safe_origin(url: str) -> str:
+    """Return ``scheme://host:port`` with any embedded credentials stripped."""
+    scheme, host, port = _origin(url)
+    return f"{scheme}://{host}:{port}" if port else f"{scheme}://{host}"
+
+
 def _request_failure(
     method: str,
     endpoint: str,
     error: Exception,
     *,
     unexpected: bool = False,
+    server: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return useful failure metadata without logging URLs or request values."""
     response = getattr(error, "response", None)
@@ -40,6 +47,17 @@ def _request_failure(
     path = urlsplit(f"/{endpoint.lstrip('/')}").path or "/"
     label = "Unexpected request error" if unexpected else "Request failed"
     logger.error("%s %s failed: %s", method, path, detail)
+    if server and isinstance(error, requests.exceptions.ConnectionError):
+        # An agent cannot act on a bare "ConnectionError"; name the backend and
+        # the remedy. ``server`` is the origin only, so no token or path leaks.
+        return {
+            "error": (
+                f"{label}: {detail} - cannot reach the Kali API server at {server}. "
+                "Start it with 'docker compose up -d', or point KALI_API_URL at a "
+                "running server."
+            ),
+            "success": False,
+        }
     return {"error": f"{label}: {detail}", "success": False}
 
 
@@ -155,9 +173,9 @@ class KaliToolsClient:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            return _request_failure("GET", endpoint, e)
+            return _request_failure("GET", endpoint, e, server=_safe_origin(self.server_url))
         except Exception as e:
-            return _request_failure("GET", endpoint, e, unexpected=True)
+            return _request_failure("GET", endpoint, e, unexpected=True, server=_safe_origin(self.server_url))
 
     def safe_post(self, endpoint: str, json_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -169,9 +187,9 @@ class KaliToolsClient:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            return _request_failure("POST", endpoint, e)
+            return _request_failure("POST", endpoint, e, server=_safe_origin(self.server_url))
         except Exception as e:
-            return _request_failure("POST", endpoint, e, unexpected=True)
+            return _request_failure("POST", endpoint, e, unexpected=True, server=_safe_origin(self.server_url))
 
     def heavy_tool_post(
         self, endpoint: str, json_data: Dict[str, Any], semaphore_timeout: int = 120
@@ -199,9 +217,9 @@ class KaliToolsClient:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            return _request_failure("DELETE", endpoint, e)
+            return _request_failure("DELETE", endpoint, e, server=_safe_origin(self.server_url))
         except Exception as e:
-            return _request_failure("DELETE", endpoint, e, unexpected=True)
+            return _request_failure("DELETE", endpoint, e, unexpected=True, server=_safe_origin(self.server_url))
 
     def execute_command(self, command: str) -> Dict[str, Any]:
         return self.safe_post("api/command", {"command": command})

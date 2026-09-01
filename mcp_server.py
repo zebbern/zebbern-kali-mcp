@@ -10,7 +10,7 @@ import logging
 
 from mcp.server.fastmcp import FastMCP
 
-from mcp_tools import PROFILE_NAMES, register_all
+from mcp_tools import MODULE_NAMES, PROFILE_NAMES, parse_module_exclusions, register_all
 from mcp_tools._client import KaliToolsClient
 
 # Configure logging
@@ -38,18 +38,35 @@ def default_tool_profile() -> str:
     return profile
 
 
+def _exclude_module_argument(value: str) -> frozenset[str]:
+    """Parse --exclude-module, preserving the detailed error argparse would eat."""
+    try:
+        return parse_module_exclusions(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def default_module_exclusions() -> frozenset[str]:
+    """Return the validated environment-selected module exclusions."""
+    return parse_module_exclusions(os.environ.get("MCP_EXCLUDE_MODULES", ""))
+
+
 def setup_mcp_server(
-    kali_client: KaliToolsClient, profile: str = "auto", health=None
+    kali_client: KaliToolsClient,
+    profile: str = "auto",
+    health=None,
+    exclude: frozenset[str] = frozenset(),
 ) -> FastMCP:
     """Create the FastMCP server and register the selected tool profile."""
     mcp = FastMCP("kali-tools")
-    register_all(mcp, kali_client, profile=profile, health=health)
+    register_all(mcp, kali_client, profile=profile, health=health, exclude=exclude)
     return mcp
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser."""
     profile_default = default_tool_profile()
+    exclude_default = default_module_exclusions()
     parser = argparse.ArgumentParser(
         prog="zebbern-kali-mcp",
         description="Run the Kali MCP Client",
@@ -72,6 +89,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--api-token",
         default=DEFAULT_API_TOKEN,
         help="API token (default: KALI_API_TOKEN environment variable)",
+    )
+    parser.add_argument(
+        "--exclude-module",
+        type=_exclude_module_argument,
+        default=exclude_default,
+        metavar="NAMES",
+        help=(
+            "Comma-separated tool modules to drop from the selected profile "
+            f"(default: MCP_EXCLUDE_MODULES). Choices: {', '.join(MODULE_NAMES)}"
+        ),
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     return parser
@@ -105,7 +132,9 @@ def main():
             if missing:
                 logger.warning(f"Missing tools: {', '.join(missing)}")
 
-    mcp = setup_mcp_server(kali_client, profile=args.profile, health=health)
+    mcp = setup_mcp_server(
+        kali_client, profile=args.profile, health=health, exclude=args.exclude_module
+    )
     logger.info("Starting Kali MCP server with '%s' tool profile", args.profile)
     mcp.run()
 
