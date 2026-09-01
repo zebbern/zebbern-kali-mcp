@@ -117,7 +117,7 @@ Restart VS Code — done. `uvx` auto-downloads the MCP client from PyPI.
 
 The default `auto` profile starts with the complete `full` tool set. With a valid capability schema version 1 response, it omits only public tools explicitly reported as unavailable. Unknown, malformed, older, or unreachable capability data fails open and keeps the complete tool set. Discovery is a startup snapshot; restart the MCP client to refresh it.
 
-On a lean image, `auto` omits exactly `msf_session_create`, `msf_session_destroy`, `msf_session_destroy_all`, `msf_session_execute`, `msf_session_list`, `payload_generate`, and `payload_templates`. These are the persistent Metasploit session tools and the two `msfvenom` payload tools. Other payload tools remain registered. Use a focused profile only when a smaller tool list helps the agent choose tools more reliably:
+`auto` omits any tool the manifest reports as unavailable, so the backend owns that list rather than the client keeping a parallel copy of it. Core tools are never omitted: command execution, file operations, host management and output parsing stay registered even if a manifest marks them unavailable. That floor exists because the two failure directions are not symmetric — a tool that is present but broken fails once and the agent adapts, while a tool wrongly hidden is invisible for the life of the process, since discovery is a startup snapshot. On a lean image this omits the persistent Metasploit session tools and the two `msfvenom` payload tools. Use a focused profile only when a smaller tool list helps the agent choose tools more reliably:
 
 | Profile | Focus |
 |---------|-------|

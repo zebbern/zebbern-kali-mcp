@@ -1,6 +1,7 @@
 """Modular tool registration and optional capability profiles."""
 
 import logging
+from functools import lru_cache
 from collections.abc import Mapping
 from types import ModuleType
 from typing import Any
@@ -69,18 +70,6 @@ def parse_module_exclusions(value: str | None) -> frozenset[str]:
             f"Supported modules: {supported}"
         )
     return frozenset(names)
-
-_AUTO_FILTERABLE_TOOLS = frozenset(
-    {
-        "msf_session_create",
-        "msf_session_execute",
-        "msf_session_list",
-        "msf_session_destroy",
-        "msf_session_destroy_all",
-        "payload_templates",
-        "payload_generate",
-    }
-)
 
 _CORE_MODULES = (
     command_exec,
@@ -160,6 +149,28 @@ def modules_for_profile(
     )
 
 
+@lru_cache(maxsize=1)
+def _core_tool_names() -> frozenset[str]:
+    """Tool names contributed by the core modules, which auto must never hide."""
+
+    class _NameRecorder:
+        def __init__(self) -> None:
+            self.names: set[str] = set()
+
+        def tool(self, name=None, **_kwargs):
+            def decorator(function):
+                self.names.add(name or function.__name__)
+                return function
+
+            return decorator
+
+    recorder = _NameRecorder()
+    for module in _CORE_MODULES:
+        # register only decorates; the client is captured, never called here.
+        module.register(recorder, None)
+    return frozenset(recorder.names)
+
+
 def _unavailable_auto_tools(
     health: Mapping[str, Any] | None,
 ) -> frozenset[str] | None:
@@ -190,11 +201,13 @@ def _unavailable_auto_tools(
     unavailable = {
         name
         for name, entry in mcp_tools.items()
-        if isinstance(name, str)
-        and name in _AUTO_FILTERABLE_TOOLS
-        and entry["available"] is False
+        if isinstance(name, str) and entry["available"] is False
     }
-    return frozenset(unavailable)
+    # The backend owns the list, but never let a manifest hide the primitives.
+    # A present-but-broken tool fails once and the agent adapts; a hidden tool
+    # is invisible for the life of the process, because discovery is a startup
+    # snapshot. Only the second failure direction is unrecoverable.
+    return frozenset(unavailable - _core_tool_names())
 
 
 class _CapabilityFilteringMCP:
