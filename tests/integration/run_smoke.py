@@ -38,6 +38,22 @@ LEAN_OMITTED_TOOLS = frozenset(
         "payload_generate",
     }
 )
+# Profile-level omissions for ``--profile trim`` (distinct from the image-variant
+# constants above, which describe what a lean *image* cannot provide).
+TRIM_OMITTED_TOOLS = frozenset(
+    {
+        "callback_start",
+        "callback_stop",
+        "callback_status",
+        "callback_list",
+        "callback_latest",
+        "callback_clear",
+        "callback_check",
+        "callback_generate",
+        "callback_wait",
+        "parse_tool_output",
+    }
+)
 UNAFFECTED_VARIANT_TOOLS = frozenset(
     {
         "job_status",
@@ -261,6 +277,43 @@ def validate_variant_tools(
     }
 
 
+def validate_trim_profile(
+    trim_tools: set[str], full_tools: set[str]
+) -> dict[str, Any]:
+    """Validate the live ``trim`` MCP surface and return JSON evidence."""
+    trim = set(trim_tools)
+    full = set(full_tools)
+    full_count = len(full)
+    if full_count != FULL_TOOL_COUNT:
+        raise RuntimeError(
+            "full profile must contain exactly 131 unique tools; "
+            f"observed {full_count}"
+        )
+
+    missing_unaffected = sorted(UNAFFECTED_VARIANT_TOOLS - trim)
+    if missing_unaffected:
+        raise RuntimeError(
+            f"trim profile lost unaffected capability: {missing_unaffected!r}"
+        )
+
+    omitted_names = sorted(full - trim)
+    additions = sorted(trim - full)
+    expected_omissions = sorted(TRIM_OMITTED_TOOLS)
+    if omitted_names != expected_omissions or additions:
+        raise RuntimeError(
+            "trim profile mismatch; "
+            f"omitted={omitted_names!r}, expected={expected_omissions!r}, "
+            f"additions={additions!r}"
+        )
+
+    return {
+        "profile": "trim",
+        "trim_count": len(trim),
+        "full_count": full_count,
+        "omitted_names": omitted_names,
+    }
+
+
 @contextmanager
 def reserve_unused_ports():
     """Hold two distinct loopback reservations until the caller starts Compose."""
@@ -353,6 +406,7 @@ class SmokeResult:
     live: dict[str, Any]
     ready: dict[str, Any]
     variant_evidence: dict[str, Any] | None = None
+    trim_evidence: dict[str, Any] | None = None
 
 
 def run_smoke(
@@ -362,6 +416,7 @@ def run_smoke(
     *,
     profile: str = "auto",
     timeout: float = 180.0,
+    check_trim: bool = False,
 ) -> SmokeResult:
     """Run API, authentication, MCP, and command checks for one image."""
     if expect_variant not in {None, "full", "lean"}:
@@ -389,6 +444,7 @@ def run_smoke(
     workflow_error: Exception | None = None
     failure_evidence = ""
     variant_evidence: dict[str, Any] | None = None
+    trim_evidence: dict[str, Any] | None = None
     try:
         started_process = _run(
             compose_command(project, network_mode, "up", "-d", "--no-build"), environment
@@ -406,19 +462,28 @@ def run_smoke(
             raise RuntimeError(f"authenticated /api/ps returned HTTP {authorized.status_code}")
 
         tools = list_mcp_tools(api_url, token, profile)
+        tools_by_profile = {profile.strip().lower(): tools}
+
+        def profile_tools(name: str) -> set[str]:
+            """List ``name`` at most once per smoke run."""
+            if name not in tools_by_profile:
+                tools_by_profile[name] = list_mcp_tools(api_url, token, name)
+            return tools_by_profile[name]
+
         if expect_variant is not None:
-            tools_by_profile = {profile.strip().lower(): tools}
-            for live_profile in ("auto", "full"):
-                if live_profile not in tools_by_profile:
-                    tools_by_profile[live_profile] = list_mcp_tools(api_url, token, live_profile)
             variant_evidence = validate_variant_tools(
-                expect_variant, tools_by_profile["auto"], tools_by_profile["full"]
+                expect_variant, profile_tools("auto"), profile_tools("full")
+            )
+        if check_trim:
+            trim_evidence = validate_trim_profile(
+                profile_tools("trim"), profile_tools("full")
             )
         nonce = f"zkm-smoke-{uuid.uuid4()}"
         command_result = call_mcp_tool(api_url, token, profile, "zebbern_exec", {"command": f"printf {nonce}"})
         assert_exec_nonce(command_result, nonce)
         workflow_result = SmokeResult(
-            project, container, network_mode, image, tools, live, ready, variant_evidence
+            project, container, network_mode, image, tools, live, ready,
+            variant_evidence, trim_evidence,
         )
     except Exception as exc:
         workflow_error = exc
@@ -448,14 +513,30 @@ def run_smoke(
     return workflow_result
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_smoke_parser() -> argparse.ArgumentParser:
+    """Build the smoke-workflow command-line parser."""
     parser = argparse.ArgumentParser(description="Run the local Kali MCP smoke workflow")
     parser.add_argument("--image", required=True)
     parser.add_argument("--network-mode", choices=("bridge", "host"), default="bridge")
     parser.add_argument("--expect-variant", choices=("full", "lean"))
     parser.add_argument("--profile", default="auto")
-    args = parser.parse_args(argv)
-    result = run_smoke(args.image, args.network_mode, args.expect_variant, profile=args.profile)
+    parser.add_argument(
+        "--check-trim",
+        action="store_true",
+        help="Also assert the live trim profile omits exactly the redundant tools",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_smoke_parser().parse_args(argv)
+    result = run_smoke(
+        args.image,
+        args.network_mode,
+        args.expect_variant,
+        profile=args.profile,
+        check_trim=args.check_trim,
+    )
     print(
         json.dumps(
             {
@@ -463,6 +544,7 @@ def main(argv: list[str] | None = None) -> int:
                 "mode": result.mode,
                 "tool_count": len(result.tools),
                 "variant_evidence": result.variant_evidence,
+                "trim_evidence": result.trim_evidence,
             }
         )
     )

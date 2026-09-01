@@ -126,9 +126,12 @@ On a lean image, `auto` omits exactly `msf_session_create`, `msf_session_destroy
 | `web` | Core plus web/API testing and callback capture |
 | `ad` | Core plus AD, pivoting, SSH, shells, payloads, and VPN |
 | `ctf` | Core plus scanners, CTF platforms, payloads, shells, VPN, and callbacks |
+| `trim` | All modules except `callback_catcher` and `output_parser`; 121 tools |
 | `full` | All 17 modules; complete operator override |
 
-The explicit profiles are `core`, `recon`, `web`, `ad`, `ctf`, and `full`. Select one with `--profile web` or `MCP_TOOL_PROFILE=web`. Use `--profile full` to register every current MCP tool regardless of discovery results. An invalid profile fails during startup.
+The explicit profiles are `core`, `recon`, `web`, `ad`, `ctf`, `trim`, and `full`. Select one with `--profile web` or `MCP_TOOL_PROFILE=web`. Use `--profile full` to register every current MCP tool regardless of discovery results. An invalid profile fails during startup.
+
+`trim` is the full tool set minus the two modules that duplicate capabilities most MCP hosts already provide: `callback_catcher` (9 tools, overlapping hosted webhook/interactsh services) and `output_parser` (1 tool, duplicating the agent's own stdout parsing). It registers 121 of the 131 tools. Prefer `full` when the host has no webhook capability of its own, or when the engagement runs on an isolated network with no egress — the built-in callback listener is the only one that works there.
 
 ---
 
@@ -376,7 +379,7 @@ Additional pip packages installed during build: `bloodyAD`, `certipy-ad`, `blood
 | `SOCKS_PORT` | `1080` | Published host SOCKS port |
 | `SOCKS_LISTEN_HOST` | `0.0.0.0` | SOCKS listener inside bridge mode; host-network mode defaults to `127.0.0.1` |
 | `KALI_API_URL` | `http://127.0.0.1:5000` | MCP client: URL of the Kali Flask server |
-| `MCP_TOOL_PROFILE` | `auto` | MCP profile: `auto` (capability-aware default), `core`, `recon`, `web`, `ad`, `ctf`, or `full` |
+| `MCP_TOOL_PROFILE` | `auto` | MCP profile: `auto` (capability-aware default), `core`, `recon`, `web`, `ad`, `ctf`, `trim`, or `full` |
 | `INCLUDE_METASPLOIT` | `true` | Build argument: `true` creates the full default; `false` creates lean |
 | `INCLUDE_CADO_NFS` | `true` | Build argument: capability default; `false` is a faster development build without only CADO-NFS |
 
@@ -421,6 +424,12 @@ Run the qualified fixtures against the specified locally built images:
 python tests/integration/run_smoke.py --image zebbern-kali-mcp:goal-full --network-mode bridge --expect-variant full
 python tests/integration/run_ad_lab.py --image zebbern-kali-mcp:goal-lean
 python tests/integration/run_smoke.py --image zebbern-kali-mcp:goal-full --network-mode host --expect-variant full
+```
+
+Add `--check-trim` to any `run_smoke.py` invocation to additionally assert the live `trim` profile against the running image: it must expose 121 tools and omit exactly the nine `callback_*` tools plus `parse_tool_output`, with no other additions or losses. The check is opt-in because it costs one extra MCP session per run. It is independent of the image variant, since `trim` is a static profile that ignores capability discovery.
+
+```bash
+python tests/integration/run_smoke.py --image zebbern-kali-mcp:goal-full --network-mode bridge --expect-variant full --check-trim
 ```
 
 The AD fixture is local, disposable, and has no host-published ports. It proves only local DNS, authenticated LDAP discovery, and the public MCP/API enumeration path. It does not qualify other Active Directory operations. Host networking is qualified on native Linux Docker Engine and the current Windows Docker Desktop 4.84 setup after the explicit opt-in and restart. Desktop remains limited to TCP and UDP layer 4, Linux containers, no Enhanced Container Isolation, and no binding to a specific host-interface IP. `linux/amd64` is the only qualified image architecture.

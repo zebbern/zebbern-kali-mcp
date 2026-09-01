@@ -114,7 +114,7 @@ def test_auto_profile_keeps_every_tool_when_all_seven_are_available():
     assert registered_names("auto", health) == registered_names("full")
 
 
-@pytest.mark.parametrize("profile", ("core", "recon", "web", "ad", "ctf"))
+@pytest.mark.parametrize("profile", ("core", "recon", "web", "ad", "ctf", "trim"))
 def test_static_profiles_ignore_capability_data(profile):
     assert registered_names(profile, lean_health()) == registered_names(profile)
 
@@ -205,8 +205,9 @@ def test_recon_profile_keeps_core_workflow_without_heavy_session_modules():
 
 
 def test_profiles_are_stable_cli_choices():
-    assert PROFILE_NAMES == ("auto", "core", "recon", "web", "ad", "ctf", "full")
+    assert PROFILE_NAMES == ("auto", "core", "recon", "web", "ad", "ctf", "trim", "full")
     assert mcp_server.parse_args(["--profile", "web"]).profile == "web"
+    assert mcp_server.parse_args(["--profile", "trim"]).profile == "trim"
 
 
 def test_default_profile_is_auto_when_environment_is_unset(monkeypatch):
@@ -303,3 +304,52 @@ def test_invalid_environment_profile_is_rejected_before_startup(monkeypatch):
 
     with pytest.raises(ValueError, match="MCP_TOOL_PROFILE"):
         mcp_server.build_parser()
+
+
+def test_trim_profile_drops_only_the_host_redundant_modules():
+    assert module_names("trim") == (
+        "command_exec",
+        "reverse_shell",
+        "payload_generator",
+        "exploit_suggester",
+        "metasploit",
+        "kali_tools",
+        "ssh_manager",
+        "file_operations",
+        "web_fingerprinter",
+        "api_security",
+        "ad_tools",
+        "network_pivot",
+        "ctf_platform",
+        "vpn",
+        "hosts_management",
+    )
+
+
+def test_trim_profile_registers_121_tools():
+    assert len(registered_names("trim")) == 121
+
+
+def test_trim_profile_omits_exactly_the_callback_and_parser_tools():
+    dropped = registered_names("full") - registered_names("trim")
+
+    assert dropped == {
+        "callback_start", "callback_stop", "callback_status", "callback_list",
+        "callback_latest", "callback_clear", "callback_check", "callback_generate",
+        "callback_wait", "parse_tool_output",
+    }
+    assert registered_names("trim") - registered_names("full") == set()
+
+
+def test_trim_profile_keeps_the_remaining_core_workflow():
+    names = set(module_names("trim"))
+
+    assert {"command_exec", "file_operations", "hosts_management"} <= names
+    assert "output_parser" not in names
+    assert "callback_catcher" not in names
+
+
+def test_trim_profile_is_selectable_from_the_environment(monkeypatch):
+    monkeypatch.setenv("MCP_TOOL_PROFILE", "trim")
+
+    assert mcp_server.parse_args([]).profile == "trim"
