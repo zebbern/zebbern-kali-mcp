@@ -45,6 +45,68 @@ def _full_variant_tools():
     return tools
 
 
+TRIM_OMITTED_TOOLS = {
+    "callback_start",
+    "callback_stop",
+    "callback_status",
+    "callback_list",
+    "callback_latest",
+    "callback_clear",
+    "callback_check",
+    "callback_generate",
+    "callback_wait",
+    "parse_tool_output",
+}
+
+
+def _full_trim_tools():
+    tools = VARIANT_ONLY_TOOLS | UNAFFECTED_TOOLS | TRIM_OMITTED_TOOLS
+    tools.update(f"tool_{index}" for index in range(131 - len(tools)))
+    return tools
+
+
+def test_validate_trim_profile_returns_json_evidence_for_a_valid_surface():
+    full = _full_trim_tools()
+    trim = full - TRIM_OMITTED_TOOLS
+
+    evidence = run_smoke.validate_trim_profile(trim, full)
+
+    assert evidence == {
+        "profile": "trim",
+        "trim_count": 121,
+        "full_count": 131,
+        "omitted_names": sorted(TRIM_OMITTED_TOOLS),
+    }
+    json.dumps(evidence)
+
+
+def test_validate_trim_profile_rejects_wrong_full_count():
+    full = _full_trim_tools() - {"tool_0"}
+    with pytest.raises(RuntimeError, match="full profile must contain exactly 131 unique tools"):
+        run_smoke.validate_trim_profile(full - TRIM_OMITTED_TOOLS, full)
+
+
+def test_validate_trim_profile_rejects_a_retained_redundant_tool():
+    full = _full_trim_tools()
+    trim = (full - TRIM_OMITTED_TOOLS) | {"callback_wait"}
+    with pytest.raises(RuntimeError, match="trim profile mismatch"):
+        run_smoke.validate_trim_profile(trim, full)
+
+
+def test_validate_trim_profile_rejects_unexpected_additions():
+    full = _full_trim_tools()
+    trim = (full - TRIM_OMITTED_TOOLS) | {"unexpected_tool"}
+    with pytest.raises(RuntimeError, match="trim profile mismatch"):
+        run_smoke.validate_trim_profile(trim, full)
+
+
+def test_validate_trim_profile_rejects_loss_of_unaffected_capability():
+    full = _full_trim_tools()
+    trim = full - TRIM_OMITTED_TOOLS - {"zebbern_exec"}
+    with pytest.raises(RuntimeError, match="unaffected capability"):
+        run_smoke.validate_trim_profile(trim, full)
+
+
 @pytest.mark.parametrize("variant", ("full", "lean"))
 def test_validate_variant_tools_returns_json_evidence_for_valid_surfaces(variant):
     full = _full_variant_tools()
@@ -165,6 +227,81 @@ def test_run_smoke_lists_auto_and_full_once_and_validates_before_nonce(monkeypat
     }
     assert calls[0][0][-3:] == ["up", "-d", "--no-build"]
     assert calls[1][0][-3:] == ["down", "--volumes", "--remove-orphans"]
+
+
+def _stub_smoke_environment(monkeypatch, list_calls, tools_for):
+    """Stub Compose/HTTP/MCP so only profile listing behaviour is exercised."""
+
+    class Reservations:
+        def __enter__(self):
+            return (43111, 43112)
+
+        def __exit__(self, *exc):
+            return None
+
+    monkeypatch.setattr(run_smoke, "reserve_unused_ports", lambda: Reservations())
+    monkeypatch.setattr(
+        run_smoke.subprocess,
+        "run",
+        lambda command, **kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(run_smoke, "wait_for_live", lambda url, timeout: {"status": "live"})
+    responses = iter(
+        [
+            SimpleNamespace(status_code=200, json=lambda: {"capabilities": {"schema_version": 1}}),
+            SimpleNamespace(status_code=401, json=lambda: {}),
+            SimpleNamespace(status_code=200, json=lambda: {}),
+        ]
+    )
+    monkeypatch.setattr(run_smoke.requests, "get", lambda *args, **kwargs: next(responses))
+
+    def fake_list(*args):
+        list_calls.append(args[2])
+        return tools_for(args[2])
+
+    monkeypatch.setattr(run_smoke, "list_mcp_tools", fake_list)
+    monkeypatch.setattr(
+        run_smoke,
+        "call_mcp_tool",
+        lambda *args: {"success": True, "stdout": args[-1]["command"].removeprefix("printf ")},
+    )
+
+
+def test_run_smoke_validates_the_trim_profile_when_requested(monkeypatch):
+    list_calls = []
+    full = _full_trim_tools()
+    trim = full - TRIM_OMITTED_TOOLS
+    _stub_smoke_environment(
+        monkeypatch, list_calls, lambda name: trim if name == "trim" else full
+    )
+
+    result = run_smoke.run_smoke("example:image", "bridge", "full", timeout=1, check_trim=True)
+
+    assert list_calls == ["auto", "full", "trim"]
+    assert result.trim_evidence == {
+        "profile": "trim",
+        "trim_count": 121,
+        "full_count": 131,
+        "omitted_names": sorted(TRIM_OMITTED_TOOLS),
+    }
+
+
+def test_run_smoke_skips_trim_listing_unless_requested(monkeypatch):
+    list_calls = []
+    full = _full_trim_tools()
+    _stub_smoke_environment(monkeypatch, list_calls, lambda name: full)
+
+    result = run_smoke.run_smoke("example:image", "bridge", "full", timeout=1)
+
+    assert list_calls == ["auto", "full"]
+    assert result.trim_evidence is None
+
+
+def test_check_trim_is_an_opt_in_cli_flag():
+    parser_args = run_smoke.build_smoke_parser().parse_args(["--image", "x", "--check-trim"])
+
+    assert parser_args.check_trim is True
+    assert run_smoke.build_smoke_parser().parse_args(["--image", "x"]).check_trim is False
 
 
 @pytest.mark.parametrize("name", ["zkm-smoke-full-a1b2", "zkm-smoke-unit-9"])

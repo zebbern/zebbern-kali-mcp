@@ -69,6 +69,12 @@ _CORE_MODULES = (
     output_parser,
 )
 
+# Modules whose tools duplicate capabilities the MCP host usually already provides:
+# callback_catcher overlaps hosted webhook/interactsh style services, and
+# output_parser duplicates the agent's own parsing of tool stdout. Excluded from
+# ``trim`` only; every other profile keeps them.
+_HOST_REDUNDANT_MODULES = frozenset({callback_catcher, output_parser})
+
 _PROFILES: dict[str, tuple[ModuleType, ...]] = {
     "auto": ALL_MODULES,
     "core": _CORE_MODULES,
@@ -103,6 +109,9 @@ _PROFILES: dict[str, tuple[ModuleType, ...]] = {
         ssh_manager,
         vpn,
         callback_catcher,
+    ),
+    "trim": tuple(
+        module for module in ALL_MODULES if module not in _HOST_REDUNDANT_MODULES
     ),
     "full": ALL_MODULES,
 }
