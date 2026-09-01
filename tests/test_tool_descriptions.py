@@ -8,6 +8,7 @@ from its neighbour, or a required argument whose origin is never stated.
 
 import collections
 import inspect
+import re
 
 import pytest
 
@@ -15,24 +16,41 @@ from mcp_tools import register_all
 
 
 class _Recording:
+    """Capture registrations in order; a dict alone would hide name collisions."""
+
     def __init__(self):
         self.tools = {}
+        self.registered_names = []
 
     def tool(self, name=None, **_kwargs):
         def decorator(function):
-            self.tools[name or function.__name__] = function
+            resolved = name or function.__name__
+            self.registered_names.append(resolved)
+            self.tools[resolved] = function
             return function
 
         return decorator
 
 
-def _all_tools():
+def _register_everything():
     recording = _Recording()
     register_all(recording, object(), "full", None)
-    return recording.tools
+    return recording
 
 
-TOOLS = _all_tools()
+def _duplicates(names):
+    """Return the names registered more than once."""
+    counts = collections.Counter(names)
+    return sorted(name for name, count in counts.items() if count > 1)
+
+
+_RECORDING = _register_everything()
+TOOLS = _RECORDING.tools
+
+
+def _words(text: str) -> set[str]:
+    """Identifier-like tokens, so a short name is not matched inside a longer word."""
+    return set(re.findall("[A-Za-z_][A-Za-z0-9_]*", text))
 
 
 def _doc(function) -> str:
@@ -55,7 +73,8 @@ def test_every_required_argument_is_named_in_the_description(name):
     undocumented = [
         parameter
         for parameter, spec in inspect.signature(function).parameters.items()
-        if spec.default is inspect.Parameter.empty and parameter not in doc
+        if spec.default is inspect.Parameter.empty
+        and parameter not in _words(doc)
     ]
 
     assert not undocumented, (
@@ -77,4 +96,19 @@ def test_no_two_tools_share_an_opening_line():
 
 
 def test_tool_names_are_unique_across_every_module():
-    assert len(TOOLS) == 131
+    duplicates = _duplicates(_RECORDING.registered_names)
+
+    assert not duplicates, f"tool names registered by more than one module: {duplicates}"
+    assert len(_RECORDING.registered_names) == 131
+
+
+def test_the_duplicate_detector_actually_detects_duplicates():
+    """Guard the guard: a collision must be reported by name, not absorbed."""
+    assert _duplicates(["a", "b", "a", "c", "c"]) == ["a", "c"]
+    assert _duplicates(["a", "b", "c"]) == []
+
+
+def test_word_matching_does_not_accept_a_name_inside_a_longer_word():
+    """`ip` must not count as documented merely because `description` contains it."""
+    assert "ip" not in _words("description of the recipient script")
+    assert "ip" in _words("ip: the target address")

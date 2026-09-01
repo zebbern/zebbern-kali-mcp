@@ -23,8 +23,6 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parent / "integration"))
 from run_smoke import call_mcp_tool  # noqa: E402
 
-pytestmark = pytest.mark.live
-
 API_URL = os.environ.get("KALI_API_URL", "http://127.0.0.1:5000")
 TOKEN = os.environ.get("KALI_API_TOKEN", "")
 PROFILE = "full"
