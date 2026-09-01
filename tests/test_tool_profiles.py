@@ -95,13 +95,47 @@ def test_auto_profile_omits_only_the_seven_validly_unavailable_tools():
     assert auto_tools - full_tools == set()
 
 
-def test_auto_profile_keeps_validly_unavailable_out_of_scope_tools():
+def test_auto_profile_omits_any_validly_unavailable_non_core_tool():
+    """The backend owns the list; the client no longer second-guesses it.
+
+    Previously a curated seven-name allowlist meant a backend could report a
+    tool unavailable and the agent would still be offered it.
+    """
     health = {
         "capabilities": {
             "schema_version": 1,
             "mcp_tools": {
-                "payload_list": {"available": False, "missing": ["metasploit"]},
+                "payload_list": {"available": False, "missing": ["msfvenom"]},
             },
+        }
+    }
+
+    assert registered_names("full") - registered_names("auto", health) == {"payload_list"}
+
+
+@pytest.mark.parametrize("core_tool", ("zebbern_exec", "kali_upload", "hosts_list"))
+def test_auto_profile_never_hides_a_core_tool(core_tool):
+    """A wrong manifest must not be able to blind the agent's primitives.
+
+    Discovery is a startup snapshot, so a tool hidden here is invisible for the
+    life of the process -- unlike a present-but-broken tool, which fails once
+    and is recoverable.
+    """
+    health = {
+        "capabilities": {
+            "schema_version": 1,
+            "mcp_tools": {core_tool: {"available": False, "missing": ["nonsense"]}},
+        }
+    }
+
+    assert core_tool in registered_names("auto", health)
+
+
+def test_auto_profile_ignores_manifest_names_it_does_not_register():
+    health = {
+        "capabilities": {
+            "schema_version": 1,
+            "mcp_tools": {"not_a_registered_tool": {"available": False, "missing": []}},
         }
     }
 
