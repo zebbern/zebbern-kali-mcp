@@ -66,8 +66,14 @@ def register(mcp: FastMCP, kali_client) -> None:
             if "text/event-stream" not in content_type:
                 return response.json()
 
+            # requests derives the decode charset from the Content-Type, and a
+            # text/* type carrying no charset yields ISO-8859-1. The backend
+            # escapes non-ASCII today, so this only bites if that ever changes.
+            response.encoding = "utf-8"
+
             output_lines: list[str] = []
             result_data: Dict[str, Any] = {}
+            saw_result = False
 
             for line in response.iter_lines(decode_unicode=True):
                 if not line or line.startswith(":"):
@@ -75,6 +81,11 @@ def register(mcp: FastMCP, kali_client) -> None:
                 if line.startswith("data:"):
                     try:
                         event_data = json.loads(line[5:].strip())
+                        if not isinstance(event_data, dict):
+                            # `data: null` and friends parse cleanly but are not
+                            # frames; .get() on them escapes this handler, which
+                            # only catches JSONDecodeError.
+                            continue
                         event_type = event_data.get("type", "")
                         if event_type == "output":
                             output_lines.append(
@@ -82,12 +93,31 @@ def register(mcp: FastMCP, kali_client) -> None:
                             )
                         elif event_type == "result":
                             result_data = event_data
+                            saw_result = True
                         elif event_type == "error":
                             return {"success": False, "error": event_data.get("message", "Unknown error")}
                         elif event_type == "complete":
                             break
                     except json.JSONDecodeError:
                         continue
+
+            if not saw_result:
+                # No result frame means the stream was cut short: a killed
+                # worker, a proxy cutoff, a close on a chunk boundary. Defaulting
+                # to success reported a truncated command as a clean run, which
+                # is the failure mode streaming long scans invites.
+                return {
+                    "success": False,
+                    "incomplete": True,
+                    "output": "\n".join(output_lines),
+                    "return_code": None,
+                    "timed_out": False,
+                    "streamed": True,
+                    "error": (
+                        "stream ended without a result event; the command may "
+                        "have been truncated or killed"
+                    ),
+                }
 
             return {
                 "success": result_data.get("success", True),
