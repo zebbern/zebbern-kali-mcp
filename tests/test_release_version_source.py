@@ -16,6 +16,8 @@ sys.path.insert(0, str(ROOT / ".github" / "scripts"))
 import verify_release_artifacts as verifier  # noqa: E402
 
 PUBLISH_WORKFLOW = ROOT / ".github" / "workflows" / "publish.yml"
+INTEGRATION_WORKFLOW = ROOT / ".github" / "workflows" / "integration.yml"
+CONFIG_PY = ROOT / "zebbern-kali" / "core" / "config.py"
 
 
 def declared_version() -> str:
@@ -86,3 +88,56 @@ def test_integration_workflow_runs_both_layers():
     assert "run_smoke.py" in integration, "container smoke missing"
     assert "--check-trim" in integration, "trim profile not asserted against a real image"
     assert "pytest -m live" in integration, "live tool execution missing"
+
+
+def _config_version() -> str:
+    text = CONFIG_PY.read_text(encoding="utf-8")
+    match = re.search(r'(?m)^VERSION\s*=\s*"([^"]+)"', text)
+    assert match, "zebbern-kali/core/config.py declares no VERSION"
+    return match.group(1)
+
+
+def test_backend_version_tracks_pyproject():
+    """The backend/Docker VERSION and the client wheel version move in lockstep.
+
+    config.py cannot derive its version: pyproject.toml is not shipped in the
+    container image (.dockerignore excludes it) and the backend runs from source,
+    not a pip install, so importlib.metadata has nothing to read. The value is a
+    hand-maintained literal; this test is what enforces that a bump touches both.
+    """
+    assert _config_version() == declared_version()
+
+
+def test_integration_gate_pins_an_image_digest():
+    """The gate must test a reproducible, immutable image, never a floating tag."""
+    workflow = INTEGRATION_WORKFLOW.read_text(encoding="utf-8")
+
+    assert re.search(
+        r"(?m)^\s*IMAGE:\s*ghcr\.io/zebbern/zebbern-kali-mcp@sha256:[0-9a-f]{64}\s*$",
+        workflow,
+    ), "integration.yml must pin the image by @sha256 digest, not a tag like :latest"
+    # Scoped to the IMAGE: line rather than banning the substring file-wide, so a
+    # comment mentioning :latest cannot fail this test for the wrong reason.
+    assert not re.search(
+        r"(?m)^\s*IMAGE:.*:latest\s*$", workflow
+    ), "integration.yml still pins IMAGE to a floating :latest tag"
+
+
+def test_the_live_layer_uses_the_same_pinned_image_as_the_smoke_layer():
+    """Pinning only the pull is not enough.
+
+    The live layer starts the backend with `docker compose up`, and a digest pull
+    leaves no local tag behind -- so unless the digest reaches compose, it would
+    miss :latest and rebuild the image from the Dockerfile, a ~36 minute build
+    against a 45 minute job timeout. Compose must consume the pinned digest.
+    """
+    workflow = INTEGRATION_WORKFLOW.read_text(encoding="utf-8")
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert re.search(
+        r"(?m)^\s*image:\s*\$\{ZKM_IMAGE:-", compose
+    ), "docker-compose.yml must take its image from ZKM_IMAGE, with a local default"
+    assert "ZKM_IMAGE: ${{ env.IMAGE }}" in workflow, (
+        "the gate must pass its pinned digest to compose as ZKM_IMAGE, or the "
+        "live layer runs against different bits than the smoke layer certified"
+    )

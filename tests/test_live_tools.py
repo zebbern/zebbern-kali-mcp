@@ -171,3 +171,33 @@ def test_command_output_is_returned_verbatim():
 
     assert result["success"] is True
     assert result["stdout"] == nonce
+
+
+def test_exec_stream_returns_a_real_sse_result():
+    """The client's `data: {json}` framing, verified against the live api/command
+    SSE endpoint rather than FakeStreamResponse."""
+    nonce = f"zkm-stream-{uuid.uuid4().hex[:12]}"
+
+    result = _call("exec_stream", command=f"printf '%s\\n' {nonce}", timeout=30)
+
+    assert result["success"] is True
+    assert result["streamed"] is True
+    assert result["timed_out"] is False
+    assert result["return_code"] == 0
+    assert f"[stdout] {nonce}" in result["output"]
+
+
+def test_exec_stream_reports_a_backend_timeout_with_a_result_frame():
+    """A command the backend times out still ends the stream with a result frame
+    (timed_out=True), so the client reports timed_out, not the incomplete path."""
+    result = _call(
+        "exec_stream",
+        command="sh -c 'for i in $(seq 1 20); do echo tick-$i; sleep 1; done'",
+        timeout=5,
+    )
+
+    assert result["streamed"] is True
+    assert result["timed_out"] is True
+    assert result["success"] is True
+    assert result.get("incomplete") is not True
+    assert "[stdout] tick-1" in result["output"]

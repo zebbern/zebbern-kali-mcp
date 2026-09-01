@@ -75,6 +75,14 @@ def register(mcp: FastMCP, kali_client) -> None:
             result_data: Dict[str, Any] = {}
             saw_result = False
 
+            # One JSON object per `data:` line is safe, not luck. This tool only
+            # ever reads api/command, served by stream_command_execution in
+            # zebbern-kali/core/command_executor.py, which serializes each payload
+            # with default json.dumps -- no indent=, so embedded newlines are
+            # escaped and a frame is always a single physical line. requests
+            # reassembles frames split across chunk boundaries before yielding.
+            # An emitter that added indent= would break this; a test in
+            # tests/test_command_streaming.py guards against it.
             for line in response.iter_lines(decode_unicode=True):
                 if not line or line.startswith(":"):
                     continue
