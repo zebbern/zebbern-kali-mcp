@@ -17,7 +17,7 @@ sys.modules[spec.name] = verifier
 spec.loader.exec_module(verifier)
 
 
-def _metadata(name="zebbern-kali-mcp", version="1.0.3"):
+def _metadata(name="zebbern-kali-mcp", version="1.0.4"):
     return "\n".join(
         [
             "Metadata-Version: 2.1",
@@ -60,26 +60,26 @@ def _write_valid_dist(
     dist.mkdir()
     source_files = _source_files()
     metadata = metadata or _metadata()
-    wheel_name = "zebbern_kali_mcp-1.0.3-py3-none-any.whl"
-    sdist_name = "zebbern_kali_mcp-1.0.3.tar.gz"
+    wheel_name = "zebbern_kali_mcp-1.0.4-py3-none-any.whl"
+    sdist_name = "zebbern_kali_mcp-1.0.4.tar.gz"
     with zipfile.ZipFile(dist / wheel_name, "w") as archive:
         for name, data in source_files.items():
             if name in {"README.md", "pyproject.toml", "LICENSE"}:
                 continue
             archive.writestr(name, data)
-        archive.writestr("zebbern_kali_mcp-1.0.3.dist-info/licenses/LICENSE", source_files["LICENSE"])
-        archive.writestr("zebbern_kali_mcp-1.0.3.dist-info/METADATA", metadata)
-        archive.writestr("zebbern_kali_mcp-1.0.3.dist-info/WHEEL", b"Wheel-Version: 1.0\n")
+        archive.writestr("zebbern_kali_mcp-1.0.4.dist-info/licenses/LICENSE", source_files["LICENSE"])
+        archive.writestr("zebbern_kali_mcp-1.0.4.dist-info/METADATA", metadata)
+        archive.writestr("zebbern_kali_mcp-1.0.4.dist-info/WHEEL", b"Wheel-Version: 1.0\n")
         archive.writestr(
-            "zebbern_kali_mcp-1.0.3.dist-info/entry_points.txt",
+            "zebbern_kali_mcp-1.0.4.dist-info/entry_points.txt",
             b"[console_scripts]\nzebbern-kali-mcp = mcp_server:main\n",
         )
-        archive.writestr("zebbern_kali_mcp-1.0.3.dist-info/top_level.txt", b"mcp_server\nmcp_tools\n")
-        archive.writestr("zebbern_kali_mcp-1.0.3.dist-info/RECORD", b"")
+        archive.writestr("zebbern_kali_mcp-1.0.4.dist-info/top_level.txt", b"mcp_server\nmcp_tools\n")
+        archive.writestr("zebbern_kali_mcp-1.0.4.dist-info/RECORD", b"")
         for name, data in (extra_wheel_members or {}).items():
             archive.writestr(name, data)
     with TarFile.open(dist / sdist_name, "w:gz") as archive:
-        prefix = "zebbern-kali-mcp-1.0.3/"
+        prefix = "zebbern-kali-mcp-1.0.4/"
         sdist_members = {
             **source_files,
             "PKG-INFO": metadata,
@@ -99,8 +99,8 @@ def test_valid_wheel_and_sdist_produce_deterministic_manifest(tmp_path):
     manifest = verifier.verify_build(dist, PROJECT_ROOT, manifest_path)
 
     assert list(manifest) == [
-        "zebbern_kali_mcp-1.0.3-py3-none-any.whl",
-        "zebbern_kali_mcp-1.0.3.tar.gz",
+        "zebbern_kali_mcp-1.0.4-py3-none-any.whl",
+        "zebbern_kali_mcp-1.0.4.tar.gz",
     ]
     assert manifest_path.read_text() == json.dumps(manifest, indent=2) + "\n"
     assert all(set(item) == {"bytes", "sha256"} for item in manifest.values())
@@ -108,7 +108,7 @@ def test_valid_wheel_and_sdist_produce_deterministic_manifest(tmp_path):
 
 def test_corrupted_source_file_is_rejected(tmp_path):
     dist = _write_valid_dist(tmp_path)
-    wheel = dist / "zebbern_kali_mcp-1.0.3-py3-none-any.whl"
+    wheel = dist / "zebbern_kali_mcp-1.0.4-py3-none-any.whl"
     corrupted = tmp_path / "corrupt"
     corrupted.mkdir()
     with zipfile.ZipFile(wheel) as source, zipfile.ZipFile(corrupted / wheel.name, "w") as target:
@@ -122,7 +122,7 @@ def test_corrupted_source_file_is_rejected(tmp_path):
 
 def test_unsafe_archive_member_is_rejected(tmp_path):
     dist = _write_valid_dist(tmp_path)
-    wheel = dist / "zebbern_kali_mcp-1.0.3-py3-none-any.whl"
+    wheel = dist / "zebbern_kali_mcp-1.0.4-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "a") as archive:
         archive.writestr("../credentials.txt", b"secret")
 
@@ -185,7 +185,7 @@ def test_manifest_revalidation_detects_hash_change(tmp_path):
     dist = _write_valid_dist(tmp_path)
     manifest_path = tmp_path / "manifest.json"
     verifier.verify_build(dist, PROJECT_ROOT, manifest_path)
-    wheel = dist / "zebbern_kali_mcp-1.0.3-py3-none-any.whl"
+    wheel = dist / "zebbern_kali_mcp-1.0.4-py3-none-any.whl"
     wheel.write_bytes(wheel.read_bytes() + b"changed")
 
     with pytest.raises(verifier.VerificationError, match="sha256"):
