@@ -117,12 +117,22 @@ def register(mcp: FastMCP, kali_client) -> None:
 
     @mcp.tool()
     def job_status(job_id: str) -> Dict[str, Any]:
-        """Return state and exit metadata for a background command job."""
+        """Return state and exit metadata for a background command job.
+
+        Args:
+            job_id: Identifier returned by zebbern_exec(background=True).
+        """
         return kali_client.safe_get(f"api/jobs/{job_id}")
 
     @mcp.tool()
     def job_output(job_id: str, timeout: int = 0, lines: int = 100) -> Dict[str, Any]:
-        """Poll recent bounded stdout and stderr from a background job."""
+        """Poll recent bounded stdout and stderr from a background job.
+
+        Args:
+            job_id: Identifier returned by zebbern_exec(background=True).
+            timeout: Seconds to block waiting for new output (default: 0).
+            lines: Maximum recent lines to return (default: 100).
+        """
         return kali_client.safe_get(
             f"api/jobs/{job_id}/output",
             params={"timeout": timeout, "lines": lines},
@@ -130,7 +140,11 @@ def register(mcp: FastMCP, kali_client) -> None:
 
     @mcp.tool()
     def job_cancel(job_id: str) -> Dict[str, Any]:
-        """Cancel a running background job and its child process group."""
+        """Cancel a running background job and its child process group.
+
+        Args:
+            job_id: Identifier returned by zebbern_exec(background=True).
+        """
         return kali_client.safe_post(f"api/jobs/{job_id}/cancel", {})
 
     @mcp.tool()

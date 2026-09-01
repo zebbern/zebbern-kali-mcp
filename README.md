@@ -445,6 +445,8 @@ Add `--check-trim` to any `run_smoke.py` invocation to additionally assert the l
 python tests/integration/run_smoke.py --image zebbern-kali-mcp:goal-full --network-mode bridge --expect-variant full --check-trim
 ```
 
+`pytest -m live` runs the live tool suite against an already-running backend, exercising real execution rather than a mocked client: background job state across separate MCP processes, `/etc/hosts` round-trips, nmap and fingerprinting against a lab target, and verbatim command output. Each case opens its own MCP stdio session, so any state that survives between calls is provably server-side. The suite skips itself when no backend answers, which keeps CI green without Docker. Override `KALI_API_URL`, `ZKM_LAB_HOST`, and `ZKM_LAB_PORT` to point it elsewhere; from inside the container the host lab is reachable at `host.docker.internal`, not `127.0.0.1`.
+
 The AD fixture is local, disposable, and has no host-published ports. It proves only local DNS, authenticated LDAP discovery, and the public MCP/API enumeration path. It does not qualify other Active Directory operations. Host networking is qualified on native Linux Docker Engine and the current Windows Docker Desktop 4.84 setup after the explicit opt-in and restart. Desktop remains limited to TCP and UDP layer 4, Linux containers, no Enhanced Container Isolation, and no binding to a specific host-interface IP. `linux/amd64` is the only qualified image architecture.
 
 ---
