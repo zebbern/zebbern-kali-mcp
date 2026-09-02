@@ -160,6 +160,8 @@ def test_unknown_job_reports_failure_rather_than_success():
 
     assert result["success"] is False
     assert "404" in result["error"]
+
+
 @requires_background_tools
 def test_job_list_finds_a_running_job_without_being_told_its_id(background_job):
     """The recovery path. Every _call here is a fresh MCP process, so the id
