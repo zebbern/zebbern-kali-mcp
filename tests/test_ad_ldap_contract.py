@@ -111,7 +111,7 @@ def test_ldap_enum_starttls_certificate_verification_stays_enabled_by_default(tm
     assert "-o" not in command
 
 
-def test_ldap_enum_marks_failed_custom_query_and_redacts_stderr(tmp_path, monkeypatch):
+def test_ldap_enum_marks_failed_custom_query_and_reports_stderr_verbatim(tmp_path, monkeypatch):
     def fake_run(command, **_kwargs):
         ldap_filter = command[command.index("-b") + 2]
         if ldap_filter == FILTER:
@@ -136,8 +136,8 @@ def test_ldap_enum_marks_failed_custom_query_and_redacts_stderr(tmp_path, monkey
     assert result["success"] is False
     assert custom["filter"] == FILTER
     assert custom["returncode"] == 49
-    assert custom["stderr"] == "invalid credentials for [REDACTED]"
-    assert PASSWORD not in str(result)
+    assert custom["stderr"] == f"invalid credentials for {PASSWORD}"
+    assert PASSWORD in str(result)
     assert result["queries"]["users"]["count"] == 1
 
 

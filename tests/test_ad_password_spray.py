@@ -13,7 +13,7 @@ if str(BACKEND_ROOT) not in sys.path:
 from core.ad_tools import ADTools
 
 
-def test_netexec_password_spray_uses_password_without_returning_it(tmp_path, monkeypatch):
+def test_netexec_password_spray_reports_tool_output_verbatim(tmp_path, monkeypatch):
     password = "SpraySecret!42"
     userlist = tmp_path / "users.txt"
     userlist.write_text("alice\n", encoding="utf-8")
@@ -46,12 +46,14 @@ def test_netexec_password_spray_uses_password_without_returning_it(tmp_path, mon
     assert result["users_tested"] == 1
     assert result["valid_credentials"] == [
         {
-            "line": "SMB 10.0.0.10 alice:[REDACTED] [+] authenticated",
+            "line": f"SMB 10.0.0.10 alice:{password} [+] authenticated",
             "success": True,
         }
     ]
-    assert "password" not in result
-    assert password not in json.dumps(result)
+    # The tool's own output comes back untouched. Rewriting it would hide the
+    # operator's credential from the operator, and a blind string replace over
+    # stdout can corrupt unrelated output that happens to contain the same text.
+    assert password in json.dumps(result)
 
 
 def test_smb_fallback_password_spray_returns_identity_without_password(tmp_path, monkeypatch):
