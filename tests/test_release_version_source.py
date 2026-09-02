@@ -108,6 +108,24 @@ def test_backend_version_tracks_pyproject():
     assert _config_version() == declared_version()
 
 
+def test_integration_gate_asserts_the_image_reports_the_declared_version():
+    """A digest pin can go stale while still passing every other check.
+
+    The tool surface is identical across releases, so --expect-variant and
+    --check-trim both pass against an image built from older source. Only a
+    version assertion catches the drift, and only if the workflow actually
+    derives the expected version from this checkout and passes it through.
+    """
+    workflow = INTEGRATION_WORKFLOW.read_text(encoding="utf-8")
+
+    assert re.search(
+        r"declared-version", workflow
+    ), "integration.yml must derive the expected version from the checkout"
+    assert "--expect-version" in workflow, (
+        "run_smoke.py is not told which version the image must report, so a stale digest passes the gate"
+    )
+
+
 def test_integration_gate_pins_an_image_digest():
     """The gate must test a reproducible, immutable image, never a floating tag."""
     workflow = INTEGRATION_WORKFLOW.read_text(encoding="utf-8")

@@ -9,7 +9,7 @@ import select
 import uuid
 from typing import Dict, Any
 from .config import logger
-from .logging_utils import redact_command
+from .logging_utils import render_command
 
 
 class SSHSessionManager:
@@ -157,7 +157,7 @@ class SSHSessionManager:
         try:
             # Redact before truncating so a truncated flag/value pair cannot
             # bypass credential detection.
-            command_metadata = redact_command(command)
+            command_metadata = render_command(command)
             if len(command_metadata) > 100:
                 log_command = f"{command_metadata[:50]}...{command_metadata[-20:]}"
             else:

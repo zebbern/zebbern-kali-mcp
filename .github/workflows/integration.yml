@@ -77,11 +77,17 @@ jobs:
 
       - name: Container smoke with trim-profile assertion
         run: |
+          # Assert the pinned digest reports the version the tree declares.
+          # The pin is hand-maintained and has drifted three times; without
+          # this the gate happily certifies a stale image, since an older
+          # build has the same tool surface and passes every other check.
+          VERSION="$(python .github/scripts/verify_release_artifacts.py declared-version)"
           python tests/integration/run_smoke.py \
             --image "$IMAGE" \
             --network-mode bridge \
             --expect-variant full \
-            --check-trim
+            --check-trim \
+            --expect-version "$VERSION"
 
       - name: Start a backend for the live suite
         env:

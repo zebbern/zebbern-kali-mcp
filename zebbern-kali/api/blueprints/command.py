@@ -8,7 +8,7 @@ from flask import Blueprint, request, jsonify, Response, stream_with_context
 from core.config import logger
 from core.command_executor import execute_command, stream_command_execution
 from core.job_manager import job_manager
-from core.logging_utils import redact_command
+from core.logging_utils import render_command
 
 bp = Blueprint("command", __name__)
 
@@ -131,7 +131,7 @@ def unrestricted_exec():
                 "stdout": result.stdout,
                 "stderr": result.stderr,
                 "return_code": result.returncode,
-                "command": redact_command(command),
+                "command": render_command(command),
                 "execution_time": round(execution_time, 2),
                 "timed_out": False,
             })
@@ -140,7 +140,7 @@ def unrestricted_exec():
             return jsonify({
                 "success": False,
                 "error": f"Command timed out after {timeout} seconds",
-                "command": redact_command(command),
+                "command": render_command(command),
                 "timed_out": True,
             })
 
