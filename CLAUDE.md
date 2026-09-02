@@ -172,17 +172,38 @@ Three things that look like bugs and are not:
 - **The tools routes answer 200 with the job dict, not `/api/exec`'s 202.** That
   keeps route edits at zero and `safe_post` reads the JSON either way.
 
-Known and still open:
+**`api_nuclei_scan` and `api_ffuf_fuzz` auto-promote too, and they are not two
+of the fourteen.** They are `api_security` wrappers on `api/api-security/*`
+routes, not `tools_*` wrappers on `api/tools/*`, so they are deliberately
+**absent from `PROMOTED_TOOLS`** — that map, its guard and the "fourteen"
+sentences above are one self-consistent unit and adding these would make them
+false. `run_promotable` never reads the map (`heavy` and `background` are passed
+explicitly), so behaviour is unaffected; what does have to stay in step is their
+`TOOL_TIMEOUTS` tier, guarded by its own case in
+`tests/test_autopromote_tier_guard.py`.
 
-- **`api_nuclei_scan` posts to `/api/api-security/nuclei`**, a different route
-  with no background support. It can still orphan.
-- **`heavy_tool_post` still holds its semaphore slot for whatever read timeout
-  it is given.** Auto-promotion mostly dissolves this — the job-start POST
-  returns in milliseconds and polling uses `safe_get`, which never touches the
-  semaphore — and `run_promotable` bounds that POST at the inline budget so even
-  a backend that ignores `background` caps the hold at ~50s instead of 90000s.
-  What remains: any *other* caller of `heavy_tool_post` without `read_timeout`
-  is still unbounded.
+Their backend shape is why they needed their own answer. Both runners build an
+`output_file`, call `subprocess.run` directly rather than `execute_command`, and
+parse that file afterwards — backgrounded, the parse never runs. So each has a
+`background` branch that drops `-o` (and ffuf's `-of`) and lets the scanner's
+own structured output land on stdout: `nuclei -jsonl`, `ffuf -json`, both
+newline-delimited JSON, teed 100% to the job log like any other background job.
+Every other flag mirrors the synchronous branch, which is byte-for-byte
+unchanged and still the path a direct HTTP caller gets.
+
+That removed the last two tools that could orphan a scan, and the last
+unbounded `heavy_tool_post` caller. The only remaining `heavy_tool_post` call
+site is inside `run_promotable`, which always passes `read_timeout=budget`, so
+the semaphore hold is capped at ~50s even against a backend that ignores
+`background`. **Any new `heavy_tool_post` caller must pass a `read_timeout`** —
+without one it holds a slot out of five for the full 90000s client timeout.
+
+`api_kiterunner_scan` and `api_newman_run` are the other two `api_security`
+wrappers with no bound, and they cannot orphan for a reason that is not in the
+code: `kiterunner`, `kr` and `newman` are **not installed in the image**, so
+they fail immediately with "command not found". Install any of them and they
+need the same treatment — and newman needs a different answer, because its
+structured report goes to a `--reporter-json-export` file rather than stdout.
 
 The MSF chain is the exception to "smallest wins": `msf_session_execute` always
 puts `timeout` in the request body, so the route's `params.get("timeout", 14400)`
@@ -337,7 +358,7 @@ accepted cost of never dropping output.
 ## Tests
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q            # ~822 passed, 1 skipped
+.venv/Scripts/python.exe -m pytest -q            # ~834 passed, 1 skipped
 .venv/Scripts/python.exe -m pytest -m live -q    # 15, needs a backend on :5000
 python tests/integration/run_smoke.py --image <img> --expect-variant full --check-trim
 python tests/integration/probe_tools.py          # all 132 tools, needs a backend

@@ -167,7 +167,8 @@ def ffuf_fuzz():
             match_codes=params.get("match_codes", "200,201,204,301,302,307,401,403,405,500"),
             filter_codes=params.get("filter_codes", ""),
             rate=params.get("rate", 100),
-            additional_args=params.get("additional_args", "")
+            additional_args=params.get("additional_args", ""),
+            background=params.get("background", False),
         )
         return jsonify(result)
     except Exception as e:
@@ -236,7 +237,8 @@ def nuclei_api_scan():
             severity=params.get("severity", ""),
             tags=params.get("tags", "api"),
             rate_limit=params.get("rate_limit", 150),
-            additional_args=params.get("additional_args", "")
+            additional_args=params.get("additional_args", ""),
+            background=params.get("background", False),
         )
         return jsonify(result)
     except Exception as e:

@@ -70,7 +70,26 @@ def test_rate_limit_wrapper_uses_backend_requests_count_field():
     ]
 
 
-def test_ffuf_wrapper_uses_backend_match_codes_field():
+def promotion_recorder(monkeypatch):
+    """Record what the wrappers hand to run_promotable.
+
+    The two scanners that could still orphan a scan go through the same
+    auto-promotion helper the heavy tools_* wrappers use, so the boundary worth
+    asserting is no longer the raw HTTP call -- it is the endpoint, payload,
+    semaphore group and background flag handed to the helper.
+    """
+    calls = []
+
+    def fake_run_promotable(client, endpoint, data, *, heavy, background):
+        calls.append((endpoint, data, heavy, background))
+        return {"success": True, "auto_promoted": True, "job_id": "job-recorded"}
+
+    monkeypatch.setattr(api_security, "run_promotable", fake_run_promotable)
+    return calls
+
+
+def test_ffuf_wrapper_uses_backend_match_codes_field(monkeypatch):
+    calls = promotion_recorder(monkeypatch)
     tools, client = registered_api_security_tools()
 
     tools["api_ffuf_fuzz"](
@@ -82,9 +101,8 @@ def test_ffuf_wrapper_uses_backend_match_codes_field():
         "name=FUZZ",
     )
 
-    assert client.calls == [
+    assert calls == [
         (
-            "safe_post",
             "api/api-security/ffuf",
             {
                 "url": "https://example.test/FUZZ",
@@ -94,8 +112,20 @@ def test_ffuf_wrapper_uses_backend_match_codes_field():
                 "headers": "X-Test: value",
                 "data": "name=FUZZ",
             },
+            False,
+            False,
         )
     ]
+    assert client.calls == [], "the wrapper posted around the promotion helper"
+
+
+def test_ffuf_wrapper_forwards_an_explicit_background_request(monkeypatch):
+    calls = promotion_recorder(monkeypatch)
+    tools, _ = registered_api_security_tools()
+
+    tools["api_ffuf_fuzz"]("https://example.test/FUZZ", background=True)
+
+    assert calls[0][3] is True, "background=True never reached the helper"
 
 
 def test_kiterunner_wrapper_uses_backend_target_field():
@@ -112,19 +142,31 @@ def test_kiterunner_wrapper_uses_backend_target_field():
     ]
 
 
-def test_nuclei_wrapper_uses_backend_target_field():
+def test_nuclei_wrapper_uses_backend_target_field(monkeypatch):
+    calls = promotion_recorder(monkeypatch)
     tools, client = registered_api_security_tools()
 
     tools["api_nuclei_scan"]("https://api.example.test", tags="exposure", severity="high")
 
-    assert client.calls == [
+    assert calls == [
         (
-            "heavy_tool_post",
             "api/api-security/nuclei",
             {
                 "target": "https://api.example.test",
                 "tags": "exposure",
                 "severity": "high",
             },
+            True,
+            False,
         )
     ]
+    assert client.calls == [], "the wrapper posted around the promotion helper"
+
+
+def test_nuclei_wrapper_forwards_an_explicit_background_request(monkeypatch):
+    calls = promotion_recorder(monkeypatch)
+    tools, _ = registered_api_security_tools()
+
+    tools["api_nuclei_scan"]("https://api.example.test", background=True)
+
+    assert calls[0][3] is True, "background=True never reached the helper"

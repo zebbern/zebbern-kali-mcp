@@ -23,8 +23,34 @@ from urllib.parse import urljoin, urlparse, parse_qs
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .logging_utils import render_command
 from .tool_config import get_tool_timeout
+from .command_executor import execute_command_argv
 
 logger = logging.getLogger(__name__)
+
+
+def header_pairs(headers) -> List[tuple]:
+    """Normalise a headers argument into (key, value) pairs.
+
+    ffuf_fuzz is annotated ``Dict[str, str]`` and only ever called
+    ``headers.items()``, but the MCP wrapper declares ``headers: str`` and
+    documents "key:value pairs, comma-separated" -- so every documented use
+    raised AttributeError into the broad except and came back as a generic
+    failure. Accept both rather than breaking whichever caller loses.
+    """
+    if not headers:
+        return []
+    if isinstance(headers, dict):
+        return list(headers.items())
+    pairs = []
+    for chunk in str(headers).split(","):
+        if ":" not in chunk:
+            continue
+        key, value = chunk.split(":", 1)
+        key = key.strip()
+        if key:
+            pairs.append((key, value.strip()))
+    return pairs
+
 
 # Suppress SSL warnings
 import urllib3
@@ -986,7 +1012,8 @@ class APISecurityTester:
                   method: str = "GET", data: str = "", headers: Dict[str, str] = None,
                   match_codes: str = "200,201,204,301,302,307,401,403,405,500",
                   filter_codes: str = "", rate: int = 100,
-                  additional_args: str = "") -> Dict[str, Any]:
+                  additional_args: str = "",
+                  background: bool = False) -> Dict[str, Any]:
         """
         Fuzz API endpoints using FFUF.
         Use FUZZ keyword in URL, data, or headers for fuzzing position.
@@ -1001,11 +1028,38 @@ class APISecurityTester:
             filter_codes: Status codes to filter out
             rate: Requests per second
             additional_args: Additional FFUF arguments
+            background: Hand the fuzz to job_manager and return a job handle.
+                Swaps -o/-of for -json so ffuf's newline-delimited JSON records
+                land on stdout, where the job log tees 100% of them -- a
+                background job returns before the parse below could ever run.
 
         Returns:
             Fuzzing results with discovered endpoints
         """
         try:
+            if background:
+                cmd = [
+                    "ffuf",
+                    "-u", url,
+                    "-w", wordlist,
+                    "-X", method,
+                    "-mc", match_codes,
+                    "-rate", str(rate),
+                    "-json",
+                    "-timeout", "10",
+                ]
+                if filter_codes:
+                    cmd.extend(["-fc", filter_codes])
+                if data:
+                    cmd.extend(["-d", data])
+                for k, v in header_pairs(headers):
+                    cmd.extend(["-H", f"{k}: {v}"])
+                if additional_args:
+                    cmd.extend(additional_args.split())
+                return execute_command_argv(
+                    cmd, background=True, timeout=get_tool_timeout("ffuf")
+                )
+
             output_file = os.path.join(
                 self.output_dir, "fuzz",
                 f"ffuf_{urlparse(url).netloc}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -1029,9 +1083,8 @@ class APISecurityTester:
             if data:
                 cmd.extend(["-d", data])
 
-            if headers:
-                for k, v in headers.items():
-                    cmd.extend(["-H", f"{k}: {v}"])
+            for k, v in header_pairs(headers):
+                cmd.extend(["-H", f"{k}: {v}"])
 
             if additional_args:
                 cmd.extend(additional_args.split())
@@ -1229,7 +1282,8 @@ class APISecurityTester:
     def nuclei_api_scan(self, target: str, templates: str = "",
                         severity: str = "", tags: str = "api",
                         rate_limit: int = 150,
-                        additional_args: str = "") -> Dict[str, Any]:
+                        additional_args: str = "",
+                        background: bool = False) -> Dict[str, Any]:
         """
         Scan API with Nuclei templates.
 
@@ -1240,11 +1294,36 @@ class APISecurityTester:
             tags: Template tags to include (default: api)
             rate_limit: Requests per second
             additional_args: Additional Nuclei arguments
+            background: Hand the scan to job_manager and return a job handle.
+                Drops -o so nuclei's JSONL findings land on stdout, where the
+                job log tees 100% of them -- a background job returns before
+                the parse below could ever run.
 
         Returns:
             Vulnerabilities discovered
         """
         try:
+            if background:
+                cmd = [
+                    "nuclei",
+                    "-u", target,
+                    "-jsonl",
+                    "-rate-limit", str(rate_limit),
+                    "-timeout", "10",
+                    "-retries", "1",
+                ]
+                if templates:
+                    cmd.extend(["-t", templates])
+                elif tags:
+                    cmd.extend(["-tags", tags])
+                if severity:
+                    cmd.extend(["-severity", severity])
+                if additional_args:
+                    cmd.extend(additional_args.split())
+                return execute_command_argv(
+                    cmd, background=True, timeout=get_tool_timeout("nuclei")
+                )
+
             output_file = os.path.join(
                 self.output_dir, "nuclei",
                 f"nuclei_{urlparse(target).netloc}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
