@@ -462,3 +462,50 @@ def test_invalid_environment_exclusion_is_rejected_before_startup(monkeypatch):
 
     with pytest.raises(ValueError, match="Unknown MCP tool module"):
         mcp_server.build_parser()
+
+
+def over_hiding_health(count: int = 80):
+    """A structurally valid manifest that marks ``count`` real non-core tools down.
+
+    Uses real registered names so nothing is silently ignored as unknown, and
+    stays clear of the core floor so the count that reaches the threshold check
+    is exactly ``count``.
+    """
+    hidden = sorted(registered_names("full") - registered_names("core"))[:count]
+    return {
+        "capabilities": {
+            "schema_version": 1,
+            "mcp_tools": {
+                name: {"available": False, "missing": ["everything"]}
+                for name in hidden
+            },
+        }
+    }
+
+
+def test_auto_profile_fails_open_when_manifest_hides_an_implausible_fraction():
+    """A manifest hiding most of the surface is a backend bug, not reality.
+
+    Discovery is a startup snapshot, so over-hiding is the unrecoverable
+    direction: the tools stay invisible for the life of the process.
+    """
+    assert registered_names("auto", over_hiding_health()) == registered_names("full")
+
+
+def test_auto_profile_warns_when_it_fails_open_on_over_hiding(caplog):
+    with caplog.at_level(logging.WARNING, logger="mcp_tools"):
+        registered_names("auto", over_hiding_health())
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert len(messages) == 1
+    assert "unavailable" in messages[0] and "registering the full tool set" in messages[0]
+    # Distinct from the malformed/unknown-manifest branch: this manifest parsed.
+    assert "Auto capability discovery unavailable" not in messages[0]
+
+
+def test_auto_profile_still_filters_below_the_over_hiding_threshold(caplog):
+    with caplog.at_level(logging.WARNING, logger="mcp_tools"):
+        tools = registered_names("auto", lean_health())
+
+    assert registered_names("full") - tools == UNAVAILABLE_LEAN
+    assert caplog.records == []
