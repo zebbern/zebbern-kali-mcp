@@ -173,6 +173,18 @@ def _job_not_found(job_id):
     }), 404
 
 
+@bp.route("/api/jobs", methods=["GET"])
+def list_jobs():
+    """List every background job this server still tracks, newest first.
+
+    /api/jobs/<job_id> can only answer about an id the caller already holds, so
+    without this a job_id lost to a context compaction was an unrecoverable
+    running scan.
+    """
+    jobs = job_manager.list()
+    return jsonify({"jobs": jobs, "count": len(jobs)})
+
+
 @bp.route("/api/jobs/<job_id>", methods=["GET"])
 def get_job(job_id):
     """Return the current state of a background command job."""

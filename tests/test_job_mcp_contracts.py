@@ -121,3 +121,16 @@ def test_streaming_exec_uses_the_redirect_safe_client_request():
         "stream": True,
         "timeout": (10, 45),
     }]
+
+
+def test_job_list_reads_the_jobs_index():
+    """How an agent gets back to work it started. job_status needs a job_id it
+    already holds; after a context compaction, or when it is simply unsure
+    whether a scan is still running, this is the only way to find one."""
+    tools, _client = registered_tools()
+
+    assert tools["job_list"]() == {
+        "method": "GET",
+        "endpoint": "api/jobs",
+        "params": {},
+    }

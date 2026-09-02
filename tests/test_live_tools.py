@@ -80,6 +80,19 @@ requires_truncation_contract = pytest.mark.skipif(
     ),
 )
 
+# Same reasoning for background execution on the tools_* routes: the flag is
+# honoured in the image, so against the pinned digest these skip until the gate
+# is re-pinned rather than failing for the window in between.
+BACKGROUND_TOOLS_CONTRACT_VERSION = (1, 0, 9)
+
+requires_background_tools = pytest.mark.skipif(
+    _backend_version() < BACKGROUND_TOOLS_CONTRACT_VERSION,
+    reason=(
+        "backend predates background execution on the tool routes "
+        f"({'.'.join(str(p) for p in BACKGROUND_TOOLS_CONTRACT_VERSION)})"
+    ),
+)
+
 
 pytestmark = [
     pytest.mark.live,
@@ -147,6 +160,26 @@ def test_unknown_job_reports_failure_rather_than_success():
 
     assert result["success"] is False
     assert "404" in result["error"]
+
+
+@requires_background_tools
+def test_job_list_finds_a_running_job_without_being_told_its_id(background_job):
+    """The recovery path. Every _call here is a fresh MCP process, so the id
+    comes back from the server rather than from anything the client remembered
+    -- which is exactly the position an agent is in after a compaction."""
+    listed = _call("job_list")
+
+    assert listed["count"] >= 1
+    entry = next(
+        (job for job in listed["jobs"] if job["job_id"] == background_job), None
+    )
+    assert entry is not None, f"{background_job} missing from {listed!r}"
+    assert entry["status"] in {"queued", "running"}
+    assert "output" not in entry
+
+    cancelled = _call("job_cancel", job_id=entry["job_id"])
+    assert cancelled["success"] is True
+
 
 
 def test_hosts_entries_round_trip_across_processes():
@@ -276,3 +309,87 @@ def test_msf_session_execute_distinguishes_truncation_from_completion():
         assert result["success"] is True
     finally:
         _call("msf_session_destroy", session_id=session_id)
+
+
+# ---------------------------------------------------------------------------
+# Background execution on the tool routes.
+#
+# This is the only test that proves the orphan bug is actually fixed. Every
+# other guard on the feature is contract-level: they show the flag is shaped and
+# forwarded, not that a scan survives past the point where a synchronous call
+# would have been abandoned with its subprocess still running.
+# ---------------------------------------------------------------------------
+
+
+def _wait_for_terminal(job_id: str, timeout: float = 180):
+    deadline = time.monotonic() + timeout
+    status = None
+    while time.monotonic() < deadline:
+        status = _call("job_status", job_id=job_id)
+        if status.get("status") not in {"queued", "running"}:
+            return status
+        time.sleep(2)
+    pytest.fail(f"job {job_id} never left running: {status!r}")
+
+
+@requires_background_tools
+def test_a_backgrounded_scan_returns_a_job_handle_and_finishes_out_of_band():
+    """A synchronous tools_nmap answers with stdout and a return_code once the
+    scan is done. Backgrounded it must answer with a job handle before the scan
+    has run at all -- that is the whole point, because the MCP harness abandons
+    the synchronous call at roughly 60s and the scan then runs on unreachable."""
+    start = time.monotonic()
+    started = _call(
+        "tools_nmap",
+        target="127.0.0.1",
+        ports="1-1024",
+        scan_type="-sT -Pn",
+        background=True,
+    )
+    elapsed = time.monotonic() - start
+
+    assert started["background"] is True
+    job_id = started["job_id"]
+    assert started["status"] in {"queued", "running"}
+    assert "stdout" not in started, f"ran synchronously after all: {started!r}"
+    # ~1.2s of that is spawning the MCP process; the scan itself is still going.
+    assert elapsed < 5, f"took {elapsed:.1f}s, which is not 'returns immediately'"
+
+    try:
+        finished = _wait_for_terminal(job_id)
+        assert finished["status"] in {"succeeded", "failed", "timed_out"}
+        assert finished["finished_at"] is not None
+
+        output = _call("job_output", job_id=job_id, lines=200)
+        assert output["lines_returned"] > 0
+        assert "Nmap" in output["output"], output["output"][:400]
+    finally:
+        _call("job_cancel", job_id=job_id)
+
+
+@requires_background_tools
+def test_a_backgrounded_scan_can_be_cancelled_rather_than_orphaned():
+    """The handle is only worth having if it can stop the work. A synchronous
+    call the harness gives up on leaves nothing to cancel with."""
+    started = _call(
+        "tools_nmap",
+        target="127.0.0.1",
+        ports="1-65535",
+        scan_type="-sT -Pn",
+        additional_args="-T2",
+        background=True,
+    )
+    job_id = started["job_id"]
+
+    cancelled = _call("job_cancel", job_id=job_id)
+    assert cancelled["success"] is True
+
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        status = _call("job_status", job_id=job_id)
+        if status["status"] != "running":
+            break
+        time.sleep(1)
+
+    assert status["status"] != "running"
+    assert status["finished_at"] is not None

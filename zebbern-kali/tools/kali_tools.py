@@ -26,6 +26,7 @@ def run_nmap(params: Dict[str, Any]) -> Dict[str, Any]:
         scan_type = params.get("scan_type", "-sCV")
         ports = params.get("ports", "")
         additional_args = params.get("additional_args", "") or "-T4 -Pn"
+        background = params.get("background", False)
 
         if not target:
             logger.warning("Nmap called without target parameter")
@@ -44,7 +45,7 @@ def run_nmap(params: Dict[str, Any]) -> Dict[str, Any]:
 
         command += f" {target}"
 
-        result = execute_command(command)
+        result = execute_command(command, background=background)
         return result
     except Exception as e:
         logger.error(f"Error in nmap: {str(e)}")
@@ -65,6 +66,7 @@ def run_gobuster(params: Dict[str, Any], on_output=None) -> Dict[str, Any]:
         threads = params.get("threads", 10)
         extensions = params.get("extensions", "")
         status_codes = params.get("status_codes", "")
+        background = params.get("background", False)
 
         if not url:
             logger.warning("Gobuster called without URL parameter")
@@ -101,7 +103,7 @@ def run_gobuster(params: Dict[str, Any], on_output=None) -> Dict[str, Any]:
             output_callback = handle_gobuster_output
 
         # Execute with streaming support (gobuster will be detected as a streaming tool)
-        result = execute_command(command, on_output=output_callback)
+        result = execute_command(command, on_output=output_callback, background=background)
         return result
     except Exception as e:
         logger.error(f"Error in gobuster: {str(e)}")
@@ -128,6 +130,7 @@ def run_fierce(params: Dict[str, Any]) -> Dict[str, Any]:
         dns_server = params.get("dns_server", "")
         wordlist = params.get("wordlist", "")
         additional_args = params.get("additional_args", "")
+        background = params.get("background", False)
 
         if not domain:
             logger.warning("Fierce called without domain parameter")
@@ -147,7 +150,7 @@ def run_fierce(params: Dict[str, Any]) -> Dict[str, Any]:
         if additional_args:
             command += f" {additional_args}"
 
-        result = execute_command(command)
+        result = execute_command(command, background=background)
         return result
     except Exception as e:
         logger.error(f"Error in fierce: {str(e)}")
@@ -181,6 +184,7 @@ def run_nikto(params: Dict[str, Any], on_output=None) -> Dict[str, Any]:
         additional_args = params.get("additional_args", "")
         tuning = params.get("tuning", "")
         output_format = params.get("output_format", "")
+        background = params.get("background", False)
 
         if not target:
             logger.warning("Nikto called without target parameter")
@@ -206,7 +210,7 @@ def run_nikto(params: Dict[str, Any], on_output=None) -> Dict[str, Any]:
                 logger.info(f"[NIKTO-{source.upper()}] {line}")
             output_callback = handle_nikto_output
 
-        result = execute_command(command, on_output=output_callback)
+        result = execute_command(command, on_output=output_callback, background=background)
         return result
     except Exception as e:
         logger.error(f"Error in nikto: {str(e)}")
@@ -229,6 +233,7 @@ def run_sqlmap(params: Dict[str, Any]) -> Dict[str, Any]:
         dbs = params.get("dbs", False)
         tables = params.get("tables", False)
         dump = params.get("dump", False)
+        background = params.get("background", False)
 
         if not url:
             logger.warning("SQLmap called without URL parameter")
@@ -261,7 +266,7 @@ def run_sqlmap(params: Dict[str, Any]) -> Dict[str, Any]:
         if additional_args:
             command += f" {additional_args}"
 
-        result = execute_command(command)
+        result = execute_command(command, background=background)
         return result
     except Exception as e:
         logger.error(f"Error in sqlmap: {str(e)}")
@@ -330,6 +335,7 @@ def run_hydra(params: Dict[str, Any]) -> Dict[str, Any]:
         tasks = params.get("tasks")
         wait = params.get("wait")
         additional_args = params.get("additional_args", "")
+        background = params.get("background", False)
 
         if not target or not service:
             logger.warning("Hydra called without target or service parameter")
@@ -368,7 +374,7 @@ def run_hydra(params: Dict[str, Any]) -> Dict[str, Any]:
 
         command += f" {target} {service}"
 
-        result = execute_command(command)
+        result = execute_command(command, background=background)
         return result
     except Exception as e:
         logger.error(f"Error in hydra: {str(e)}")
@@ -386,6 +392,7 @@ def run_john(params: Dict[str, Any]) -> Dict[str, Any]:
         wordlist = params.get("wordlist", "")
         format_type = params.get("format_type", "")
         additional_args = params.get("additional_args", "")
+        background = params.get("background", False)
 
         if not hash_file:
             logger.warning("John called without hash_file parameter")
@@ -405,7 +412,7 @@ def run_john(params: Dict[str, Any]) -> Dict[str, Any]:
         if additional_args:
             command += f" {additional_args}"
 
-        result = execute_command(command)
+        result = execute_command(command, background=background)
         return result
     except Exception as e:
         logger.error(f"Error in john: {str(e)}")
@@ -424,6 +431,7 @@ def run_wpscan(params: Dict[str, Any]) -> Dict[str, Any]:
         api_token = params.get("api_token", "")
         enumerate_opt = params.get("enumerate", "")
         output_format = params.get("output_format", "")
+        background = params.get("background", False)
 
         if not url:
             logger.warning("WPScan called without URL parameter")
@@ -447,7 +455,7 @@ def run_wpscan(params: Dict[str, Any]) -> Dict[str, Any]:
         if additional_args:
             command += f" {additional_args}"
 
-        result = execute_command(command)
+        result = execute_command(command, background=background)
         return result
     except Exception as e:
         logger.error(f"Error in wpscan: {str(e)}")
@@ -463,6 +471,7 @@ def run_enum4linux(params: Dict[str, Any]) -> Dict[str, Any]:
     try:
         target = params.get("target", "")
         additional_args = params.get("additional_args", "-a")
+        background = params.get("background", False)
 
         if not target:
             logger.warning("Enum4linux called without target parameter")
@@ -473,7 +482,7 @@ def run_enum4linux(params: Dict[str, Any]) -> Dict[str, Any]:
 
         command = f"enum4linux {additional_args} {target}"
 
-        result = execute_command(command)
+        result = execute_command(command, background=background)
         return result
     except Exception as e:
         logger.error(f"Error in enum4linux: {str(e)}")
@@ -490,6 +499,7 @@ def run_byp4xx(params: Dict[str, Any]) -> Dict[str, Any]:
     verbose = params.get("verbose", False)
     threads = params.get("threads", "")
     rate = params.get("rate", "5")
+    background = params.get("background", False)
     if not url:
         return {"error": "url parameter is required", "success": False}
 
@@ -508,13 +518,14 @@ def run_byp4xx(params: Dict[str, Any]) -> Dict[str, Any]:
         argv += shlex.split(additional_args)
     argv.append(url)
 
-    return execute_command_argv(argv)
+    return execute_command_argv(argv, background=background)
 
 
 def run_subfinder(params: Dict[str, Any]) -> Dict[str, Any]:
     """Execute Subfinder for subdomain enumeration."""
     target = params.get('target')
     additional_args = params.get('additional_args', '')
+    background = params.get('background', False)
 
     if not target:
         return {'success': False, 'error': 'target parameter is required'}
@@ -523,12 +534,13 @@ def run_subfinder(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         command += f" {additional_args}"
 
-    return execute_command(command)
+    return execute_command(command, background=background)
 
 def run_httpx(params: Dict[str, Any]) -> Dict[str, Any]:
     """Execute ProjectDiscovery httpx (probing)."""
     target = params.get('target')
     additional_args = params.get('additional_args', '')
+    background = params.get('background', False)
     if not target:
         return {'success': False, 'error': 'target parameter is required'}
 
@@ -546,13 +558,14 @@ def run_httpx(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         argv += shlex.split(additional_args)
 
-    return execute_command_argv(argv)
+    return execute_command_argv(argv, background=background)
 
 
 def run_searchsploit(params: Dict[str, Any]) -> Dict[str, Any]:
     """Execute searchsploit for exploit database search."""
     query = params.get('query')
     additional_args = params.get('additional_args', '')
+    background = params.get('background', False)
 
     if not query:
         return {'success': False, 'error': 'query parameter is required'}
@@ -561,7 +574,7 @@ def run_searchsploit(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         command += f" {additional_args}"
 
-    return execute_command(command)
+    return execute_command(command, background=background)
 
 def run_nuclei(params: Dict[str, Any]) -> Dict[str, Any]:
     """Execute Nuclei with safer defaults and correct flags."""
@@ -569,6 +582,7 @@ def run_nuclei(params: Dict[str, Any]) -> Dict[str, Any]:
     templates = params.get('templates', '') # optional template path(s)
     severity = params.get('severity', '')   # e.g., critical,high,medium
     additional_args = params.get('additional_args', '')
+    background = params.get('background', False)
 
     if not target:
         return {'success': False, 'error': 'target parameter is required'}
@@ -596,7 +610,7 @@ def run_nuclei(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         argv += shlex.split(additional_args)
 
-    return execute_command_argv(argv)
+    return execute_command_argv(argv, background=background)
 
 
 def run_arjun(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -609,6 +623,7 @@ def run_arjun(params: Dict[str, Any]) -> Dict[str, Any]:
     threads = params.get('threads', 0)
     include = params.get('include', '')
     exclude = params.get('exclude', '')
+    background = params.get('background', False)
 
     if not url:
         return {'success': False, 'error': 'url parameter is required'}
@@ -633,13 +648,14 @@ def run_arjun(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         command += f" {additional_args}"
 
-    return execute_command(command)
+    return execute_command(command, background=background)
 
 def run_subzy(params: Dict[str, Any]) -> Dict[str, Any]:
     """Execute Subzy for subdomain takeover detection."""
     target = params.get('target')
     targets_file = params.get('targets_file')
     additional_args = params.get('additional_args', '')
+    background = params.get('background', False)
 
     if not target and not targets_file:
         return {'success': False, 'error': 'Either target or targets_file parameter is required'}
@@ -660,10 +676,14 @@ def run_subzy(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         command += f" {additional_args}"
 
-    result = execute_command(command)
+    result = execute_command(command, background=background)
 
-    # Cleanup temp file if created
-    if target:
+    # Cleanup temp file if created. A backgrounded run returns the moment the
+    # job is registered, so the scan has not read this file yet -- unlinking
+    # here deletes its target list out from under it and subzy finds nothing.
+    # The few bytes left in the system temp dir are deliberate; the OS temp
+    # reaper collects them.
+    if target and not background:
         import os
         try:
             os.unlink(temp_file)
@@ -677,6 +697,7 @@ def run_assetfinder(params: Dict[str, Any]) -> Dict[str, Any]:
     domain = params.get('domain')
     subs_only = params.get('subs_only', True)
     additional_args = params.get('additional_args', '')
+    background = params.get('background', False)
 
     if not domain:
         return {'success': False, 'error': 'domain parameter is required'}
@@ -692,12 +713,13 @@ def run_assetfinder(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         command += f" {additional_args}"
 
-    return execute_command(command)
+    return execute_command(command, background=background)
 
 def run_waybackurls(params: Dict[str, Any]) -> Dict[str, Any]:
     """Execute waybackurls to fetch URLs from Wayback Machine."""
     domain = params.get('domain')
     additional_args = params.get('additional_args', '')
+    background = params.get('background', False)
 
     if not domain:
         return {'success': False, 'error': 'domain parameter is required'}
@@ -710,7 +732,7 @@ def run_waybackurls(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         command += f" {additional_args}"
 
-    return execute_command(command)
+    return execute_command(command, background=background)
 
 
 def run_masscan(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -719,6 +741,7 @@ def run_masscan(params: Dict[str, Any]) -> Dict[str, Any]:
     ports = params.get('ports', '1-65535')
     rate = params.get('rate', 1000)
     additional_args = params.get('additional_args', '')
+    background = params.get('background', False)
 
     if not target:
         return {'success': False, 'error': 'target parameter is required'}
@@ -729,7 +752,7 @@ def run_masscan(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         argv += shlex.split(additional_args)
 
-    return execute_command_argv(argv)
+    return execute_command_argv(argv, background=background)
 
 
 def run_katana(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -739,6 +762,7 @@ def run_katana(params: Dict[str, Any]) -> Dict[str, Any]:
     js_crawl = params.get('js_crawl', True)
     scope = params.get('scope', '')
     additional_args = params.get('additional_args', '')
+    background = params.get('background', False)
 
     if not url:
         return {'success': False, 'error': 'url parameter is required'}
@@ -756,7 +780,7 @@ def run_katana(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         argv += shlex.split(additional_args)
 
-    return execute_command_argv(argv)
+    return execute_command_argv(argv, background=background)
 
 
 def run_sslscan(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -764,6 +788,7 @@ def run_sslscan(params: Dict[str, Any]) -> Dict[str, Any]:
     target = params.get('target', '')
     port = params.get('port', 443)
     additional_args = params.get('additional_args', '')
+    background = params.get('background', False)
 
     if not target:
         return {'success': False, 'error': 'target parameter is required'}
@@ -777,7 +802,7 @@ def run_sslscan(params: Dict[str, Any]) -> Dict[str, Any]:
     host_target = f"{target}:{port}" if port != 443 else target
     argv.append(host_target)
 
-    return execute_command_argv(argv)
+    return execute_command_argv(argv, background=background)
 
 
 def run_crtsh(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -838,6 +863,7 @@ def run_gowitness(params: Dict[str, Any]) -> Dict[str, Any]:
     threads = params.get('threads', 4)
     resolution = params.get('resolution', '1280x720')
     additional_args = params.get('additional_args', '')
+    background = params.get('background', False)
 
     if not url:
         return {'success': False, 'error': 'url parameter is required'}
@@ -859,7 +885,7 @@ def run_gowitness(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         argv += shlex.split(additional_args)
 
-    return execute_command_argv(argv)
+    return execute_command_argv(argv, background=background)
 
 
 def run_amass(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -867,6 +893,7 @@ def run_amass(params: Dict[str, Any]) -> Dict[str, Any]:
     domain = params.get('domain', '')
     mode = params.get('mode', 'passive')
     additional_args = params.get('additional_args', '')
+    background = params.get('background', False)
 
     if not domain:
         return {'success': False, 'error': 'domain parameter is required'}
@@ -885,7 +912,7 @@ def run_amass(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         argv += shlex.split(additional_args)
 
-    return execute_command_argv(argv)
+    return execute_command_argv(argv, background=background)
 
 
 def run_cve_search(params: Dict[str, Any]) -> Dict[str, Any]:

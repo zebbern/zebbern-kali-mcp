@@ -29,6 +29,7 @@ CASES = [
     ("system_network_info", {}),
     ("zebbern_exec", {"command": "echo probe-ok", "timeout": 20}),
     ("exec_stream", {"command": "echo stream-ok", "timeout": 20}),
+    ("job_list", {}),
     ("job_status", {"job_id": "probe-missing"}),
     ("job_output", {"job_id": "probe-missing"}),
     ("job_cancel", {"job_id": "probe-missing"}),

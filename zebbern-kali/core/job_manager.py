@@ -198,6 +198,20 @@ class JobManager:
         with self._condition:
             return self._metadata(self._require_job(job_id))
 
+    def list(self) -> list[dict[str, Any]]:
+        """Return the same per-job summary ``get`` returns, newest first.
+
+        Deliberately without output: max_jobs is 256 and each job can hold
+        megabytes, so a listing that carried it would make "which of my scans
+        are still running" an expensive question. ``read_output`` is where
+        output comes from.
+        """
+        with self._condition:
+            jobs = sorted(
+                self._jobs.values(), key=lambda job: job.created_at, reverse=True
+            )
+            return [self._metadata(job) for job in jobs]
+
     def read_output(
         self,
         job_id: str,

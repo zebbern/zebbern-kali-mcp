@@ -154,6 +154,22 @@ def register(mcp: FastMCP, kali_client) -> None:
         return kali_client.check_health()
 
     @mcp.tool()
+    def job_list() -> Dict[str, Any]:
+        """List every background job the Kali server still tracks, newest first.
+
+        Use this to get back to work you already started: job_status and
+        job_output both need a job_id you are still holding, so after a context
+        compaction -- or whenever you are simply unsure whether a scan you
+        launched is still running -- this is the only way to find one again.
+        Also the way to check what is running before starting something heavy.
+
+        Returns each job's id, status, pid, return_code and timestamps, without
+        its output; read that with job_output once you have the id. Jobs live in
+        server memory only, so a backend restart empties this list.
+        """
+        return kali_client.safe_get("api/jobs")
+
+    @mcp.tool()
     def job_status(job_id: str) -> Dict[str, Any]:
         """Return state and exit metadata for a background command job.
 
