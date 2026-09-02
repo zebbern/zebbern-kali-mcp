@@ -159,3 +159,36 @@ def test_the_live_layer_uses_the_same_pinned_image_as_the_smoke_layer():
         "the gate must pass its pinned digest to compose as ZKM_IMAGE, or the "
         "live layer runs against different bits than the smoke layer certified"
     )
+
+
+def test_the_gate_detects_a_pin_that_no_longer_matches_latest():
+    """The version assertion alone cannot catch same-version drift.
+
+    An image rebuilt without a version bump reports the version the tree
+    declares, so `--expect-version` passes while the gate certifies bits users
+    never receive. The digests have to be compared directly.
+    """
+    workflow = INTEGRATION_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "require_current_image" in workflow, "the gate takes no currency input"
+    assert "imagetools inspect" in workflow, "the gate never resolves what :latest serves"
+    assert 'PINNED="${IMAGE##*@}"' in workflow, "the gate never extracts the pinned digest"
+
+
+def test_a_release_refuses_a_stale_pin_but_a_pull_request_only_warns():
+    """Strict where it matters, advisory where it would be noise.
+
+    A release certifying an image other than the published one defeats the
+    gate. A pull request failing because an unrelated rebuild landed mid-review
+    would just train people to ignore it.
+    """
+    publish = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+    workflow = INTEGRATION_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "require_current_image: true" in publish, (
+        "the release path does not demand a current image, so a stale pin ships"
+    )
+    assert "default: false" in workflow, "pull requests would fail on unrelated drift"
+    assert "::warning::" in workflow and "::error::" in workflow, (
+        "the gate must distinguish the advisory case from the blocking one"
+    )

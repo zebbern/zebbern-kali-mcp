@@ -95,6 +95,10 @@ jobs:
       contents: read
       packages: read
     uses: ./.github/workflows/integration.yml
+    with:
+      # A release must certify the image users actually receive, so a pin left
+      # behind by a rebuild fails here rather than shipping unverified bits.
+      require_current_image: true
 
   gate:
     name: Revalidate artifact and PyPI absence

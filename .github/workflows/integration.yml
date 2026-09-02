@@ -7,6 +7,16 @@ name: Integration
 
 on:
   workflow_call:
+    inputs:
+      require_current_image:
+        description: >-
+          Fail if the pinned digest is not what :latest currently serves.
+          Releases set this: certifying an image other than the one users get
+          defeats the point of the gate. Pull requests leave it false, so a
+          rebuild landing mid-review reports the drift without failing work
+          that has nothing to do with it.
+        type: boolean
+        default: false
   workflow_dispatch:
   pull_request:
     paths:
@@ -30,7 +40,7 @@ env:
   # `docker buildx imagetools inspect <image>:<tag>` and take its top-level
   # Digest. A stale pin means the gate certifies an older image than the
   # published tag serves, so re-pin next to the version bump.
-  IMAGE: ghcr.io/zebbern/zebbern-kali-mcp@sha256:702896ecd60dd57cfe9497c36a943d1c7cf6e9f7b914955e27b9d01f5cdf1287
+  IMAGE: ghcr.io/zebbern/zebbern-kali-mcp@sha256:23aa8bf238df37e8d0cde80e7e58432c0b5b3ad1bba000072195aafe750d564a
 
 jobs:
   integration:
@@ -68,6 +78,31 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check the pinned digest still matches :latest
+        env:
+          REQUIRE_CURRENT: ${{ inputs.require_current_image && 'true' || 'false' }}
+        run: |
+          # The version assertion below only catches a pin left behind across a
+          # version bump. An image rebuilt without a bump has the same declared
+          # version, so drift within a version is invisible to it. Compare the
+          # digests directly to close that gap.
+          CURRENT="$(docker buildx imagetools inspect ghcr.io/zebbern/zebbern-kali-mcp:latest \
+            | awk '/^Digest:/ {print $2; exit}')"
+          PINNED="${IMAGE##*@}"
+          echo "pinned  : $PINNED"
+          echo ":latest : $CURRENT"
+          if [ "$PINNED" = "$CURRENT" ]; then
+            echo "pin is current"
+          elif [ "$REQUIRE_CURRENT" = "true" ]; then
+            echo "::error::Pinned digest is not what :latest serves. The gate would" \
+                 "certify an image users never receive. Re-pin env.IMAGE in" \
+                 ".github/workflows/integration.yml to $CURRENT and re-run."
+            exit 1
+          else
+            echo "::warning::Pinned digest is behind :latest ($CURRENT)." \
+                 "Re-pin before releasing; not failing this run."
+          fi
 
       - name: Pull the published image
         run: |
