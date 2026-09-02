@@ -115,7 +115,9 @@ both patterns are already used in `tests/`.
   `timed_out`, `streamed`, plus `incomplete`/`error` only when no result frame
   arrived. A missing result frame must never report success.
 - **SSE frames**: one JSON object per `data:` line. Both emitters serialize
-  through `json.dumps`; never hand-build a frame or add `indent=`.
+  through `json.dumps`; never add `indent=`, and never hand-build a frame that
+  interpolates anything. (`_helpers.py` still emits one hand-built heartbeat,
+  but it is a constant literal with no interpolation, so it is safe.)
 - Defaults `API_LISTEN_HOST=0.0.0.0` and an empty `KALI_API_TOKEN` are load
   bearing (the container needs `0.0.0.0` to be reachable through the loopback
   port publish). Do not "fix" the exposure warning by changing them.
