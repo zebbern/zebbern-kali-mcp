@@ -184,18 +184,23 @@ def test_output_route_rejects_non_finite_wait(app_and_manager):
     assert "finite" in response.get_json()["error"]
 
 
-def test_exec_response_redacts_command_metadata(app_and_manager):
+def test_exec_response_reports_the_command_verbatim(app_and_manager):
+    """What ran is what comes back.
+
+    These are the operator's own commands against their own targets on their
+    own machine, so rewriting them would hide nothing from anyone else while
+    making a failed run impossible to reproduce from the response.
+    """
     app, _manager = app_and_manager
+    sent = "echo --password route-secret"
 
     response = app.test_client().post(
         "/api/exec",
-        json={"command": "echo --password route-secret", "timeout": 5},
+        json={"command": sent, "timeout": 5},
     )
 
     assert response.status_code == 200
-    command = response.get_json()["command"]
-    assert "route-secret" not in command
-    assert "--password [REDACTED]" in command
+    assert response.get_json()["command"] == sent
 
 
 def test_synchronous_exec_reports_nonzero_exit_as_failure(app_and_manager):

@@ -818,3 +818,68 @@ def test_verify_layer_threshold_rejects_insufficient_common_prefix():
     lean = verify_images.ImageFacts("lean", "id-lean", 1, ("a", "x", "c", "d", "e", "f", "g", "h"))
     with pytest.raises(RuntimeError, match="common layer prefix threshold"):
         verify_images.require_common_layer_threshold(full, lean)
+
+
+def _stub_smoke_workflow(monkeypatch, live_payload):
+    """Wire run_smoke's external calls to stubs, returning ``live_payload`` from /live."""
+    full = _full_variant_tools()
+
+    class Reservations:
+        def __enter__(self):
+            return (43211, 43212)
+
+        def __exit__(self, *exc):
+            return None
+
+    monkeypatch.setattr(run_smoke, "reserve_unused_ports", lambda: Reservations())
+    monkeypatch.setattr(
+        run_smoke.subprocess,
+        "run",
+        lambda command, **kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(run_smoke, "wait_for_live", lambda url, timeout: live_payload)
+    responses = iter(
+        [
+            SimpleNamespace(status_code=200, json=lambda: {"capabilities": {"schema_version": 1}}),
+            SimpleNamespace(status_code=401, json=lambda: {}),
+            SimpleNamespace(status_code=200, json=lambda: {}),
+        ]
+    )
+    monkeypatch.setattr(run_smoke.requests, "get", lambda *args, **kwargs: next(responses))
+    monkeypatch.setattr(run_smoke, "list_mcp_tools", lambda *args: full)
+    monkeypatch.setattr(
+        run_smoke,
+        "call_mcp_tool",
+        lambda *args: {"success": True, "stdout": args[-1]["command"].removeprefix("printf ")},
+    )
+    return full
+
+
+def test_run_smoke_rejects_a_mismatched_image_version(monkeypatch):
+    _stub_smoke_workflow(monkeypatch, {"status": "live", "version": "0.0.0"})
+
+    with pytest.raises(RuntimeError, match="stale"):
+        run_smoke.run_smoke(
+            "example:image", "bridge", "full", timeout=1, expect_version="1.0.6"
+        )
+
+
+def test_run_smoke_accepts_a_matching_image_version(monkeypatch):
+    full = _stub_smoke_workflow(monkeypatch, {"status": "live", "version": "1.0.6"})
+
+    result = run_smoke.run_smoke(
+        "example:image", "bridge", "full", timeout=1, expect_version="1.0.6"
+    )
+
+    assert result.tools == full
+    assert result.live == {"status": "live", "version": "1.0.6"}
+
+
+def test_smoke_parser_expect_version_defaults_to_none():
+    parser = run_smoke.build_smoke_parser()
+
+    assert parser.parse_args(["--image", "example:image"]).expect_version is None
+    assert (
+        parser.parse_args(["--image", "example:image", "--expect-version", "1.0.6"]).expect_version
+        == "1.0.6"
+    )

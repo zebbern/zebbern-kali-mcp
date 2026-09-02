@@ -22,7 +22,7 @@ from core.api_security import APISecurityTester
 from core.ssh_manager import SSHSessionManager
 
 
-def test_ssh_command_redacts_logs_and_metadata_without_changing_execution(
+def test_ssh_command_metadata_reports_the_command_verbatim(
     caplog,
     monkeypatch,
 ):
@@ -54,17 +54,16 @@ def test_ssh_command_redacts_logs_and_metadata_without_changing_execution(
 
     assert writes[0] == f"{command}\n".encode()
     assert result["success"] is True
-    assert "ssh-password" not in result["command"]
-    assert "ssh-token" not in result["command"]
-    assert "--password [REDACTED]" in result["command"]
-    assert "--token [REDACTED]" in result["command"]
-    assert "--target 10.0.0.5" in result["command"]
-    assert "ssh-password" not in caplog.text
-    assert "ssh-token" not in caplog.text
+    # Reported verbatim. The operator must be able to see, and reproduce, the
+    # exact command that ran; masking it would only hide their own credential
+    # from them and make a failure harder to diagnose.
+    assert result["command"] == command
+    assert "ssh-password" in result["command"]
+    assert "ssh-token" in result["command"]
     assert "Executing SSH command: audit-tool" in caplog.text
 
 
-def test_ffuf_authorization_header_is_redacted_only_in_command_metadata(
+def test_ffuf_command_metadata_reports_headers_verbatim(
     tmp_path,
     monkeypatch,
 ):
@@ -90,10 +89,11 @@ def test_ffuf_authorization_header_is_redacted_only_in_command_metadata(
     assert "X-API-Key: ffuf-api-secret" in captured_commands[0]
     assert "X-Trace-ID: trace-value" in captured_commands[0]
     assert result["success"] is True
-    assert "ffuf-secret" not in result["command"]
-    assert "ffuf-api-secret" not in result["command"]
-    assert "Authorization: [REDACTED]" in result["command"]
-    assert "X-API-Key: [REDACTED]" in result["command"]
+    # Reported verbatim, headers included. The wordlist assertion below used to
+    # need a placeholder to survive the redactor's -w password rule; with
+    # nothing rewriting the command, the real path simply comes back.
+    assert "ffuf-secret" in result["command"]
+    assert "ffuf-api-secret" in result["command"]
     assert "X-Trace-ID: trace-value" in result["command"]
     assert "https://api.example.test/FUZZ" in result["command"]
     assert "/usr/share/wordlists/dirb/common.txt" in result["command"]

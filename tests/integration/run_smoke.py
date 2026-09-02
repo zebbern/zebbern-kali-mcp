@@ -417,6 +417,7 @@ def run_smoke(
     profile: str = "auto",
     timeout: float = 180.0,
     check_trim: bool = False,
+    expect_version: str | None = None,
 ) -> SmokeResult:
     """Run API, authentication, MCP, and command checks for one image."""
     if expect_variant not in {None, "full", "lean"}:
@@ -453,6 +454,12 @@ def run_smoke(
             raise RuntimeError(f"Compose startup failed:\n{started_process.stdout}\n{started_process.stderr}")
 
         live = wait_for_live(api_url, timeout)
+        if expect_version is not None and live.get("version") != expect_version:
+            raise RuntimeError(
+                f"pinned image reports version {live.get('version')!r}, "
+                f"expected {expect_version!r}: the integration digest is stale "
+                f"and must be re-pinned to an image built from this source"
+            )
         ready = require_ready(requests.get(api_url + "/ready", timeout=10))
         unauthorized = requests.get(api_url + "/api/ps", timeout=10)
         if unauthorized.status_code != 401:
@@ -521,6 +528,11 @@ def build_smoke_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expect-variant", choices=("full", "lean"))
     parser.add_argument("--profile", default="auto")
     parser.add_argument(
+        "--expect-version",
+        default=None,
+        help="Fail unless /live reports this version, catching a stale pinned digest",
+    )
+    parser.add_argument(
         "--check-trim",
         action="store_true",
         help="Also assert the live trim profile omits exactly the redundant tools",
@@ -536,6 +548,7 @@ def main(argv: list[str] | None = None) -> int:
         args.expect_variant,
         profile=args.profile,
         check_trim=args.check_trim,
+        expect_version=args.expect_version,
     )
     print(
         json.dumps(

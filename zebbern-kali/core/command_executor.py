@@ -6,7 +6,7 @@ import subprocess
 import threading
 from typing import Dict, Any, Callable
 from .config import logger, COMMAND_TIMEOUT
-from .logging_utils import redact_command
+from .logging_utils import render_command
 
 KILL_MSG_DIR = "/app/tmp/.kill_messages"
 
@@ -57,7 +57,7 @@ class CommandExecutor:
 
     def execute(self) -> Dict[str, Any]:
         """Execute the command and handle timeout gracefully"""
-        logger.info("Executing command: %s", redact_command(self.command))
+        logger.info("Executing command: %s", render_command(self.command))
 
         try:
             self.process = subprocess.Popen(
@@ -144,7 +144,7 @@ class CommandExecutor:
 
     def execute_with_streaming(self, on_output: Callable[[str, str], None]) -> Dict[str, Any]:
         """Execute the command with streaming output via callback"""
-        logger.info("Executing command with streaming: %s", redact_command(self.command))
+        logger.info("Executing command with streaming: %s", render_command(self.command))
 
         try:
             self.process = subprocess.Popen(

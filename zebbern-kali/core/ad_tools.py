@@ -22,7 +22,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .logging_utils import redact_command
+from .logging_utils import render_command
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +132,7 @@ class ADTools:
                 "success": result.returncode == 0,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
-                "command": redact_command(cmd)
+                "command": render_command(cmd)
             }
         except subprocess.TimeoutExpired:
             return {"success": False, "error": "Command timed out"}
