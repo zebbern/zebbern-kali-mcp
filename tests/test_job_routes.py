@@ -219,3 +219,34 @@ def test_synchronous_exec_reports_nonzero_exit_as_failure(app_and_manager):
     assert response.status_code == 200
     assert payload["success"] is False
     assert payload["return_code"] == 7
+
+
+def test_jobs_index_lists_running_and_finished_jobs(app_and_manager):
+    """The reconstruction primitive: /api/jobs/<id> needs an id the caller
+    already has, so an agent that lost one had no way back to a running scan."""
+    app, manager = app_and_manager
+    job = manager.start(
+        [sys.executable, "-u", "-c", "print('indexed')"],
+        shell=False,
+        timeout=5,
+    )
+    client = app.test_client()
+    wait_for_route_terminal(client, job["job_id"])
+
+    response = client.get("/api/jobs")
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["count"] == 1
+    assert [entry["job_id"] for entry in payload["jobs"]] == [job["job_id"]]
+    assert payload["jobs"][0]["status"] == "succeeded"
+    assert "output" not in payload["jobs"][0]
+
+
+def test_jobs_index_is_empty_before_anything_runs(app_and_manager):
+    app, _manager = app_and_manager
+
+    response = app.test_client().get("/api/jobs")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"jobs": [], "count": 0}

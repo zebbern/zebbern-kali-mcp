@@ -163,6 +163,9 @@
  "job_cancel": {
   "status": "REPORTED"
  },
+ "job_list": {
+  "status": "OK"
+ },
  "job_output": {
   "status": "REPORTED"
  },

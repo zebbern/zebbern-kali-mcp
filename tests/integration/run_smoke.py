@@ -26,7 +26,7 @@ from mcp.client.stdio import stdio_client
 ROOT = Path(__file__).resolve().parents[2]
 SMOKE_COMPOSE = "tests/integration/docker-compose.smoke.yml"
 SAFE_PROJECT = re.compile(r"^zkm-smoke-[a-z0-9][a-z0-9-]*$")
-FULL_TOOL_COUNT = 131
+FULL_TOOL_COUNT = 132
 LEAN_OMITTED_TOOLS = frozenset(
     {
         "msf_session_create",
@@ -255,7 +255,7 @@ def validate_variant_tools(
     auto_count = len(auto)
     if full_count != FULL_TOOL_COUNT:
         raise RuntimeError(
-            "full profile must contain exactly 131 unique tools; "
+            f"full profile must contain exactly {FULL_TOOL_COUNT} unique tools; "
             f"observed {full_count}"
         )
 
@@ -295,7 +295,7 @@ def validate_trim_profile(
     full_count = len(full)
     if full_count != FULL_TOOL_COUNT:
         raise RuntimeError(
-            "full profile must contain exactly 131 unique tools; "
+            f"full profile must contain exactly {FULL_TOOL_COUNT} unique tools; "
             f"observed {full_count}"
         )
 

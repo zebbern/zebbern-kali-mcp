@@ -160,6 +160,24 @@ def test_unknown_job_reports_failure_rather_than_success():
 
     assert result["success"] is False
     assert "404" in result["error"]
+@requires_background_tools
+def test_job_list_finds_a_running_job_without_being_told_its_id(background_job):
+    """The recovery path. Every _call here is a fresh MCP process, so the id
+    comes back from the server rather than from anything the client remembered
+    -- which is exactly the position an agent is in after a compaction."""
+    listed = _call("job_list")
+
+    assert listed["count"] >= 1
+    entry = next(
+        (job for job in listed["jobs"] if job["job_id"] == background_job), None
+    )
+    assert entry is not None, f"{background_job} missing from {listed!r}"
+    assert entry["status"] in {"queued", "running"}
+    assert "output" not in entry
+
+    cancelled = _call("job_cancel", job_id=entry["job_id"])
+    assert cancelled["success"] is True
+
 
 
 def test_hosts_entries_round_trip_across_processes():

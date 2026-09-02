@@ -80,10 +80,10 @@ def test_auto_profile_selects_every_full_module_in_order():
     assert module_names("auto") == module_names("full")
 
 
-def test_explicit_full_profile_preserves_all_131_unique_tools_despite_capabilities():
+def test_explicit_full_profile_preserves_all_132_unique_tools_despite_capabilities():
     full_tools = registered_names("full")
 
-    assert len(full_tools) == 131
+    assert len(full_tools) == 132
     assert registered_names("full", lean_health()) == full_tools
 
 
@@ -363,8 +363,8 @@ def test_trim_profile_drops_only_the_host_redundant_modules():
     )
 
 
-def test_trim_profile_registers_121_tools():
-    assert len(registered_names("trim")) == 121
+def test_trim_profile_registers_122_tools():
+    assert len(registered_names("trim")) == 122
 
 
 def test_trim_profile_omits_exactly_the_callback_and_parser_tools():
@@ -396,8 +396,8 @@ def test_exclude_module_subtracts_from_any_profile():
     web = registered_names("web")
     trimmed = registered_names("web", exclude=frozenset({"callback_catcher"}))
 
-    assert len(web) == 66
-    assert len(trimmed) == 57
+    assert len(web) == 67
+    assert len(trimmed) == 58
     assert not any(name.startswith("callback_") for name in trimmed)
     assert trimmed < web
 

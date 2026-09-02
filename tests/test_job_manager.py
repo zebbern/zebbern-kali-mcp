@@ -265,3 +265,58 @@ def test_descendants_do_not_survive_primary_process_exit():
             pytest.fail("a descendant remained in the completed job process group")
     finally:
         manager.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Enumeration. Every other kind of server-side state can be listed --
+# msf_session_list, ssh_sessions, hosts_list, pivot_list_tunnels -- and jobs,
+# the one kind the whole background mechanism depends on, could not be. An agent
+# that loses a job_id to a context compaction had an unrecoverable running scan.
+# ---------------------------------------------------------------------------
+
+
+def test_list_reports_every_tracked_job(manager):
+    first = manager.start(python_command("print('one')"), shell=False, timeout=5)
+    second = manager.start(python_command("print('two')"), shell=False, timeout=5)
+    wait_for_terminal(manager, first["job_id"])
+    wait_for_terminal(manager, second["job_id"])
+
+    listed = manager.list()
+
+    by_id = {job["job_id"]: job for job in listed}
+    assert set(by_id) == {first["job_id"], second["job_id"]}
+    assert by_id[first["job_id"]]["status"] == "succeeded"
+    assert by_id[second["job_id"]]["status"] == "succeeded"
+    assert all(job["return_code"] == 0 for job in listed)
+
+
+def test_list_carries_no_output(manager):
+    """A listing has to stay cheap and bounded no matter how many jobs are held
+    -- max_jobs is 256, each with up to 2MB of buffered output. read_output is
+    where output comes from; putting it here turns "which of my scans are still
+    running" into a multi-megabyte answer."""
+    job = manager.start(python_command("print('loud')"), shell=False, timeout=5)
+    wait_for_terminal(manager, job["job_id"])
+    assert manager.read_output(job["job_id"], lines=10)["stdout"] == ["loud"]
+
+    entry = manager.list()[0]
+
+    assert set(entry) <= set(manager.get(job["job_id"]))
+    for banned in ("output", "stdout", "stderr", "events"):
+        assert banned not in entry, f"list() leaked {banned}"
+
+
+def test_list_returns_the_newest_job_first(manager):
+    older = manager.start(python_command("print('older')"), shell=False, timeout=5)
+    wait_for_terminal(manager, older["job_id"])
+    newer = manager.start(python_command("print('newer')"), shell=False, timeout=5)
+    wait_for_terminal(manager, newer["job_id"])
+
+    assert [job["job_id"] for job in manager.list()] == [
+        newer["job_id"],
+        older["job_id"],
+    ]
+
+
+def test_list_is_empty_rather_than_an_error_when_nothing_has_run(manager):
+    assert manager.list() == []
