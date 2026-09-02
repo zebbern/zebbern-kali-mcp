@@ -3,6 +3,8 @@
 from typing import Dict, Any
 from mcp.server.fastmcp import FastMCP
 
+from ._autopromote import run_promotable
+
 
 def register(mcp: FastMCP, kali_client) -> None:
     """Register API security tools."""
@@ -109,6 +111,7 @@ def register(mcp: FastMCP, kali_client) -> None:
         url: str, wordlist: str = "/usr/share/wordlists/dirb/common.txt",
         method: str = "GET", mc: str = "200,301,302,403",
         headers: str = "", data_str: str = "",
+        background: bool = False,
     ) -> Dict[str, Any]:
         """
         Fuzz using ffuf for content discovery and parameter brute-forcing.
@@ -120,12 +123,23 @@ def register(mcp: FastMCP, kali_client) -> None:
             mc: Match HTTP status codes (comma-separated)
             headers: Custom headers (key:value, comma-separated)
             data_str: POST data with FUZZ keyword
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote). Findings stream as
+                newline-delimited JSON on stdout and are teed in full to the
+                job's output_path.
         """
         data = {
             "url": url, "wordlist": wordlist, "method": method,
             "match_codes": mc, "headers": headers, "data": data_str,
         }
-        return kali_client.safe_post("api/api-security/ffuf", data)
+        return run_promotable(
+            kali_client, "api/api-security/ffuf", data,
+            heavy=False, background=background,
+        )
 
     @mcp.tool()
     def api_kiterunner_scan(url: str, wordlist: str = "") -> Dict[str, Any]:
@@ -140,7 +154,10 @@ def register(mcp: FastMCP, kali_client) -> None:
         return kali_client.safe_post("api/api-security/kiterunner", data)
 
     @mcp.tool()
-    def api_nuclei_scan(url: str, tags: str = "api", severity: str = "") -> Dict[str, Any]:
+    def api_nuclei_scan(
+        url: str, tags: str = "api", severity: str = "",
+        background: bool = False,
+    ) -> Dict[str, Any]:
         """
         Run Nuclei templates against API endpoints.
 
@@ -148,9 +165,20 @@ def register(mcp: FastMCP, kali_client) -> None:
             url: Target URL
             tags: Nuclei template tags (default: api)
             severity: Filter by severity (critical, high, medium, low)
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote). Findings stream as
+                newline-delimited JSON on stdout and are teed in full to the
+                job's output_path.
         """
         data = {"target": url, "tags": tags, "severity": severity}
-        return kali_client.heavy_tool_post("api/api-security/nuclei", data)
+        return run_promotable(
+            kali_client, "api/api-security/nuclei", data,
+            heavy=True, background=background,
+        )
 
     @mcp.tool()
     def api_newman_run(collection: str, environment: str = "") -> Dict[str, Any]:
