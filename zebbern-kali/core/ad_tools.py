@@ -609,8 +609,6 @@ class ADTools:
 
                     if result.returncode != 0:
                         stderr = result.stderr or ""
-                        if password:
-                            stderr = stderr.replace(password, "[REDACTED]")
                         results["queries"][query_name] = {
                             "filter": ldap_filter,
                             "returncode": result.returncode,
@@ -646,8 +644,6 @@ class ADTools:
 
                 except Exception as e:
                     error = str(e)
-                    if password:
-                        error = error.replace(password, "[REDACTED]")
                     results["queries"][query_name] = {
                         "filter": ldap_filter,
                         "error": error,
@@ -723,8 +719,6 @@ class ADTools:
                     )
 
                     safe_output = result.stdout
-                    if password:
-                        safe_output = safe_output.replace(password, "[REDACTED]")
 
                     # Parse output for successful logins
                     for line in safe_output.split('\n'):
