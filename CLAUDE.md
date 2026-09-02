@@ -256,7 +256,7 @@ exits 0 passes the probe. "0 BROKEN" is not evidence that a tool still works.
 ## Tests
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q            # ~698 passed, 1 skipped
+.venv/Scripts/python.exe -m pytest -q            # ~718 passed, 1 skipped
 .venv/Scripts/python.exe -m pytest -m live -q    # 11, needs a backend on :5000
 python tests/integration/run_smoke.py --image <img> --expect-variant full --check-trim
 python tests/integration/probe_tools.py          # all 131 tools, needs a backend

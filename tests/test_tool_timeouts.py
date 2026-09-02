@@ -167,6 +167,18 @@ def test_metasploit_keeps_success_true_on_a_timeout():
     assert '"success": False,\n                "timed_out": timed_out' not in MSF_SRC
     assert '"success": True,\n                "output": output,' in MSF_SRC
 
+KALI_SERVER_SRC = (BACKEND_ROOT / "kali_server.py").read_text(encoding="utf-8")
+
+
+def test_shutdown_handler_destroys_msf_sessions():
+    """signal_handler tears down background jobs, reverse-shell sessions and SSH
+    sessions, and left msf sessions -- the one type that now leads a process
+    group -- running. Necessarily a source guard: kali_server imports api.routes,
+    which pulls in pty/termios, so the handler cannot be driven on Windows."""
+    assert "destroy_all_sessions" in KALI_SERVER_SRC
+    assert "msf_manager" in KALI_SERVER_SRC
+
+
 
 class _RecordingMCP:
     """Capture the raw functions an mcp_tools module registers."""
@@ -594,6 +606,86 @@ def test_mid_command_output_is_not_mistaken_for_a_prompt(buffer):
 
 
 # ---------------------------------------------------------------------------
+# Which condition ended the wait.
+#
+# The three exits already report themselves through timed_out/console_exited,
+# but the prompt exit collapses three very different matches into one silence:
+# an exact `msf6 >`, a `meterpreter >`, and the generic `> # $` catch-all that
+# also fires on any trailing line ending in punctuation. `detector` names the
+# one that fired so the loose case can be counted in the field instead of
+# guessed at.
+# ---------------------------------------------------------------------------
+
+
+@requires_msf_module
+@pytest.mark.parametrize(
+    "prompt,expected",
+    [
+        ("msf6 > ", "exact_msf"),
+        ("msf6 exploit(multi/handler) > ", "exact_msf"),
+        ("meterpreter > ", "meterpreter"),
+        ("[*] session opened\nroot@target:/# ", "generic_prompt"),
+        ("www-data@box:/var/www$ ", "generic_prompt"),
+    ],
+)
+def test_msf_execute_names_which_prompt_ended_the_wait(monkeypatch, prompt, expected):
+    """Driven through the real wait loop, not through the matcher: a helper-only
+    test passes even when execute() never reports what the helper found, which
+    is the exact shape of guard this file has already got wrong twice."""
+    result = _drive_execute(monkeypatch, reply=prompt)
+
+    assert result["detector"] == expected
+    assert result["timed_out"] is False
+
+
+@requires_msf_module
+def test_msf_execute_detector_is_timeout_on_budget_expiry(monkeypatch):
+    """The budget exit is the one detector value that is never assigned by an
+    early exit -- it has to survive as the initial value."""
+    result = _drive_execute(
+        monkeypatch,
+        reply="[*] Started reverse TCP handler on 10.0.0.1:4444\n",
+        timeout=0.02,
+    )
+
+    assert result["detector"] == "timeout"
+    assert result["timed_out"] is True
+
+
+@requires_msf_module
+def test_msf_execute_detector_is_console_exited_on_death(monkeypatch):
+    """A dead console clears timed_out, so without its own detector value the
+    death exit would be reported as whatever the initial value happens to be."""
+    result = _drive_execute(
+        monkeypatch,
+        reply="[-] Handler failed to bind\n",
+        poll_results=(None, 1),
+    )
+
+    assert result["detector"] == "console_exited"
+    assert result["console_exited"] is True
+
+
+@requires_msf_module
+@pytest.mark.parametrize(
+    "buffer,expected",
+    [
+        ("msf6 > ", "exact_msf"),
+        ("meterpreter > ", "meterpreter"),
+        ("root@box:/# ", "generic_prompt"),
+        # The regex dropped its `shell` alternative when the keywords became
+        # named groups: [^\n]* already absorbs the word, so this still matches
+        # and the boolean _ends_on_prompt returns is unchanged.
+        ("shell> ", "generic_prompt"),
+        ("[*] just output\n", None),
+        ("", None),
+    ],
+)
+def test_prompt_kind_classifies_the_alternative(buffer, expected):
+    assert msf_module._prompt_kind(buffer) == expected
+
+
+# ---------------------------------------------------------------------------
 # The console buffer's accumulation shape.
 #
 # _read_output did `self.output_buffer += data.decode(...)` on every 4096-byte
@@ -677,3 +769,173 @@ def test_execute_returns_output_far_longer_than_the_prompt_tail(monkeypatch):
 
     assert result["timed_out"] is False
     assert result["output"] == body + "msf6 > "
+
+
+# ---------------------------------------------------------------------------
+# Session teardown reaches the whole process group.
+#
+# msfconsole is spawned under preexec_fn=os.setsid, so it leads a process group
+# containing every child it starts -- a `shell` channel, a locally staged
+# payload or handler. terminate() on the leader alone leaves those running with
+# nothing tracking them, and _cleanup_dead_sessions used to drop a crashed
+# session from the dict without signalling its group at all. These drive the
+# real stop() against a stubbed leader, the way test_network_pivot_state.py
+# drives the identical teardown in NetworkPivotManager.stop_tunnel.
+# ---------------------------------------------------------------------------
+
+
+class _TeardownProcess:
+    """Stub console leader for the teardown path. Raises TimeoutExpired on the
+    first wait only when asked, so the second wait after SIGKILL returns."""
+
+    def __init__(self, pid=4242, alive=True, wait_raises=False):
+        self.pid = pid
+        self._alive = alive
+        self._wait_raises = wait_raises
+        self.terminated = False
+        self.killed = False
+
+    def poll(self):
+        return None if self._alive else 0
+
+    def wait(self, timeout=None):
+        if self._wait_raises:
+            self._wait_raises = False
+            raise subprocess.TimeoutExpired(cmd="msfconsole", timeout=timeout)
+        return 0
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
+
+
+@requires_msf_module
+def test_stop_signals_the_process_group_not_just_the_leader(monkeypatch):
+    """setsid exists so the console and its children can be signalled together.
+    Signalling only the leader orphans a landed `shell` channel or a locally
+    staged handler, which then holds its port with nothing tracking it."""
+    session = msf_module.MetasploitSession("grouped")
+    session.process = _TeardownProcess()
+    signals = []
+
+    def kill_process_group(process_group, sig):
+        if sig == 0:
+            raise ProcessLookupError
+        signals.append((process_group, sig))
+
+    monkeypatch.setattr(msf_module.os, "killpg", kill_process_group, raising=False)
+
+    session.stop()
+
+    assert (4242, msf_module.signal.SIGTERM) in signals
+    assert session.process is None
+
+
+@requires_msf_module
+def test_stop_escalates_to_sigkill_when_the_group_survives_sigterm(monkeypatch):
+    """A wedged msfconsole ignores SIGTERM; the old code escalated to kill() on
+    the leader alone, leaving the rest of the group behind."""
+    session = msf_module.MetasploitSession("wedged")
+    session.process = _TeardownProcess(wait_raises=True)
+    signals = []
+    group_alive = True
+    sigkill = getattr(msf_module.signal, "SIGKILL", 9)
+
+    def kill_process_group(process_group, sig):
+        nonlocal group_alive
+        if sig == 0:
+            if not group_alive:
+                raise ProcessLookupError
+            return
+        signals.append((process_group, sig))
+        if sig == sigkill:
+            group_alive = False
+
+    monkeypatch.setattr(msf_module.os, "killpg", kill_process_group, raising=False)
+
+    session.stop()
+
+    assert signals == [(4242, msf_module.signal.SIGTERM), (4242, sigkill)]
+
+
+@requires_msf_module
+def test_teardown_sigkills_a_child_that_outlives_the_leader(monkeypatch):
+    """The case terminate() cannot reach: the leader exits on SIGTERM, so wait()
+    returns and nothing escalates, but a child still holds the group open. Probe
+    with signal 0 and reap what answers."""
+    session = msf_module.MetasploitSession("orphaning")
+    session.process = _TeardownProcess()
+    signals = []
+    child_alive = True
+    sigkill = getattr(msf_module.signal, "SIGKILL", 9)
+
+    def kill_process_group(process_group, sig):
+        nonlocal child_alive
+        if sig == 0:
+            if not child_alive:
+                raise ProcessLookupError
+            return
+        signals.append((process_group, sig))
+        if sig == sigkill:
+            child_alive = False
+
+    monkeypatch.setattr(msf_module.os, "killpg", kill_process_group, raising=False)
+
+    session.stop()
+
+    assert signals == [(4242, msf_module.signal.SIGTERM), (4242, sigkill)]
+
+
+@requires_msf_module
+def test_cleanup_dead_sessions_reaps_the_group_of_a_crashed_session(monkeypatch):
+    """The largest orphan leak: a crashed msfconsole whose landed meterpreter or
+    `shell` child is still alive was popped from the dict with its group never
+    signalled, so nothing in the process could ever reach it again. Removal has
+    to go through stop()."""
+    manager = msf_module.MetasploitManager()
+    session = msf_module.MetasploitSession("dead")
+    session.process = _TeardownProcess(alive=False)
+    manager.sessions["dead"] = session
+    signals = []
+
+    def kill_process_group(process_group, sig):
+        if sig == 0:
+            raise ProcessLookupError
+        signals.append((process_group, sig))
+
+    monkeypatch.setattr(msf_module.os, "killpg", kill_process_group, raising=False)
+
+    manager._cleanup_dead_sessions()
+
+    assert "dead" not in manager.sessions
+    assert (4242, msf_module.signal.SIGTERM) in signals
+
+
+@requires_msf_module
+def test_teardown_survives_a_group_that_is_already_gone(monkeypatch):
+    """Closing the pty master can deliver SIGHUP to the group first, so by the
+    time killpg runs the group may already be gone. destroy_all_sessions
+    iterates stop() with no per-session guard, so one escaping ProcessLookupError
+    would abort teardown of every session after it."""
+    session = msf_module.MetasploitSession("already-gone")
+    session.process = _TeardownProcess()
+
+    def kill_process_group(process_group, sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(msf_module.os, "killpg", kill_process_group, raising=False)
+
+    session.stop()
+
+    assert session.process is None
+
+
+def test_metasploit_stop_signals_the_process_group():
+    """Source-level backstop for the two assertions above: the leader-only
+    terminate() must not come back, since a revert to it leaves every semantic
+    test above red only while killpg is monkeypatched in."""
+    assert "os.killpg" in MSF_SRC
+    assert "self.process.terminate()" not in MSF_SRC
+    assert "import signal" in MSF_SRC

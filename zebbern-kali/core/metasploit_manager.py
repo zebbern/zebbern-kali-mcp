@@ -5,6 +5,7 @@ import os
 import pty
 import re
 import select
+import signal
 import subprocess
 import threading
 import time
@@ -27,8 +28,16 @@ _ANSI_RE = re.compile(
 # "msf" + ">" anywhere in the last 200 characters was the old test, and it
 # misses every post-exploitation workflow: a meterpreter or shell prompt after a
 # successful exploit contains neither. Anchor on the trailing line instead and
-# accept msf/msf6, meterpreter, shell, and generic > # $ prompts.
-_PROMPT_RE = re.compile(r"^\s*(?:msf\d*|meterpreter|shell)?[^\n]*[>#$]\s*$")
+# accept msf/msf6, meterpreter, and generic > # $ prompts. The msf and
+# meterpreter keywords sit in named groups so execute() can report which one
+# ended the wait; the generic > # $ path -- a bare shell prompt like
+# root@box:/# , or the case worth measuring, a line that merely ends in
+# punctuation -- is reported as "generic_prompt". Dropping the old "shell"
+# alternative changes no match: [^\n]* already absorbs the word, so the boolean
+# _ends_on_prompt returns is unchanged (the existing prompt tests guard that).
+_PROMPT_RE = re.compile(
+    r"^\s*(?:(?P<msf>msf\d*)|(?P<meterpreter>meterpreter))?[^\n]*[>#$]\s*$"
+)
 
 # Only the tail is inspected. Once output goes stable this runs every 0.5s for
 # the rest of the budget -- up to 4 hours -- so it has to cost the same whether
@@ -38,11 +47,29 @@ _PROMPT_RE = re.compile(r"^\s*(?:msf\d*|meterpreter|shell)?[^\n]*[>#$]\s*$")
 _PROMPT_TAIL_CHARS = 512
 
 
-def _ends_on_prompt(buffer: str) -> bool:
-    """Does the buffer's last line look like an interactive prompt?"""
+def _prompt_kind(buffer: str) -> Optional[str]:
+    """Which interactive prompt, if any, the buffer's last line ends on.
+
+    Returns the detector name -- "exact_msf", "meterpreter" or "generic_prompt"
+    -- or None when the last line is not a prompt. The cost is the same bounded
+    tail slice plus one regex match _ends_on_prompt always did; the group
+    lookups are reached only on a match, i.e. once, at the exit.
+    """
     tail = buffer[-_PROMPT_TAIL_CHARS:]
     last_line = tail[tail.rfind("\n") + 1:]
-    return bool(_PROMPT_RE.match(_ANSI_RE.sub("", last_line)))
+    match = _PROMPT_RE.match(_ANSI_RE.sub("", last_line))
+    if match is None:
+        return None
+    if match.group("msf") is not None:
+        return "exact_msf"
+    if match.group("meterpreter") is not None:
+        return "meterpreter"
+    return "generic_prompt"
+
+
+def _ends_on_prompt(buffer: str) -> bool:
+    """Does the buffer's last line look like an interactive prompt?"""
+    return _prompt_kind(buffer) is not None
 
 
 class MetasploitSession:
@@ -192,6 +219,7 @@ class MetasploitSession:
                 "success": False,
                 "timed_out": False,
                 "console_exited": True,
+                "detector": "not_running",
             }
 
         try:
@@ -221,6 +249,11 @@ class MetasploitSession:
             # prompt, so a caller obeying "check timed_out, never success"
             # reads a crash as a completed run.
             console_exited = False
+            # Which condition ends the wait, as field telemetry: in particular
+            # how often the generic > # $ path (generic_prompt) stands in for a
+            # real msf/meterpreter prompt. Overwritten by whichever early exit
+            # fires; stays "timeout" only when the budget is what ends the loop.
+            detector = "timeout"
 
             while time.time() - start_time < timeout:
                 time.sleep(0.5)
@@ -232,6 +265,7 @@ class MetasploitSession:
                 if self.process is None or self.process.poll() is not None:
                     console_exited = True
                     timed_out = False
+                    detector = "console_exited"
                     # The console cannot serve another command; say so rather
                     # than keep advertising a readiness that no longer holds.
                     self.is_ready = False
@@ -244,11 +278,13 @@ class MetasploitSession:
                     if current_len == last_output_len:
                         stable_count += 1
                         if stable_count >= 4:  # 2 seconds of stability
-                            # Check for prompt. The bounded tail is exactly
-                            # buffer[-_PROMPT_TAIL_CHARS:], which is all
-                            # _ends_on_prompt ever looked at.
-                            if _ends_on_prompt(self._output_tail):
+                            # The bounded tail is exactly
+                            # buffer[-_PROMPT_TAIL_CHARS:], all _prompt_kind
+                            # ever looks at.
+                            kind = _prompt_kind(self._output_tail)
+                            if kind is not None:
                                 timed_out = False
+                                detector = kind
                                 break
                     else:
                         stable_count = 0
@@ -279,6 +315,7 @@ class MetasploitSession:
                 "execution_time": time.time() - start_time,
                 "timed_out": timed_out,
                 "console_exited": console_exited,
+                "detector": detector,
                 "partial_results": bool((timed_out or console_exited) and output),
             }
 
@@ -289,44 +326,105 @@ class MetasploitSession:
                 "success": False,
                 "timed_out": False,
                 "console_exited": False,
+                "detector": "error",
             }
     
-    def stop(self):
-        """Stop the msfconsole session."""
-        self._running = False
-        
-        if self.master_fd is not None:
+    def _terminate_process_group(self):
+        """SIGTERM then SIGKILL the whole msfconsole process group.
+
+        msfconsole is spawned under preexec_fn=os.setsid, so it and every child
+        it spawns -- a `shell` channel, a locally staged payload or handler --
+        share a process group whose id is the leader's pid. terminate() on the
+        leader alone leaves those children orphaned; signalling the group reaches
+        them. Mirrors the teardown NetworkPivotManager.stop_tunnel already uses.
+        """
+        process = self.process
+        if process is None:
+            return
+        process_group = getattr(process, "pid", None)
+        uses_process_group = bool(process_group and hasattr(os, "killpg"))
+        group_escalated = False
+        try:
+            if uses_process_group:
+                os.killpg(process_group, signal.SIGTERM)
+            else:
+                process.terminate()
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            logger.error(
+                f"SIGTERM to msf session {self.session_id} group "
+                f"{process_group} denied"
+            )
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            if uses_process_group:
+                try:
+                    os.killpg(process_group, getattr(signal, "SIGKILL", 9))
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    logger.error(
+                        f"SIGKILL to msf session {self.session_id} group "
+                        f"{process_group} denied"
+                    )
+                group_escalated = True
+            else:
+                process.kill()
+            process.wait(timeout=5)
+        # Leader gone but a child may still hold the group open (a landed
+        # meterpreter, a `shell` channel): probe and reap it.
+        if uses_process_group and not group_escalated:
             try:
-                os.write(self.master_fd, b"exit\n")
-                time.sleep(0.5)
-            except:
+                os.killpg(process_group, 0)
+            except ProcessLookupError:
                 pass
+            else:
+                try:
+                    os.killpg(process_group, getattr(signal, "SIGKILL", 9))
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    logger.error(
+                        f"SIGKILL (survivor) to msf session {self.session_id} "
+                        f"group {process_group} denied"
+                    )
+
+    def stop(self):
+        """Stop the msfconsole session and its whole process group."""
+        self._running = False
+
+        # Ask msfconsole to exit through its own console first, but only while
+        # it is still alive to read it -- on an already-dead leader this write
+        # goes nowhere and the 0.5s wait is pure latency under the manager lock
+        # in _cleanup_dead_sessions. The killpg below guarantees teardown either
+        # way.
+        if self.master_fd is not None:
+            if self.process is not None and self.process.poll() is None:
+                try:
+                    os.write(self.master_fd, b"exit\n")
+                    time.sleep(0.5)
+                except OSError:
+                    pass
             try:
                 os.close(self.master_fd)
-            except:
+            except OSError:
                 pass
             self.master_fd = None
-        
+
         if self.slave_fd is not None:
             try:
                 os.close(self.slave_fd)
-            except:
+            except OSError:
                 pass
             self.slave_fd = None
-        
-        if self.process:
-            try:
-                self.process.terminate()
-                self.process.wait(timeout=5)
-            except:
-                try:
-                    self.process.kill()
-                except:
-                    pass
-            self.process = None
-        
+
+        self._terminate_process_group()
+        self.process = None
+
         logger.info(f"Metasploit session {self.session_id} stopped")
-    
+
     def is_alive(self) -> bool:
         """Check if the session is still running."""
         return self.process is not None and self.process.poll() is None
@@ -430,10 +528,22 @@ class MetasploitManager:
             return {"success": True, "message": f"Destroyed {count} sessions"}
     
     def _cleanup_dead_sessions(self):
-        """Remove dead sessions from the manager."""
+        """Remove dead sessions, tearing down any process group they leave.
+
+        A crashed msfconsole can leave a landed meterpreter or `shell` child
+        alive in its process group; dropping the session from the dict without
+        signalling that group orphans the child. Route removal through stop(),
+        which reaps it. Guarded because this runs under the manager lock inside
+        list_sessions / create_session, which have no outer try/except.
+        """
         dead_sessions = [sid for sid, s in self.sessions.items() if not s.is_alive()]
         for sid in dead_sessions:
-            self.sessions.pop(sid, None)
+            session = self.sessions.pop(sid, None)
+            if session is not None:
+                try:
+                    session.stop()
+                except Exception as exc:
+                    logger.error(f"Error tearing down dead msf session {sid}: {exc}")
 
 
 # Global manager instance
