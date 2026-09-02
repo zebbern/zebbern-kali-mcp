@@ -239,7 +239,7 @@ class CommandExecutor:
             }
 
 
-def execute_command(command: str, on_output: Callable[[str, str], None] = None, timeout: int = None) -> Dict[str, Any]:
+def execute_command(command: str, on_output: Callable[[str, str], None] = None, timeout: int = None, background: bool = False) -> Dict[str, Any]:
     """
     Execute a shell command with optional streaming and tool-specific behavior.
 
@@ -247,9 +247,12 @@ def execute_command(command: str, on_output: Callable[[str, str], None] = None, 
         command: The command to execute
         on_output: Optional callback function for streaming output (source, line)
         timeout: Optional timeout override (uses tool-specific timeout if not provided)
+        background: Hand the command to job_manager and return a job handle
+            immediately instead of waiting for it
 
     Returns:
-        A dictionary containing the stdout, stderr, and return code
+        A dictionary containing the stdout, stderr, and return code, or the job
+        metadata when background is True
     """
     from .tool_config import is_streaming_tool, get_command_timeout
 
@@ -273,6 +276,18 @@ def execute_command(command: str, on_output: Callable[[str, str], None] = None, 
     if timeout is None:
         timeout = get_command_timeout(command)
 
+    # Checked BEFORE the streaming branch below, and the ordering is load
+    # bearing: gobuster, nikto and bash are streaming-classified and the two
+    # runners that reach them always pass an on_output callback, so a background
+    # check placed after that branch would leave exactly the tools most likely
+    # to outrun the harness running in the foreground. The timeout resolved
+    # above rides along, or the job silently drops to job_manager's own 3600s
+    # default instead of the table budget.
+    if background:
+        from .job_manager import job_manager
+        job = job_manager.start(command, shell=True, timeout=timeout)
+        return {**job, "background": True}
+
     # Check if the tool requires streaming
     requires_streaming = is_streaming_tool(tool_name)
 
@@ -286,7 +301,7 @@ def execute_command(command: str, on_output: Callable[[str, str], None] = None, 
         return executor.execute()
 
 
-def execute_command_argv(argv: list, on_output: Callable[[str, str], None] = None, timeout: int = None) -> Dict[str, Any]:
+def execute_command_argv(argv: list, on_output: Callable[[str, str], None] = None, timeout: int = None, background: bool = False) -> Dict[str, Any]:
     """
     Execute a command using an argv list, quoting arguments for shell execution.
 
@@ -294,6 +309,8 @@ def execute_command_argv(argv: list, on_output: Callable[[str, str], None] = Non
         argv: List of command arguments (e.g., ['nmap', '-sV', '192.168.1.1'])
         on_output: Optional callback function for streaming output (source, line)
         timeout: Optional timeout override
+        background: Hand the command to job_manager and return a job handle
+            immediately instead of waiting for it
 
     Returns:
         A dictionary containing the stdout, stderr, and return code
@@ -318,7 +335,7 @@ def execute_command_argv(argv: list, on_output: Callable[[str, str], None] = Non
         command = tool_name
 
     # Use the existing execute_command function for timeout and streaming behavior.
-    return execute_command(command, on_output=on_output, timeout=timeout)
+    return execute_command(command, on_output=on_output, timeout=timeout, background=background)
 
 
 def stream_command_execution(
