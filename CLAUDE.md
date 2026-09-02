@@ -120,6 +120,62 @@ core/tool_config.py   ->  TOOL_TIMEOUTS[tool], default 3600, max 86400
 core/command_executor ->  subprocess wait
 ```
 
+**There is a fifth deadline, it is the smallest, and it is not in that list:
+the MCP harness abandons a tool call at roughly 60 seconds.** It sits above
+every layer above and outside this repo, so nothing here raises it. Measured: a
+synchronous `zebbern_exec` sleeping 310s came back as a harness-level
+`Error: Request timed out` — not our client's
+`{"error": "Request failed: ReadTimeout"}` — while the container process was
+still alive at 110s. `exec_stream` does not evade it; SSE runs between our
+client and the backend and the harness only ever sees one request and one
+response, so it fails the same way at 70s.
+
+That makes `tools_hydra`'s 86400s budget unreachable and turns the orphan
+described below into the normal outcome rather than an edge case. It is easy to
+watch: run the 65535-port background case in `tests/test_live_tools.py` against
+a backend that does not honour the flag, then
+`docker exec zebbern-kali ps -eo pid,etime,cmd | grep nmap` — the scan is still
+going minutes after the client gave up, with nothing left to reach it by.
+
+**`background=True` is the only escape.** Every subprocess-backed `tools_*`
+wrapper takes it. The flag rides `params` into the runner, `execute_command`
+hands the command to `job_manager`, and the job dict comes back through an
+unchanged route. Drive it with `job_status` / `job_output` / `job_cancel`, and
+`job_list` when the id itself is gone. Backgrounded jobs keep their table
+budget: `execute_command` passes the resolved timeout into `job_manager.start`,
+which otherwise defaults to 3600 and would cap hydra at one hour silently.
+
+The `if background:` check must stay **before** the streaming branch in
+`execute_command`. `gobuster`, `nikto` and `bash` are streaming-classified and
+both runners that reach them always pass an `on_output` callback, so a check
+placed after that branch leaves exactly the tools most likely to outrun the
+harness running in the foreground while the flag reads as supported.
+
+Three things that look like bugs and are not:
+
+- **The default is False, so a forgotten flag still orphans at ~60s.** The
+  docstrings are the whole mechanism. Auto-promoting a synchronous call to a job
+  at a soft deadline is the more robust design and a materially larger change.
+- **`run_subzy` leaks its temp targets file when backgrounded, on purpose.**
+  With an inline `target` it writes a `NamedTemporaryFile` and unlinks it after
+  `execute_command` returns; backgrounded that return is immediate, so the
+  unlink would delete the target list out from under a job that has not read it
+  yet. The guard is `if target and not background`, and the OS temp reaper
+  collects what is left.
+- **The tools routes answer 200 with the job dict, not `/api/exec`'s 202.** That
+  keeps route edits at zero and `safe_post` reads the JSON either way.
+
+Known and still open:
+
+- **`api_nuclei_scan` posts to `/api/api-security/nuclei`**, a different route
+  with no background support. It can still orphan.
+- **`heavy_tool_post` holds its semaphore slot for the full client read
+  timeout.** Nine tools share `MAX_HEAVY_TASKS = 5`; when the harness walks away
+  the MCP thread is still blocked in `safe_post`, so five orphaned scans can
+  wedge the heavy surface for up to 90000s.
+- **`exec_stream`'s description recommends it for "long-running commands like
+  nmap, nuclei, fuzzing"**, which is the opposite of true.
+
 The MSF chain is the exception to "smallest wins": `msf_session_execute` always
 puts `timeout` in the request body, so the route's `params.get("timeout", 14400)`
 never fires for an MCP caller and **the outermost default decides**. All three
@@ -198,7 +254,9 @@ untracked. For anything you may need to abort, use
 **A backend restart drops every session silently.** Jobs, reverse-shell
 listeners, SSH sessions and MSF sessions are in-memory only; after a restart the
 `*_status` tools return empty with no error, which reads exactly like "it never
-started". Pivot tunnels are the exception — `network_pivot` persists to
+started". `job_list` answers `{"jobs": [], "count": 0}` for the same reason, so
+an empty listing means "this backend has run nothing", not "nothing is
+running". Pivot tunnels are the exception — `network_pivot` persists to
 `state.json` and reloads them as `status="stopped"`, visibly dropped rather than
 vanished. Given how routine `docker compose up -d --force-recreate` is here,
 this is the first thing to suspect when a long scan disappears.
@@ -256,21 +314,24 @@ exits 0 passes the probe. "0 BROKEN" is not evidence that a tool still works.
 ## Tests
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q            # ~718 passed, 1 skipped
-.venv/Scripts/python.exe -m pytest -m live -q    # 11, needs a backend on :5000
+.venv/Scripts/python.exe -m pytest -q            # ~785 passed, 1 skipped
+.venv/Scripts/python.exe -m pytest -m live -q    # 14, needs a backend on :5000
 python tests/integration/run_smoke.py --image <img> --expect-variant full --check-trim
-python tests/integration/probe_tools.py          # all 131 tools, needs a backend
+python tests/integration/probe_tools.py          # all 132 tools, needs a backend
 ```
 
 `live` tests skip themselves when no backend answers, which is why CI stays
 green without Docker — and why a green `pytest -q` alone proves nothing about
 tool execution. Two live tests additionally skip without a web lab on host
-port 8888.
+port 8888, and three skip against a backend older than
+`BACKGROUND_TOOLS_CONTRACT_VERSION` — the same version gate the truncation
+cases use, because the contract ships in the image while `integration.yml` pins
+the previous digest.
 
 Most other tests are contract-level with a mocked client: they prove the client
 shapes the right request, not that a tool runs.
 
-`probe_tools.py` is the only thing that exercises the whole 131-tool surface.
+`probe_tools.py` is the only thing that exercises the whole 132-tool surface.
 It calls each tool once and compares the outcome against
 `tests/integration/probe_baseline.json`, so a run prints only what changed.
 Deliberately manual and not collected by pytest: it runs real scanners, starts

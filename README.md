@@ -526,6 +526,15 @@ Long-running or interactive commands can use the background job workflow:
 2. Poll `job_output(job_id)` or check `job_status(job_id)`.
 3. Use `send_input(job_id, text)` for interactive stdin.
 4. Call `job_cancel(job_id)` when the work is no longer needed.
+5. Call `job_list()` if the `job_id` is gone — it returns every job the backend
+   still tracks, newest first.
+
+Every subprocess-backed `tools_*` wrapper takes the same flag —
+`tools_nmap(target=..., background=true)`, `tools_hydra(..., background=true)`
+and so on — and returns a `job_id` driven by the same four tools. Set it for
+anything that may run longer than about a minute: an MCP client abandons a
+synchronous tool call around then, and the scan keeps running with no handle
+left to read or stop it.
 
 Job state and bounded output are kept in memory. Restarting the backend clears them.
 
