@@ -757,3 +757,173 @@ def test_execute_returns_output_far_longer_than_the_prompt_tail(monkeypatch):
 
     assert result["timed_out"] is False
     assert result["output"] == body + "msf6 > "
+
+
+# ---------------------------------------------------------------------------
+# Session teardown reaches the whole process group.
+#
+# msfconsole is spawned under preexec_fn=os.setsid, so it leads a process group
+# containing every child it starts -- a `shell` channel, a locally staged
+# payload or handler. terminate() on the leader alone leaves those running with
+# nothing tracking them, and _cleanup_dead_sessions used to drop a crashed
+# session from the dict without signalling its group at all. These drive the
+# real stop() against a stubbed leader, the way test_network_pivot_state.py
+# drives the identical teardown in NetworkPivotManager.stop_tunnel.
+# ---------------------------------------------------------------------------
+
+
+class _TeardownProcess:
+    """Stub console leader for the teardown path. Raises TimeoutExpired on the
+    first wait only when asked, so the second wait after SIGKILL returns."""
+
+    def __init__(self, pid=4242, alive=True, wait_raises=False):
+        self.pid = pid
+        self._alive = alive
+        self._wait_raises = wait_raises
+        self.terminated = False
+        self.killed = False
+
+    def poll(self):
+        return None if self._alive else 0
+
+    def wait(self, timeout=None):
+        if self._wait_raises:
+            self._wait_raises = False
+            raise subprocess.TimeoutExpired(cmd="msfconsole", timeout=timeout)
+        return 0
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
+
+
+@requires_msf_module
+def test_stop_signals_the_process_group_not_just_the_leader(monkeypatch):
+    """setsid exists so the console and its children can be signalled together.
+    Signalling only the leader orphans a landed `shell` channel or a locally
+    staged handler, which then holds its port with nothing tracking it."""
+    session = msf_module.MetasploitSession("grouped")
+    session.process = _TeardownProcess()
+    signals = []
+
+    def kill_process_group(process_group, sig):
+        if sig == 0:
+            raise ProcessLookupError
+        signals.append((process_group, sig))
+
+    monkeypatch.setattr(msf_module.os, "killpg", kill_process_group, raising=False)
+
+    session.stop()
+
+    assert (4242, msf_module.signal.SIGTERM) in signals
+    assert session.process is None
+
+
+@requires_msf_module
+def test_stop_escalates_to_sigkill_when_the_group_survives_sigterm(monkeypatch):
+    """A wedged msfconsole ignores SIGTERM; the old code escalated to kill() on
+    the leader alone, leaving the rest of the group behind."""
+    session = msf_module.MetasploitSession("wedged")
+    session.process = _TeardownProcess(wait_raises=True)
+    signals = []
+    group_alive = True
+    sigkill = getattr(msf_module.signal, "SIGKILL", 9)
+
+    def kill_process_group(process_group, sig):
+        nonlocal group_alive
+        if sig == 0:
+            if not group_alive:
+                raise ProcessLookupError
+            return
+        signals.append((process_group, sig))
+        if sig == sigkill:
+            group_alive = False
+
+    monkeypatch.setattr(msf_module.os, "killpg", kill_process_group, raising=False)
+
+    session.stop()
+
+    assert signals == [(4242, msf_module.signal.SIGTERM), (4242, sigkill)]
+
+
+@requires_msf_module
+def test_teardown_sigkills_a_child_that_outlives_the_leader(monkeypatch):
+    """The case terminate() cannot reach: the leader exits on SIGTERM, so wait()
+    returns and nothing escalates, but a child still holds the group open. Probe
+    with signal 0 and reap what answers."""
+    session = msf_module.MetasploitSession("orphaning")
+    session.process = _TeardownProcess()
+    signals = []
+    child_alive = True
+    sigkill = getattr(msf_module.signal, "SIGKILL", 9)
+
+    def kill_process_group(process_group, sig):
+        nonlocal child_alive
+        if sig == 0:
+            if not child_alive:
+                raise ProcessLookupError
+            return
+        signals.append((process_group, sig))
+        if sig == sigkill:
+            child_alive = False
+
+    monkeypatch.setattr(msf_module.os, "killpg", kill_process_group, raising=False)
+
+    session.stop()
+
+    assert signals == [(4242, msf_module.signal.SIGTERM), (4242, sigkill)]
+
+
+@requires_msf_module
+def test_cleanup_dead_sessions_reaps_the_group_of_a_crashed_session(monkeypatch):
+    """The largest orphan leak: a crashed msfconsole whose landed meterpreter or
+    `shell` child is still alive was popped from the dict with its group never
+    signalled, so nothing in the process could ever reach it again. Removal has
+    to go through stop()."""
+    manager = msf_module.MetasploitManager()
+    session = msf_module.MetasploitSession("dead")
+    session.process = _TeardownProcess(alive=False)
+    manager.sessions["dead"] = session
+    signals = []
+
+    def kill_process_group(process_group, sig):
+        if sig == 0:
+            raise ProcessLookupError
+        signals.append((process_group, sig))
+
+    monkeypatch.setattr(msf_module.os, "killpg", kill_process_group, raising=False)
+
+    manager._cleanup_dead_sessions()
+
+    assert "dead" not in manager.sessions
+    assert (4242, msf_module.signal.SIGTERM) in signals
+
+
+@requires_msf_module
+def test_teardown_survives_a_group_that_is_already_gone(monkeypatch):
+    """Closing the pty master can deliver SIGHUP to the group first, so by the
+    time killpg runs the group may already be gone. destroy_all_sessions
+    iterates stop() with no per-session guard, so one escaping ProcessLookupError
+    would abort teardown of every session after it."""
+    session = msf_module.MetasploitSession("already-gone")
+    session.process = _TeardownProcess()
+
+    def kill_process_group(process_group, sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(msf_module.os, "killpg", kill_process_group, raising=False)
+
+    session.stop()
+
+    assert session.process is None
+
+
+def test_metasploit_stop_signals_the_process_group():
+    """Source-level backstop for the two assertions above: the leader-only
+    terminate() must not come back, since a revert to it leaves every semantic
+    test above red only while killpg is monkeypatched in."""
+    assert "os.killpg" in MSF_SRC
+    assert "self.process.terminate()" not in MSF_SRC
+    assert "import signal" in MSF_SRC

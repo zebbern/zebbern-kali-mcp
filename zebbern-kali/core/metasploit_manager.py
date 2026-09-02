@@ -5,6 +5,7 @@ import os
 import pty
 import re
 import select
+import signal
 import subprocess
 import threading
 import time
@@ -328,42 +329,102 @@ class MetasploitSession:
                 "detector": "error",
             }
     
-    def stop(self):
-        """Stop the msfconsole session."""
-        self._running = False
-        
-        if self.master_fd is not None:
+    def _terminate_process_group(self):
+        """SIGTERM then SIGKILL the whole msfconsole process group.
+
+        msfconsole is spawned under preexec_fn=os.setsid, so it and every child
+        it spawns -- a `shell` channel, a locally staged payload or handler --
+        share a process group whose id is the leader's pid. terminate() on the
+        leader alone leaves those children orphaned; signalling the group reaches
+        them. Mirrors the teardown NetworkPivotManager.stop_tunnel already uses.
+        """
+        process = self.process
+        if process is None:
+            return
+        process_group = getattr(process, "pid", None)
+        uses_process_group = bool(process_group and hasattr(os, "killpg"))
+        group_escalated = False
+        try:
+            if uses_process_group:
+                os.killpg(process_group, signal.SIGTERM)
+            else:
+                process.terminate()
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            logger.error(
+                f"SIGTERM to msf session {self.session_id} group "
+                f"{process_group} denied"
+            )
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            if uses_process_group:
+                try:
+                    os.killpg(process_group, getattr(signal, "SIGKILL", 9))
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    logger.error(
+                        f"SIGKILL to msf session {self.session_id} group "
+                        f"{process_group} denied"
+                    )
+                group_escalated = True
+            else:
+                process.kill()
+            process.wait(timeout=5)
+        # Leader gone but a child may still hold the group open (a landed
+        # meterpreter, a `shell` channel): probe and reap it.
+        if uses_process_group and not group_escalated:
             try:
-                os.write(self.master_fd, b"exit\n")
-                time.sleep(0.5)
-            except:
+                os.killpg(process_group, 0)
+            except ProcessLookupError:
                 pass
+            else:
+                try:
+                    os.killpg(process_group, getattr(signal, "SIGKILL", 9))
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    logger.error(
+                        f"SIGKILL (survivor) to msf session {self.session_id} "
+                        f"group {process_group} denied"
+                    )
+
+    def stop(self):
+        """Stop the msfconsole session and its whole process group."""
+        self._running = False
+
+        # Ask msfconsole to exit through its own console first, but only while
+        # it is still alive to read it -- on an already-dead leader this write
+        # goes nowhere and the 0.5s wait is pure latency under the manager lock
+        # in _cleanup_dead_sessions. The killpg below guarantees teardown either
+        # way.
+        if self.master_fd is not None:
+            if self.process is not None and self.process.poll() is None:
+                try:
+                    os.write(self.master_fd, b"exit\n")
+                    time.sleep(0.5)
+                except OSError:
+                    pass
             try:
                 os.close(self.master_fd)
-            except:
+            except OSError:
                 pass
             self.master_fd = None
-        
+
         if self.slave_fd is not None:
             try:
                 os.close(self.slave_fd)
-            except:
+            except OSError:
                 pass
             self.slave_fd = None
-        
-        if self.process:
-            try:
-                self.process.terminate()
-                self.process.wait(timeout=5)
-            except:
-                try:
-                    self.process.kill()
-                except:
-                    pass
-            self.process = None
-        
+
+        self._terminate_process_group()
+        self.process = None
+
         logger.info(f"Metasploit session {self.session_id} stopped")
-    
+
     def is_alive(self) -> bool:
         """Check if the session is still running."""
         return self.process is not None and self.process.poll() is None
@@ -467,10 +528,22 @@ class MetasploitManager:
             return {"success": True, "message": f"Destroyed {count} sessions"}
     
     def _cleanup_dead_sessions(self):
-        """Remove dead sessions from the manager."""
+        """Remove dead sessions, tearing down any process group they leave.
+
+        A crashed msfconsole can leave a landed meterpreter or `shell` child
+        alive in its process group; dropping the session from the dict without
+        signalling that group orphans the child. Route removal through stop(),
+        which reaps it. Guarded because this runs under the manager lock inside
+        list_sessions / create_session, which have no outer try/except.
+        """
         dead_sessions = [sid for sid, s in self.sessions.items() if not s.is_alive()]
         for sid in dead_sessions:
-            self.sessions.pop(sid, None)
+            session = self.sessions.pop(sid, None)
+            if session is not None:
+                try:
+                    session.stop()
+                except Exception as exc:
+                    logger.error(f"Error tearing down dead msf session {sid}: {exc}")
 
 
 # Global manager instance
