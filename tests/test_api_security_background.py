@@ -108,3 +108,73 @@ def test_the_default_stays_synchronous_for_direct_http_callers(monkeypatch):
     assert captured == {}, "the default call backgrounded itself"
     assert "-o" in ran["cmd"], "the synchronous path still parses its own file"
     assert result["output_file"] == ran["cmd"][ran["cmd"].index("-o") + 1]
+
+
+BLUEPRINT_PATH = BACKEND_ROOT / "api" / "blueprints" / "api_security.py"
+
+
+def _blueprint_module():
+    """Load the route module by path.
+
+    ``import api.blueprints.api_security`` pulls ``termios`` through the
+    package ``__init__`` and cannot run on Windows. The file itself imports
+    only ``flask``, ``core.config`` and ``core.api_security``, all of which do.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "tested_api_security_blueprint", BLUEPRINT_PATH
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class _RecordingTester:
+    def __init__(self):
+        self.calls = []
+
+    def _record(self, name):
+        def call(**kwargs):
+            self.calls.append((name, kwargs))
+            return {"success": True, "job_id": "job-recorded", "background": True}
+
+        return call
+
+    def __getattr__(self, name):
+        return self._record(name)
+
+
+@pytest.mark.parametrize(
+    "route, payload, runner",
+    [
+        ("/api/api-security/nuclei", {"target": "https://api.example.test"},
+         "nuclei_api_scan"),
+        ("/api/api-security/ffuf", {"url": "https://api.example.test/FUZZ"},
+         "ffuf_fuzz"),
+    ],
+)
+def test_the_route_threads_background_into_the_runner(route, payload, runner):
+    """A runner that honours the flag is useless if the route drops it.
+
+    The client posts ``background`` in the body like every other promoted
+    tool; the route has to forward it or the backend runs synchronously, the
+    bounded start POST raises ReadTimeout at ~50s, and the scan is orphaned
+    again with no job_id to show for it.
+    """
+    from flask import Flask
+
+    module = _blueprint_module()
+    tester = _RecordingTester()
+    module.api_tester = tester
+
+    app = Flask(__name__)
+    app.register_blueprint(module.bp)
+    client = app.test_client()
+
+    response = client.post(route, json={**payload, "background": True})
+
+    assert response.status_code == 200, response.get_data(as_text=True)
+    name, kwargs = tester.calls[0]
+    assert name == runner
+    assert kwargs["background"] is True, (
+        f"{route} dropped background on the way to {runner}"
+    )
