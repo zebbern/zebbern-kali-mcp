@@ -29,6 +29,19 @@ def _safe_origin(url: str) -> str:
     return f"{scheme}://{host}:{port}" if port else f"{scheme}://{host}"
 
 
+def _server_reason(response) -> str:
+    """Pull the backend's own explanation out of an error response, if it gave one."""
+    if response is None:
+        return ""
+    try:
+        body = response.json()
+    except Exception:
+        return ""
+    if not isinstance(body, dict):
+        return ""
+    return str(body.get("error") or body.get("message") or "").strip()
+
+
 def _request_failure(
     method: str,
     endpoint: str,
@@ -58,6 +71,13 @@ def _request_failure(
             ),
             "success": False,
         }
+    reason = _server_reason(response)
+    if reason:
+        # The backend answers most failures with a body explaining exactly what
+        # went wrong, then serves it with a non-2xx status. raise_for_status
+        # fires first, so that explanation used to be discarded and the caller
+        # saw only the status code.
+        return {"error": f"{label}: {detail} - {reason}", "success": False}
     return {"error": f"{label}: {detail}", "success": False}
 
 
