@@ -13,7 +13,7 @@ import sys
 from flask import Flask
 
 from core.config import API_LISTEN_HOST, API_PORT, DEBUG_MODE, VERSION, logger
-from api.auth import install_api_auth
+from api.auth import exposure_warnings, install_api_auth
 from api.routes import setup_routes
 
 
@@ -116,7 +116,14 @@ def main():
     logger.info("  - Kali Tools: Network scanning and penetration testing")
     logger.info("  - File Operations: File upload/download operations")
     logger.info("=" * 60)
-    
+
+    for warning in exposure_warnings(
+        host=API_LISTEN_HOST,
+        token=os.environ.get("KALI_API_TOKEN", ""),
+        debug=debug,
+    ):
+        logger.warning(warning)
+
     try:
         app.run(host=API_LISTEN_HOST, port=port, debug=debug)
     except KeyboardInterrupt:

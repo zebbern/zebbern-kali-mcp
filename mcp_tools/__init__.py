@@ -84,6 +84,14 @@ _CORE_MODULES = (
 # ``trim`` only; every other profile keeps them.
 _HOST_REDUNDANT_MODULES = frozenset({callback_catcher, output_parser})
 
+# An ``auto`` manifest that hides more than this fraction of the tool surface is
+# far more likely a backend regression than an honest description of a stripped
+# image. Over-hiding is the unrecoverable failure direction -- discovery is a
+# startup snapshot, so a hidden tool stays invisible for the life of the process
+# -- so past this point the manifest is ignored rather than obeyed. The
+# legitimate lean case hides 7 of 131 (~5%), leaving enormous margin.
+_MAX_AUTO_HIDDEN_FRACTION = 0.5
+
 _PROFILES: dict[str, tuple[ModuleType, ...]] = {
     "auto": ALL_MODULES,
     "core": _CORE_MODULES,
@@ -149,26 +157,38 @@ def modules_for_profile(
     )
 
 
-@lru_cache(maxsize=1)
-def _core_tool_names() -> frozenset[str]:
-    """Tool names contributed by the core modules, which auto must never hide."""
+class _NameRecorder:
+    """Stands in for a FastMCP server to collect tool names without registering."""
 
-    class _NameRecorder:
-        def __init__(self) -> None:
-            self.names: set[str] = set()
+    def __init__(self) -> None:
+        self.names: set[str] = set()
 
-        def tool(self, name=None, **_kwargs):
-            def decorator(function):
-                self.names.add(name or function.__name__)
-                return function
+    def tool(self, name=None, **_kwargs):
+        def decorator(function):
+            self.names.add(name or function.__name__)
+            return function
 
-            return decorator
+        return decorator
 
+
+def _tool_names(modules: tuple[ModuleType, ...]) -> frozenset[str]:
     recorder = _NameRecorder()
-    for module in _CORE_MODULES:
+    for module in modules:
         # register only decorates; the client is captured, never called here.
         module.register(recorder, None)
     return frozenset(recorder.names)
+
+
+@lru_cache(maxsize=1)
+def _core_tool_names() -> frozenset[str]:
+    """Tool names contributed by the core modules, which auto must never hide."""
+    return _tool_names(_CORE_MODULES)
+
+
+@lru_cache(maxsize=1)
+def _all_auto_tool_names() -> frozenset[str]:
+    """Every tool name the auto profile can register -- the over-hiding denominator."""
+    return _tool_names(ALL_MODULES)
 
 
 def _unavailable_auto_tools(
@@ -238,9 +258,19 @@ def register_all(
     """Register the modules selected by ``profile``, minus ``exclude``."""
     if profile.strip().lower() == "auto":
         unavailable = _unavailable_auto_tools(health)
+        total = len(_all_auto_tool_names())
         if unavailable is None:
             logger.warning(
                 "Auto capability discovery unavailable; registering the full tool set"
+            )
+            unavailable = frozenset()
+        elif len(unavailable) > _MAX_AUTO_HIDDEN_FRACTION * total:
+            logger.warning(
+                "Auto manifest marked %d of %d tools unavailable (> %.0f%%); "
+                "ignoring it and registering the full tool set",
+                len(unavailable),
+                total,
+                _MAX_AUTO_HIDDEN_FRACTION * 100,
             )
             unavailable = frozenset()
         elif unavailable:

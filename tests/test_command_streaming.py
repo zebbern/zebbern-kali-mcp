@@ -132,8 +132,8 @@ def test_command_executor_never_uses_indented_json():
     one-object-per-`data:`-line parser (mcp_tools/command_exec.py).
 
     Scoped to command_executor.py, which serializes whole payloads with
-    json.dumps. _helpers.py hand-builds its frames and only json.dumps a scalar
-    string, where indent= is a no-op -- its real invariant is covered by
+    json.dumps. _helpers.py now does too, but a source grep is the weaker check
+    there: its frames are exercised end-to-end against hostile input by
     test_helper_frames_stay_on_one_line_for_hostile_input below.
     """
     source = (BACKEND_ROOT / "core" / "command_executor.py").read_text(encoding="utf-8")
@@ -154,9 +154,10 @@ def test_command_executor_never_uses_indented_json():
 def test_helper_frames_stay_on_one_line_for_hostile_input(hostile):
     """Every _helpers.py frame must be one physical line of parseable JSON.
 
-    The frames are hand-built with f-strings, so the invariant is that every
-    interpolated field is escaped -- not that json.dumps is used. An unescaped
-    newline or quote splits a frame in two and the client silently drops it.
+    The invariant is the frame, not the encoder: no caller-supplied field may
+    inject a raw newline or otherwise break the JSON, however the frame is
+    built. An unescaped newline or quote splits a frame in two and the client
+    silently drops it.
     """
     frames = _helper_frames_for(output_line=hostile, error=hostile)
 
