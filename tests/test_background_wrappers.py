@@ -47,6 +47,31 @@ FOREGROUND_ONLY_WRAPPERS = {
     "cve_package_audit": {"package": "lodash"},
 }
 
+# The wrappers that no longer need the flag at all: they start a job on every
+# call and wait inline for it, mapped to whether they take the client's heavy
+# semaphore. Every one of them sits on a TOOL_TIMEOUTS tier of 3600s or more,
+# which tests/test_autopromote_tier_guard.py pins to the backend table.
+AUTO_PROMOTE_WRAPPERS = {
+    "tools_nmap": "heavy_tool_post",
+    "tools_nikto": "heavy_tool_post",
+    "tools_gobuster": "heavy_tool_post",
+    "tools_wpscan": "heavy_tool_post",
+    "tools_sqlmap": "heavy_tool_post",
+    "tools_hydra": "heavy_tool_post",
+    "tools_masscan": "heavy_tool_post",
+    "tools_katana": "heavy_tool_post",
+    "tools_amass": "heavy_tool_post",
+    "tools_arjun": "safe_post",
+    "tools_fierce": "safe_post",
+    "tools_enum4linux": "safe_post",
+    "tools_gowitness": "safe_post",
+    "tools_john": "safe_post",
+}
+
+# The rest of the backgroundable surface: quick-lookup tiers (900-1800s) where
+# a job handle would cost more than the call, so the flag stays opt-in.
+OPT_IN_WRAPPERS = sorted(set(BACKGROUNDABLE_WRAPPERS) - set(AUTO_PROMOTE_WRAPPERS))
+
 
 class _RecordingMCP:
     """Capture the raw functions an mcp_tools module registers."""
@@ -67,14 +92,24 @@ class _RecordingClient:
 
     def __init__(self, reply=None):
         self.calls = []
+        self.posters = []
         self.reply = reply if reply is not None else {"success": True}
 
-    def safe_post(self, endpoint, json_data):
+    def safe_post(self, endpoint, json_data, read_timeout=None):
         self.calls.append((endpoint, json_data))
+        self.posters.append("safe_post")
         return self.reply
 
-    def heavy_tool_post(self, endpoint, json_data, semaphore_timeout=120):
-        return self.safe_post(endpoint, json_data)
+    def heavy_tool_post(self, endpoint, json_data, semaphore_timeout=120, read_timeout=None):
+        self.calls.append((endpoint, json_data))
+        self.posters.append("heavy_tool_post")
+        return self.reply
+
+    def safe_get(self, endpoint, params=None, read_timeout=None):
+        # Only reached if a reply carries a job_id. The default reply does not,
+        # so an auto-promoting wrapper takes the passthrough branch and these
+        # stay body-shape tests rather than turning into timing tests.
+        return {"status": "running"}
 
 
 def _client_tools(reply=None):
@@ -93,17 +128,52 @@ def test_the_wrapper_inventory_matches_the_registered_surface():
     assert set(tools) == set(BACKGROUNDABLE_WRAPPERS) | set(FOREGROUND_ONLY_WRAPPERS)
 
 
-@pytest.mark.parametrize("name", sorted(BACKGROUNDABLE_WRAPPERS))
-def test_every_backgroundable_wrapper_forwards_the_flag(name):
+@pytest.mark.parametrize("name", sorted(AUTO_PROMOTE_WRAPPERS))
+def test_auto_promote_wrappers_send_background_on_the_default_call(name):
+    """The headline. There is no flag left to forget: a plain call starts a job
+    before it waits for one, so the harness giving up mid-wait leaves something
+    job_list can still find instead of an orphaned scan."""
     tools, client = _client_tools()
+
+    tools[name](**BACKGROUNDABLE_WRAPPERS[name])
+    _endpoint, body = client.calls[-1]
+    assert body.get("background") is True, (
+        f"{name} still runs in the foreground unless asked, so a forgotten flag "
+        "orphans it at ~60s"
+    )
+
+    tools[name](background=True, **BACKGROUNDABLE_WRAPPERS[name])
+    _endpoint, explicit_body = client.calls[-1]
+    assert explicit_body.get("background") is True, f"{name} dropped an explicit flag"
+
+
+@pytest.mark.parametrize("name", OPT_IN_WRAPPERS)
+def test_opt_in_wrappers_do_not_auto_promote(name):
+    """Below the 3600s tier the flag stays opt-in: these answer in seconds, so
+    trading that for a job handle would be a cost with no matching risk."""
+    tools, client = _client_tools()
+
+    tools[name](**BACKGROUNDABLE_WRAPPERS[name])
+    _endpoint, default_body = client.calls[-1]
+    assert "background" not in default_body, f"{name} sends background when not asked"
 
     tools[name](background=True, **BACKGROUNDABLE_WRAPPERS[name])
     _endpoint, body = client.calls[-1]
     assert body.get("background") is True, f"{name} did not forward background"
 
+
+@pytest.mark.parametrize("name", sorted(AUTO_PROMOTE_WRAPPERS))
+def test_heavy_wrappers_use_the_semaphore_path(name):
+    """Auto-promotion must not quietly move a tool in or out of the group that
+    shares MAX_HEAVY_TASKS = 5. Routing a heavy scan through safe_post removes
+    the only limit on how many run at once."""
+    tools, client = _client_tools()
+
     tools[name](**BACKGROUNDABLE_WRAPPERS[name])
-    _endpoint, default_body = client.calls[-1]
-    assert "background" not in default_body, f"{name} sends background when not asked"
+
+    assert client.posters[-1] == AUTO_PROMOTE_WRAPPERS[name], (
+        f"{name} posted via {client.posters[-1]}, not {AUTO_PROMOTE_WRAPPERS[name]}"
+    )
 
 
 @pytest.mark.parametrize("name", sorted(FOREGROUND_ONLY_WRAPPERS))
