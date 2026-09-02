@@ -50,6 +50,44 @@ def quick_budget(monkeypatch):
     monkeypatch.setenv("ZKM_INLINE_POLL_SECONDS", "0.05")
 
 
+def test_fast_path_keeps_the_order_between_the_two_streams():
+    """Splitting the ring into stdout and stderr is exactly what destroys the
+    ordering between them, so the ordered records have to come through too.
+
+    job_manager records every line as {"source", "line"} under one lock, which
+    is the same design Docker's framed log stream and journald's tagged records
+    landed on. Dropping it here would mean the layer above threw away an
+    interleaving the layer below already had -- and this is now the default path
+    for fourteen heavy tools, so a warning would silently detach from the line
+    it belongs beside.
+    """
+    events = [
+        {"source": "stdout", "line": "Starting Nmap 7.99"},
+        {"source": "stderr", "line": "Warning: Hostname resolves to 2 IPs"},
+        {"source": "stdout", "line": "80/tcp open  http"},
+    ]
+    client = FakeClient(
+        start_reply={"job_id": "j9", "status": "running", "background": True},
+        statuses=[{"status": "succeeded", "return_code": 0, "timed_out": False}],
+        output={
+            "stdout": ["Starting Nmap 7.99", "80/tcp open  http"],
+            "stderr": ["Warning: Hostname resolves to 2 IPs"],
+            "events": events,
+        },
+    )
+
+    result = run_promotable(client, "api/tools/nmap", {"target": "x"}, heavy=True, background=False)
+
+    assert result["events"] == events, "the ordered records were dropped"
+    # The split strings stay for synchronous parity; events is additive.
+    assert "Starting Nmap 7.99" in result["stdout"]
+    assert "Warning" in result["stderr"]
+    # The warning sits between the two stdout lines, which neither string shows.
+    assert [event["source"] for event in result["events"]] == [
+        "stdout", "stderr", "stdout"
+    ]
+
+
 def test_fast_path_returns_a_synchronous_shape():
     """A job that finishes inside the budget must be indistinguishable from the
     synchronous call it replaced: stdout is a string, not the ring's list."""

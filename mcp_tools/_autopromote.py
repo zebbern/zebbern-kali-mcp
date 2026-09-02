@@ -122,6 +122,14 @@ def _finished_result(kali_client, job_id, status, budget):
         "job_id": job_id,
         "stdout": stdout,
         "stderr": stderr,
+        # The stdout/stderr strings above are the synchronous-parity shape, and
+        # splitting by stream is what loses the ordering between them. The ring
+        # already records every line as {"source", "line"} through one lock, so
+        # forward that list rather than throwing away an ordering the layer
+        # underneath already computed. This is arrival order -- reader
+        # scheduling against child buffering -- not true emission order; over
+        # pipes with no PTY nothing can promise the latter.
+        "events": out.get("events") or [],
         "return_code": return_code,
         "timed_out": timed_out,
         "partial_results": bool(timed_out and has_output),
