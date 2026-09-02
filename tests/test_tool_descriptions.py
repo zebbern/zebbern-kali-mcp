@@ -112,3 +112,21 @@ def test_word_matching_does_not_accept_a_name_inside_a_longer_word():
     """`ip` must not count as documented merely because `description` contains it."""
     assert "ip" not in _words("description of the recipient script")
     assert "ip" in _words("ip: the target address")
+
+
+def test_exec_stream_is_not_sold_as_the_long_running_tool():
+    """exec_stream does not stream to the agent and does not evade the harness
+    abort: SSE runs between our client and the backend, so the harness sees one
+    request and one response and gives up at the same point a synchronous call
+    does. Recommending it for nmap and fuzzing pointed agents at the one tool
+    that registers no job and cannot be cancelled.
+
+    Written to the invariant rather than the wording: what must be gone is the
+    long-running claim, and what must be present is the background route out.
+    """
+    doc = _doc(TOOLS["exec_stream"]).lower()
+
+    assert "long-running" not in doc, "still advertised for long-running commands"
+    assert "nmap, nuclei" not in doc, "still names the tools it is worst at"
+    assert "background" in doc, "does not point at the background route"
+    assert "job_" in doc or "job_status" in doc, "names no job tool to drive"

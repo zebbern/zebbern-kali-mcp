@@ -39,16 +39,26 @@ def register(mcp: FastMCP, kali_client) -> None:
     @mcp.tool()
     def exec_stream(command: str, timeout: int = 3600) -> Dict[str, Any]:
         """
-        Execute a command with real-time streaming output via SSE (text/event-stream).
-        Posts to api/command with streaming=True. Useful for long-running commands
-        like nmap, nuclei, fuzzing.
+        Run a command and return its COMPLETE output once it finishes, with each
+        line tagged by source ([stdout]/[stderr]) in arrival order. Despite the
+        SSE transport this does NOT stream to you incrementally and does NOT
+        evade the ~60s tool-call abort -- you get one response at the end, same
+        as a synchronous call. Effective ceiling is ~50s regardless of `timeout`.
+
+        Use it only for SHORT commands where interleaved-by-arrival output or
+        truncation detection (the `incomplete` flag) matters. For anything that
+        may run longer, use the tools_* wrappers (they auto-promote to a
+        background job) or zebbern_exec(background=True) with job_status /
+        job_output / job_cancel -- exec_stream registers no job and cannot be
+        cancelled.
 
         Args:
             command: The command to execute
-            timeout: Timeout in seconds (default: 3600 = 1 hour)
+            timeout: Backstop seconds for a hung process (default: 3600)
 
         Returns:
-            Streaming output collected in real-time with all events
+            {success, output, return_code, timed_out, streamed}, plus
+            incomplete/error when the stream ends without a result frame.
         """
         response = None
         try:
