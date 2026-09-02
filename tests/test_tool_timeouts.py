@@ -167,6 +167,18 @@ def test_metasploit_keeps_success_true_on_a_timeout():
     assert '"success": False,\n                "timed_out": timed_out' not in MSF_SRC
     assert '"success": True,\n                "output": output,' in MSF_SRC
 
+KALI_SERVER_SRC = (BACKEND_ROOT / "kali_server.py").read_text(encoding="utf-8")
+
+
+def test_shutdown_handler_destroys_msf_sessions():
+    """signal_handler tears down background jobs, reverse-shell sessions and SSH
+    sessions, and left msf sessions -- the one type that now leads a process
+    group -- running. Necessarily a source guard: kali_server imports api.routes,
+    which pulls in pty/termios, so the handler cannot be driven on Windows."""
+    assert "destroy_all_sessions" in KALI_SERVER_SRC
+    assert "msf_manager" in KALI_SERVER_SRC
+
+
 
 class _RecordingMCP:
     """Capture the raw functions an mcp_tools module registers."""
