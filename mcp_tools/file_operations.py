@@ -6,9 +6,27 @@ from typing import Dict, Any
 from mcp.server.fastmcp import FastMCP
 
 
+_NOT_BASE64 = (
+    "content must be base64-encoded; the value given could not be decoded"
+)
+
+
 def _compute_sha256(content: str) -> str:
     """Compute SHA256 hex digest of base64-decoded content."""
     return hashlib.sha256(base64.b64decode(content)).hexdigest()
+
+
+def _checksum_or_none(content: str):
+    """Digest of base64 content, or ``None`` when it will not decode.
+
+    b64decode raises for malformed input, and an exception here escapes into
+    the transport as a bare tool-call failure -- unreadable to a caller, and
+    unlike every other failure in this client, which is reported as data.
+    """
+    try:
+        return _compute_sha256(content)
+    except (ValueError, TypeError):
+        return None
 
 
 def _verify_download_checksum(response: Dict[str, Any], content_key: str = "content") -> Dict[str, Any]:
@@ -21,7 +39,12 @@ def _verify_download_checksum(response: Dict[str, Any], content_key: str = "cont
     remote_hash = response.get("sha256")
     content = response.get(content_key)
     if remote_hash and content is not None:
-        local_hash = _compute_sha256(str(content))
+        local_hash = _checksum_or_none(str(content))
+        if local_hash is None:
+            response["checksum_warning"] = (
+                "content was not base64-decodable, so integrity could not be verified"
+            )
+            return response
         if local_hash != remote_hash:
             response["checksum_warning"] = (
                 f"SHA256 mismatch — expected {remote_hash}, got {local_hash}. "
@@ -51,7 +74,10 @@ def register(mcp: FastMCP, kali_client) -> None:
         """
         data = {"content": content, "remote_path": remote_path, "encoding": encoding}
         if verify_checksum:
-            data["sha256"] = _compute_sha256(content)
+            checksum = _checksum_or_none(content)
+            if checksum is None:
+                return {"success": False, "error": _NOT_BASE64}
+            data["sha256"] = checksum
         return kali_client.safe_post("api/kali/upload", data)
 
     @mcp.tool()
@@ -94,7 +120,10 @@ def register(mcp: FastMCP, kali_client) -> None:
             "remote_path": remote_path, "method": method, "encoding": encoding,
         }
         if verify_checksum:
-            data["sha256"] = _compute_sha256(content)
+            checksum = _checksum_or_none(content)
+            if checksum is None:
+                return {"success": False, "error": _NOT_BASE64}
+            data["sha256"] = checksum
         return kali_client.safe_post("api/target/upload", data)
 
     @mcp.tool()
