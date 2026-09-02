@@ -63,6 +63,44 @@ def test_the_promoted_set_is_the_expected_fourteen():
     }
 
 
+# The two api-security scanners that auto-promote without being in
+# PROMOTED_TOOLS. They are api_security wrappers on api/api-security/* routes,
+# not tools_* wrappers on api/tools/*, and PROMOTED_TOOLS plus its
+# "expected fourteen" assertion above describe only the latter -- adding these
+# would make that statement false for a map run_promotable never reads.
+PROMOTED_API_SECURITY_TOOLS = ("nuclei", "ffuf")
+
+
+def test_the_api_security_scanners_that_promote_are_also_3600plus_tier():
+    """The same floor, reached by a different route.
+
+    ``api_nuclei_scan`` and ``api_ffuf_fuzz`` call ``run_promotable`` directly
+    with explicit ``heavy`` and ``background``, so nothing above ties them to
+    ``PROMOTED_TOOLS`` and the loop over that map cannot see them. Their tiers
+    live in the image and the promotion lives in the wheel, so this is the same
+    cross-track drift the guard above exists for -- it just needs its own case.
+    """
+    timeouts = _tool_config().TOOL_TIMEOUTS
+
+    for name in PROMOTED_API_SECURITY_TOOLS:
+        assert name in timeouts, (
+            f"{name} auto-promotes on the default tier alone"
+        )
+        assert timeouts[name] >= PROMOTION_FLOOR, (
+            f"{name} auto-promotes but its TOOL_TIMEOUTS tier is "
+            f"{timeouts[name]!r}, below the {PROMOTION_FLOOR}s floor"
+        )
+
+
+def test_the_api_security_scanners_stay_out_of_the_promoted_map():
+    """Guarding the other direction: adding them would silently break the
+    "expected fourteen" assertion's meaning rather than its letter."""
+    for name in PROMOTED_API_SECURITY_TOOLS:
+        assert name not in PROMOTED_TOOLS, (
+            f"{name} is an api_security wrapper, not one of the fourteen tools_*"
+        )
+
+
 def test_the_heavy_flag_matches_the_client_semaphore_group():
     """The nine that share MAX_HEAVY_TASKS = 5, and the five that do not."""
     heavy = {name for name, is_heavy in PROMOTED_TOOLS.items() if is_heavy}
