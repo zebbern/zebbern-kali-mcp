@@ -34,8 +34,10 @@ def wait_for_terminal(manager: JobManager, job_id: str, timeout: float = 5):
 
 
 @pytest.fixture
-def manager():
-    instance = JobManager(max_jobs=16, max_output_lines=3)
+def manager(tmp_path):
+    instance = JobManager(
+        max_jobs=16, max_output_lines=3, output_dir=str(tmp_path / "jobs")
+    )
     yield instance
     instance.shutdown()
 
@@ -175,6 +177,126 @@ def test_single_giant_line_is_truncated_with_bounded_storage():
         assert all(len(event["line"]) <= 128 for event in output["events"])
     finally:
         manager.shutdown()
+
+
+def test_full_output_is_teed_to_disk(manager):
+    """The bounded window may drop lines; the log on disk never does.
+
+    The ring evicts the oldest events past ``max_output_lines``, and before
+    the tee those bytes were gone permanently. ``output_truncated`` now means
+    "the returned window is partial", not "output was lost".
+    """
+    job = manager.start(
+        python_command("[print('line %d' % i) for i in range(50)]"),
+        shell=False,
+        timeout=10,
+    )
+    wait_for_terminal(manager, job["job_id"])
+
+    output = manager.read_output(job["job_id"], lines=100)
+
+    assert output["output_truncated"] is True
+    assert output["output_logged"] is True
+    assert output["lines_returned"] == 3
+    on_disk = Path(output["output_path"]).read_text(encoding="utf-8").splitlines()
+    assert on_disk == [f"line {index}" for index in range(50)]
+
+
+def test_overlong_single_line_reaches_disk_intact(tmp_path):
+    """The tee must run on the raw pre-clip chunk, not the clipped line.
+
+    ``_drain_stream`` reads with ``readline(max_line_chars + 1)``, so a line
+    longer than the limit arrives as 129-char chunks that ``_append_output``
+    clips to 128. Teeing the clipped line looks correct and still drops one
+    byte in every 129 -- 77 of them here. Only the raw chunk reconstructs the
+    stream the process actually wrote.
+    """
+    manager = JobManager(
+        max_output_lines=20,
+        max_output_chars=512,
+        max_line_chars=128,
+        output_dir=str(tmp_path / "jobs"),
+    )
+    try:
+        job = manager.start(
+            python_command("import sys; sys.stdout.write('x' * 10000)"),
+            shell=False,
+            timeout=10,
+        )
+        wait_for_terminal(manager, job["job_id"])
+
+        output = manager.read_output(job["job_id"], lines=20)
+
+        assert output["output_truncated"] is True
+        assert all(len(event["line"]) <= 128 for event in output["events"])
+        assert output["output_logged"] is True
+        on_disk = Path(output["output_path"]).read_text(encoding="utf-8")
+        assert on_disk.count("x") == 10000
+        assert on_disk == "x" * 10000
+    finally:
+        manager.shutdown()
+
+
+def test_job_starts_when_log_dir_unwritable(tmp_path):
+    """A log that cannot be opened must not stop the job from running.
+
+    ``output_logged=False`` is the one honestly lossy state: the bounded ring
+    is all there is, so ``output_truncated`` means loss again.
+    """
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where the log directory's parent should be")
+    manager = JobManager(
+        max_jobs=16,
+        max_output_lines=20,
+        output_dir=str(blocker / "jobs"),
+    )
+    try:
+        job = manager.start(
+            python_command("print('still-runs')"),
+            shell=False,
+            timeout=10,
+        )
+        completed = wait_for_terminal(manager, job["job_id"])
+        output = manager.read_output(job["job_id"], lines=10)
+
+        assert completed["status"] == "succeeded"
+        assert completed["output_logged"] is False
+        assert completed["output_path"] is None
+        assert output["output_logged"] is False
+        assert output["output_path"] is None
+        assert output["stdout"] == ["still-runs"]
+    finally:
+        manager.shutdown()
+
+
+def test_untruncated_output_still_reports_a_log_path(manager):
+    """Every job gets a log, not only the ones that overflow the ring."""
+    job = manager.start(python_command("print('ready')"), shell=False, timeout=10)
+    wait_for_terminal(manager, job["job_id"])
+
+    output = manager.read_output(job["job_id"], lines=10)
+
+    assert output["output_truncated"] is False
+    assert output["output_logged"] is True
+    assert Path(output["output_path"]).read_text(encoding="utf-8") == "ready\n"
+
+
+def test_log_path_is_surfaced_by_get_list_and_read_output(manager):
+    """One job, one path, reported identically by all three readers."""
+    job = manager.start(python_command("print('surfaced')"), shell=False, timeout=10)
+    wait_for_terminal(manager, job["job_id"])
+
+    metadata = manager.get(job["job_id"])
+    output = manager.read_output(job["job_id"], lines=10)
+    listed = manager.list()[0]
+
+    assert metadata["output_path"] is not None
+    assert metadata["output_path"] == output["output_path"]
+    assert metadata["output_path"] == listed["output_path"]
+    assert job["job_id"] in metadata["output_path"]
+    assert metadata["output_logged"] is True
+    assert output["output_logged"] is True
+    assert listed["output_logged"] is True
 
 
 def test_shutdown_cancels_active_jobs():

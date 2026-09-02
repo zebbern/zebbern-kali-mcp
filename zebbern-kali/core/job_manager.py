@@ -7,12 +7,13 @@ import os
 import queue
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Optional, Sequence, Union
+from typing import Any, Optional, Sequence, TextIO, Union
 
 
 Command = Union[str, Sequence[str]]
@@ -38,6 +39,9 @@ class _Job:
     output_truncated: bool = False
     output_closed: bool = False
     output_chars: int = 0
+    output_logged: bool = False
+    output_path: Optional[str] = None
+    output_file: Optional[TextIO] = field(default=None, repr=False)
     created_at: float = field(default_factory=time.time)
     started_at: Optional[float] = None
     finished_at: Optional[float] = None
@@ -63,6 +67,7 @@ class JobManager:
         max_pending_inputs: int = 16,
         max_output_wait: float = 30,
         drain_timeout: float = 2,
+        output_dir: Optional[str] = None,
     ):
         limits = {
             "max_jobs": max_jobs,
@@ -88,6 +93,9 @@ class JobManager:
         self.max_pending_inputs = max_pending_inputs
         self.max_output_wait = float(max_output_wait)
         self.drain_timeout = float(drain_timeout)
+        self.output_dir = output_dir or os.path.join(
+            tempfile.gettempdir(), "zebbern-kali-jobs"
+        )
         self._jobs: dict[str, _Job] = {}
         self._stopping = False
         self._condition = threading.Condition(threading.RLock())
@@ -155,6 +163,7 @@ class JobManager:
             job.process_group_id = process.pid
             job.started_at = time.time()
             job.status = "running"
+            self._open_log(job)
             cancel_after_start = job.cancel_requested
             initial_metadata = self._metadata(job)
             self._condition.notify_all()
@@ -254,6 +263,8 @@ class JobManager:
                 "output": "\n".join(event["line"] for event in events),
                 "lines_returned": len(events),
                 "output_truncated": job.output_truncated,
+                "output_path": job.output_path,
+                "output_logged": job.output_logged,
             }
 
     def send_input(self, job_id: str, input_text: str) -> dict[str, Any]:
@@ -382,6 +393,8 @@ class JobManager:
             "timed_out": job.timed_out,
             "cancel_requested": job.cancel_requested,
             "output_truncated": job.output_truncated,
+            "output_path": job.output_path,
+            "output_logged": job.output_logged,
             "created_at": job.created_at,
             "started_at": job.started_at,
             "finished_at": job.finished_at,
@@ -389,6 +402,51 @@ class JobManager:
         if job.error:
             data["error"] = job.error
         return data
+
+    def _open_log(self, job: _Job) -> None:
+        """Open the per-job log that captures 100% of stdout and stderr.
+
+        A job must start even if its log cannot: on any filesystem error the
+        job runs with the bounded in-memory ring only and reports
+        output_logged=False, which keeps output_truncated's lossy meaning
+        honest. The log is never rotated, capped, or auto-deleted -- capping
+        or deleting would drop the operator's own bytes. Cleanup is the
+        operator's; see CLAUDE.md.
+        """
+        path = os.path.join(self.output_dir, f"{job.job_id}.log")
+        try:
+            os.makedirs(self.output_dir, exist_ok=True)
+            job.output_file = open(
+                path, "a", encoding="utf-8", errors="replace", newline=""
+            )
+            job.output_path = path
+            job.output_logged = True
+        except OSError:
+            job.output_file = None
+            job.output_path = None
+            job.output_logged = False
+
+    def _write_to_log(self, job: _Job, raw_line: str) -> None:
+        """Tee the exact bytes to the job's log. Caller holds the lock.
+
+        The full stream lands here before the ring clips or evicts, so the
+        bounded polling window may drop lines but the log never does. A write
+        failure degrades the log to unavailable (output_logged=False) rather
+        than killing the job or dropping silently.
+        """
+        log_file = job.output_file
+        if log_file is None:
+            return
+        try:
+            log_file.write(raw_line)
+            log_file.flush()
+        except (OSError, ValueError):
+            job.output_logged = False
+            job.output_file = None
+            try:
+                log_file.close()
+            except OSError:
+                pass
 
     def _append_output(self, job: _Job, source: str, line: str) -> None:
         if len(line) > self.max_line_chars:
@@ -420,6 +478,7 @@ class JobManager:
                 with self._condition:
                     if job.output_closed:
                         break
+                    self._write_to_log(job, raw_line)
                     self._append_output(job, source, line)
                     self._condition.notify_all()
         finally:
@@ -461,6 +520,13 @@ class JobManager:
 
         with self._condition:
             job.output_closed = True
+            if job.output_file is not None:
+                try:
+                    job.output_file.flush()
+                    job.output_file.close()
+                except OSError:
+                    pass
+                job.output_file = None
             if stdout_thread.is_alive() or stderr_thread.is_alive():
                 job.output_truncated = True
             job.return_code = return_code
@@ -560,4 +626,5 @@ job_manager = JobManager(
     max_input_bytes=int(os.environ.get("JOB_INPUT_MAX_BYTES", str(64 * 1024))),
     max_pending_inputs=int(os.environ.get("JOB_INPUT_QUEUE_SIZE", "16")),
     max_output_wait=float(os.environ.get("JOB_OUTPUT_MAX_WAIT", "30")),
+    output_dir=os.environ.get("JOB_OUTPUT_DIR"),
 )

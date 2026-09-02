@@ -79,9 +79,11 @@ def test_kill_route_creates_message_directory_on_demand(monkeypatch, tmp_path):
 
 
 @pytest.fixture
-def app_and_manager():
+def app_and_manager(tmp_path):
     module = load_command_blueprint()
-    manager = JobManager(max_jobs=16, max_output_lines=20)
+    manager = JobManager(
+        max_jobs=16, max_output_lines=20, output_dir=str(tmp_path / "jobs")
+    )
     module.job_manager = manager
     app = Flask(__name__)
     app.register_blueprint(module.bp)
@@ -250,3 +252,33 @@ def test_jobs_index_is_empty_before_anything_runs(app_and_manager):
 
     assert response.status_code == 200
     assert response.get_json() == {"jobs": [], "count": 0}
+
+
+def test_job_routes_expose_output_path(app_and_manager):
+    """The tee's path reaches the agent through the unchanged routes.
+
+    No new MCP tool ships for this: the fields ride the existing pass-through,
+    and the full log is retrieved with ``zebbern_exec("cat <output_path>")``.
+    """
+    app, _manager = app_and_manager
+    client = app.test_client()
+
+    started = client.post(
+        "/api/exec",
+        json={
+            "command": [sys.executable, "-u", "-c", "print('logged')"],
+            "shell": False,
+            "background": True,
+            "timeout": 10,
+        },
+    ).get_json()
+    job_id = started["job_id"]
+
+    completed = wait_for_route_terminal(client, job_id)
+    output = client.get(f"/api/jobs/{job_id}/output?lines=10").get_json()
+
+    assert completed["output_logged"] is True
+    assert isinstance(completed["output_path"], str)
+    assert job_id in completed["output_path"]
+    assert output["output_logged"] is True
+    assert output["output_path"] == completed["output_path"]

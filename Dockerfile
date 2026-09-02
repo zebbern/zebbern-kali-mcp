@@ -485,6 +485,11 @@ RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 # Create writable tmp directory for the application
 RUN mkdir -p /app/tmp && chmod 777 /app/tmp
 
+# Per-job output logs. Never rotated, capped, or auto-deleted: all three drop
+# the operator's own bytes. Cleanup is manual or by container recreate.
+RUN mkdir -p /app/tmp/jobs && chmod 777 /app/tmp/jobs
+ENV JOB_OUTPUT_DIR=/app/tmp/jobs
+
 EXPOSE 5000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

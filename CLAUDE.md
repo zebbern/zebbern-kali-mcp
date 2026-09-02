@@ -265,6 +265,21 @@ this is the first thing to suspect when a long scan disappears.
 outcome stability, not correctness: a tool whose output format drifts but still
 exits 0 passes the probe. "0 BROKEN" is not evidence that a tool still works.
 
+## Background job output is teed to disk, and never pruned
+
+Every background job's full stdout+stderr is written to
+`$JOB_OUTPUT_DIR/<job_id>.log` (the image sets `/app/tmp/jobs`; from source
+without the env it falls back to the OS temp dir). The in-memory ring that
+`job_output`/`read_output` return is only a bounded polling window and still
+clips and evicts — but the file has 100%, so `output_truncated` no longer
+means loss. `output_logged=false` is the one state that does: it means the
+log dir was not writable and only the bounded ring exists.
+
+These files are never rotated, capped, or auto-deleted — that would drop the
+operator's own bytes. Cleanup is manual (`rm /app/tmp/jobs/*.log`) or by
+container recreate. A long engagement can grow this without bound; that is the
+accepted cost of never dropping output.
+
 ## Invariants not to break
 
 - **Fail-open in `mcp_tools/__init__.py`.** A malformed, unknown-schema or
