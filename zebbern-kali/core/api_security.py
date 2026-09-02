@@ -27,6 +27,31 @@ from .command_executor import execute_command_argv
 
 logger = logging.getLogger(__name__)
 
+
+def header_pairs(headers) -> List[tuple]:
+    """Normalise a headers argument into (key, value) pairs.
+
+    ffuf_fuzz is annotated ``Dict[str, str]`` and only ever called
+    ``headers.items()``, but the MCP wrapper declares ``headers: str`` and
+    documents "key:value pairs, comma-separated" -- so every documented use
+    raised AttributeError into the broad except and came back as a generic
+    failure. Accept both rather than breaking whichever caller loses.
+    """
+    if not headers:
+        return []
+    if isinstance(headers, dict):
+        return list(headers.items())
+    pairs = []
+    for chunk in str(headers).split(","):
+        if ":" not in chunk:
+            continue
+        key, value = chunk.split(":", 1)
+        key = key.strip()
+        if key:
+            pairs.append((key, value.strip()))
+    return pairs
+
+
 # Suppress SSL warnings
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -1027,9 +1052,8 @@ class APISecurityTester:
                     cmd.extend(["-fc", filter_codes])
                 if data:
                     cmd.extend(["-d", data])
-                if headers:
-                    for k, v in headers.items():
-                        cmd.extend(["-H", f"{k}: {v}"])
+                for k, v in header_pairs(headers):
+                    cmd.extend(["-H", f"{k}: {v}"])
                 if additional_args:
                     cmd.extend(additional_args.split())
                 return execute_command_argv(
@@ -1059,9 +1083,8 @@ class APISecurityTester:
             if data:
                 cmd.extend(["-d", data])
 
-            if headers:
-                for k, v in headers.items():
-                    cmd.extend(["-H", f"{k}: {v}"])
+            for k, v in header_pairs(headers):
+                cmd.extend(["-H", f"{k}: {v}"])
 
             if additional_args:
                 cmd.extend(additional_args.split())

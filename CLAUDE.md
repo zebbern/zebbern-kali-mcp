@@ -358,7 +358,7 @@ accepted cost of never dropping output.
 ## Tests
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q            # ~822 passed, 1 skipped
+.venv/Scripts/python.exe -m pytest -q            # ~834 passed, 1 skipped
 .venv/Scripts/python.exe -m pytest -m live -q    # 15, needs a backend on :5000
 python tests/integration/run_smoke.py --image <img> --expect-variant full --check-trim
 python tests/integration/probe_tools.py          # all 132 tools, needs a backend

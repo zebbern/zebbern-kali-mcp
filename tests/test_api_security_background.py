@@ -178,3 +178,39 @@ def test_the_route_threads_background_into_the_runner(route, payload, runner):
     assert kwargs["background"] is True, (
         f"{route} dropped background on the way to {runner}"
     )
+
+
+def test_ffuf_accepts_the_header_string_its_wrapper_actually_sends(monkeypatch):
+    """The wrapper types headers as str and documents "key:value pairs,
+    comma-separated"; the runner only ever called .items() on it.
+
+    So every documented use raised AttributeError into the broad except and came
+    back as a generic failure -- the parameter was unusable exactly as written
+    in its own docstring, and the swallow meant it never looked like a bug.
+    """
+    api_security, captured = _record_argv(monkeypatch)
+
+    api_security.api_tester.ffuf_fuzz(
+        url="https://api.example.test/FUZZ",
+        headers="X-Api-Key: abc123, X-Trace : 1",
+        background=True,
+    )
+
+    argv = captured["argv"]
+    assert "X-Api-Key: abc123" in argv, f"header string was not parsed: {argv!r}"
+    assert "X-Trace: 1" in argv, f"whitespace around the key was not trimmed: {argv!r}"
+    assert argv.count("-H") == 2
+
+
+def test_ffuf_still_accepts_a_header_dict(monkeypatch):
+    """Direct HTTP callers pass the dict the signature annotates. Fixing the
+    string case must not break them."""
+    api_security, captured = _record_argv(monkeypatch)
+
+    api_security.api_tester.ffuf_fuzz(
+        url="https://api.example.test/FUZZ",
+        headers={"Authorization": "Bearer t"},
+        background=True,
+    )
+
+    assert "Authorization: Bearer t" in captured["argv"]
