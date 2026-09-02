@@ -93,6 +93,20 @@ requires_background_tools = pytest.mark.skipif(
     ),
 )
 
+# And again for the api-security routes, which got the flag one release later.
+# The wheel half of this ships independently, so against an older image the
+# route ignores background, nuclei runs synchronously and the bounded start POST
+# raises ReadTimeout -- a real failure, but of the pin rather than the contract.
+NUCLEI_BACKGROUND_CONTRACT_VERSION = (1, 0, 10)
+
+requires_api_security_background = pytest.mark.skipif(
+    _backend_version() < NUCLEI_BACKGROUND_CONTRACT_VERSION,
+    reason=(
+        "backend predates background execution on the api-security routes "
+        f"({'.'.join(str(p) for p in NUCLEI_BACKGROUND_CONTRACT_VERSION)})"
+    ),
+)
+
 
 pytestmark = [
     pytest.mark.live,
@@ -439,3 +453,43 @@ def test_a_default_scan_auto_promotes_and_returns_inline():
     assert result["success"] is True
     assert result["timed_out"] is False
     assert f"{LAB_HTTP_PORT}/tcp open" in result["stdout"]
+
+
+@requires_api_security_background
+def test_a_backgrounded_api_scan_returns_a_job_handle_not_a_finished_scan():
+    """api_nuclei_scan was the last tool that could orphan a scan.
+
+    Its route had no background path, so an explicit ``background=True`` was
+    accepted and ignored: the scan ran synchronously, the harness abandoned the
+    call at ~60s, and nuclei kept going with nothing left to reach it by. The
+    absence of a ``stdout`` key is the assertion that proves it did not.
+    """
+    started = _call(
+        "api_nuclei_scan", url="http://127.0.0.1", tags="api", background=True
+    )
+
+    job_id = started["job_id"]
+    assert started["status"] in {"queued", "running"}, f"no job handle: {started!r}"
+    assert "stdout" not in started, f"ran synchronously after all: {started!r}"
+
+    _call("job_cancel", job_id=job_id)
+
+
+@requires_api_security_background
+def test_a_default_api_scan_auto_promotes():
+    """A plain api_nuclei_scan -- no flag -- must become a job either way.
+
+    Deliberately no ``finished`` assertion: a default ``-tags api`` run loads
+    thousands of templates and can legitimately outrun the ~50s inline budget,
+    at which point handing back a job_id is the correct answer rather than a
+    failure. What must hold in both branches is that a job exists, which is the
+    difference between a slow scan and an orphaned one.
+    """
+    result = _call("api_nuclei_scan", url="http://127.0.0.1", tags="api")
+
+    assert result["auto_promoted"] is True, f"ran synchronously: {result!r}"
+    assert result["job_id"], "no handle came back with the result"
+
+    if not result["finished"]:
+        assert result["status"] == "running"
+        _call("job_cancel", job_id=result["job_id"])
