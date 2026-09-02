@@ -396,6 +396,28 @@ def test_a_backgrounded_scan_can_be_cancelled_rather_than_orphaned():
 
 
 @requires_background_tools
+def test_a_default_scan_auto_promotes_without_needing_a_target():
+    """The same contract as the lab test below, minus the one assertion that
+    needs something listening.
+
+    That matters because CI has no lab, so the lab test skips there and the
+    headline behaviour -- a plain call becoming a job -- would be unverified in
+    the gate. Scanning the container's own loopback needs nothing: nmap prints a
+    report and exits 0 whether or not the port answers.
+    """
+    result = _call(
+        "tools_nmap", target="127.0.0.1", ports="9", scan_type="-sT -Pn"
+    )
+
+    assert result["auto_promoted"] is True, f"ran synchronously: {result!r}"
+    assert result["finished"] is True, f"a one-port scan outran the budget: {result!r}"
+    assert result["job_id"], "no handle came back with the result"
+    assert result["success"] is True
+    assert result["timed_out"] is False
+    assert "Nmap" in result["stdout"], f"stdout was not reconstructed: {result!r}"
+
+
+@requires_background_tools
 @needs_lab
 def test_a_default_scan_auto_promotes_and_returns_inline():
     """A plain tools_nmap -- no flag -- must start a job and still answer with
