@@ -11,7 +11,7 @@ import logging
 from mcp.server.fastmcp import FastMCP
 
 from mcp_tools import MODULE_NAMES, PROFILE_NAMES, parse_module_exclusions, register_all
-from mcp_tools._client import KaliToolsClient
+from mcp_tools._client import DEFAULT_REQUEST_TIMEOUT, KaliToolsClient
 
 # Configure logging
 logging.basicConfig(
@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 # Default configuration
 DEFAULT_KALI_SERVER = os.environ.get("KALI_API_URL", "http://127.0.0.1:5000")
-DEFAULT_REQUEST_TIMEOUT = 300  # 5 minutes
 DEFAULT_API_TOKEN = os.environ.get("KALI_API_TOKEN", "")
 
 
@@ -77,7 +76,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--timeout", type=int, default=DEFAULT_REQUEST_TIMEOUT,
-        help=f"Request timeout in seconds (default: {DEFAULT_REQUEST_TIMEOUT})",
+        help=(
+            "HTTP read timeout in seconds for every synchronous tool call "
+            f"(default: {DEFAULT_REQUEST_TIMEOUT}, i.e. 25h). This is a backstop "
+            "for a wedged backend, not a scan budget, and it must always outlive "
+            "the backend's own per-tool budget (the longest is 86400 for hydra "
+            "and john): set it lower and the client gives up before the backend "
+            "can answer, so the partial output of a timed-out scan is destroyed "
+            "and the scan keeps running server-side, orphaned. The connect "
+            "timeout stays 10s regardless."
+        ),
     )
     parser.add_argument(
         "--profile",

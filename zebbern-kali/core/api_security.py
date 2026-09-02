@@ -22,6 +22,7 @@ from typing import Dict, Any, List, Optional, Set
 from urllib.parse import urljoin, urlparse, parse_qs
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .logging_utils import render_command
+from .tool_config import get_tool_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -1035,7 +1036,7 @@ class APISecurityTester:
             if additional_args:
                 cmd.extend(additional_args.split())
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=get_tool_timeout("ffuf"))
 
             # Parse results
             results = []
@@ -1108,7 +1109,7 @@ class APISecurityTester:
             if additional_args:
                 cmd.extend(additional_args.split())
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=get_tool_timeout("arjun"))
 
             # Parse results
             params = []
@@ -1191,7 +1192,7 @@ class APISecurityTester:
             if additional_args:
                 cmd.extend(additional_args.split())
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=get_tool_timeout("kiterunner"))
 
             # Parse results
             discovered = []
@@ -1269,7 +1270,7 @@ class APISecurityTester:
             if additional_args:
                 cmd.extend(additional_args.split())
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=get_tool_timeout("nuclei"))
 
             # Parse JSONL results
             findings = []
@@ -1363,7 +1364,7 @@ class APISecurityTester:
             if additional_args:
                 cmd.extend(additional_args.split())
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=get_tool_timeout("newman"))
 
             # Parse results
             summary = {}

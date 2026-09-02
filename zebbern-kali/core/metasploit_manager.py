@@ -3,6 +3,7 @@
 
 import os
 import pty
+import re
 import select
 import subprocess
 import threading
@@ -12,6 +13,38 @@ from typing import Dict, Any, Optional
 from queue import Queue, Empty
 from core.config import logger
 
+# Escape sequences are stripped for the prompt *match* only. The buffer handed
+# back to the operator is never rewritten -- msfconsole draws its prompt through
+# readline, so the trailing line carries colour codes that would otherwise sit
+# between the ">" and the end of the line and defeat the anchor.
+_ANSI_RE = re.compile(
+    r"\x1b\[[0-9;?]*[ -/]*[@-~]"      # CSI ... final byte
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC ... BEL / ST
+    r"|\x1b[@-Z\\-_]"                 # two-character escapes
+    r"|[\x00-\x08\x0b\x0c\x0e-\x1f]"  # readline's \x01/\x02 prompt markers
+)
+
+# "msf" + ">" anywhere in the last 200 characters was the old test, and it
+# misses every post-exploitation workflow: a meterpreter or shell prompt after a
+# successful exploit contains neither. Anchor on the trailing line instead and
+# accept msf/msf6, meterpreter, shell, and generic > # $ prompts.
+_PROMPT_RE = re.compile(r"^\s*(?:msf\d*|meterpreter|shell)?[^\n]*[>#$]\s*$")
+
+# Only the tail is inspected. Once output goes stable this runs every 0.5s for
+# the rest of the budget -- up to 4 hours -- so it has to cost the same whether
+# the buffer holds 200 bytes or 200MB. buffer.splitlines() would allocate a list
+# of every line on each poll, which is the same O(n)-per-poll trap the reader
+# threads in command_executor.py just came out of. No prompt is near this long.
+_PROMPT_TAIL_CHARS = 512
+
+
+def _ends_on_prompt(buffer: str) -> bool:
+    """Does the buffer's last line look like an interactive prompt?"""
+    tail = buffer[-_PROMPT_TAIL_CHARS:]
+    last_line = tail[tail.rfind("\n") + 1:]
+    return bool(_PROMPT_RE.match(_ANSI_RE.sub("", last_line)))
+
+
 class MetasploitSession:
     """Represents a single persistent msfconsole session."""
     
@@ -20,14 +53,62 @@ class MetasploitSession:
         self.process: Optional[subprocess.Popen] = None
         self.master_fd: Optional[int] = None
         self.slave_fd: Optional[int] = None
-        self.output_buffer: str = ""
+        # Console output is accumulated as a list of chunks and joined once,
+        # where the whole buffer is genuinely needed. ``self.output_buffer +=``
+        # on every 4096-byte PTY read rebuilds the entire string each time --
+        # the same O(n^2) accumulation removed from CommandExecutor, and left
+        # here on the path whose budget just went from 300s to 14400s. 64MB of
+        # 4096-byte reads measured at 131.3s by concatenation (8.0ms per read)
+        # against 0.004s of appends plus one 0.016s join -- the reader capped at
+        # roughly half a megabyte a second, so a verbose module, or `find / -ls`
+        # in a shell session, outruns it and the session stalls. It gets worse
+        # with the buffer, not better: the cost per read is O(buffer).
+        # ``_output_len`` and ``_output_tail`` exist so the wait loop's
+        # per-poll work (a length compare and a prompt match) stays constant
+        # rather than joining the buffer four times a second for four hours.
+        # Nothing is capped or discarded -- output_buffer still returns every
+        # byte.
+        self._output_chunks: list = []
+        self._output_len: int = 0
+        self._output_tail: str = ""
         self.output_lock = threading.Lock()
         self.created_at = time.time()
         self.last_activity = time.time()
         self.is_ready = False
         self._reader_thread: Optional[threading.Thread] = None
         self._running = False
-        
+
+    @property
+    def output_buffer(self) -> str:
+        """The whole console output, as a ``str``, exactly as before.
+
+        Deliberately does NOT take ``output_lock``: every caller already holds
+        it, and ``threading.Lock`` is not reentrant, so acquiring here would
+        deadlock the wait loop against itself. ``str.join`` over a list of
+        ``str`` runs no Python code and so never releases the GIL, which is the
+        same guarantee ``CommandExecutor._finalize_output`` relies on.
+        """
+        return "".join(self._output_chunks)
+
+    @output_buffer.setter
+    def output_buffer(self, value: str) -> None:
+        self._output_chunks = [value] if value else []
+        self._output_len = len(value)
+        self._output_tail = value[-_PROMPT_TAIL_CHARS:]
+
+    def _append_output(self, text: str) -> None:
+        """Record one chunk of console output. The caller holds output_lock.
+
+        O(len(text)), not O(len(buffer)): the running length feeds the wait
+        loop's stability compare and the bounded tail feeds the prompt match,
+        so neither has to touch the accumulated chunks.
+        """
+        if not text:
+            return
+        self._output_chunks.append(text)
+        self._output_len += len(text)
+        self._output_tail = (self._output_tail + text)[-_PROMPT_TAIL_CHARS:]
+
     def start(self) -> bool:
         """Start the msfconsole process with a PTY."""
         try:
@@ -53,9 +134,15 @@ class MetasploitSession:
             self._reader_thread = threading.Thread(target=self._read_output, daemon=True)
             self._reader_thread.start()
             
-            # Wait for prompt to appear
-            self._wait_for_prompt(timeout=30)
-            self.is_ready = True
+            # Wait for prompt to appear. msfconsole cold-start on a loaded
+            # container can outrun this; the session is still usable, but say so
+            # rather than reporting a readiness we never observed.
+            self.is_ready = self._wait_for_prompt(timeout=30)
+            if not self.is_ready:
+                logger.warning(
+                    f"Metasploit session {self.session_id} started but no prompt "
+                    "appeared within 30s; output may be desynchronised"
+                )
             
             logger.info(f"Metasploit session {self.session_id} started successfully")
             return True
@@ -73,8 +160,11 @@ class MetasploitSession:
                 if ready:
                     data = os.read(self.master_fd, 4096)
                     if data:
+                        # Decoded outside the lock: the critical section is now
+                        # two appends and a clock read, shorter than it was.
+                        text = data.decode("utf-8", errors="replace")
                         with self.output_lock:
-                            self.output_buffer += data.decode("utf-8", errors="replace")
+                            self._append_output(text)
                             self.last_activity = time.time()
             except (OSError, IOError):
                 break
@@ -92,11 +182,18 @@ class MetasploitSession:
             time.sleep(0.5)
         return False
     
-    def execute(self, command: str, timeout: float = 300) -> Dict[str, Any]:
+    def execute(
+        self, command: str, timeout: float = 14400, read_delay: float = 2
+    ) -> Dict[str, Any]:
         """Execute a command in the msfconsole session."""
         if not self.process or self.process.poll() is not None:
-            return {"error": "Session is not running", "success": False}
-        
+            return {
+                "error": "Session is not running",
+                "success": False,
+                "timed_out": False,
+                "console_exited": True,
+            }
+
         try:
             # Clear output buffer
             with self.output_lock:
@@ -107,42 +204,92 @@ class MetasploitSession:
             self.last_activity = time.time()
             
             # Wait for output and prompt
-            time.sleep(0.5)  # Brief pause for command to start
-            
+            time.sleep(max(0.0, read_delay))  # Pause for a slow command to start
+
             start_time = time.time()
             last_output_len = 0
             stable_count = 0
-            
+            # This loop has three exits -- prompt detected, msfconsole died, or
+            # the budget expired -- and they all used to fall through to one
+            # unconditional success. Assume the budget expired until one of the
+            # two early exits below actually clears it.
+            timed_out = True
+            # ...and the death exit is reported separately, because it is a
+            # different fact from either of the other two. Folding it into
+            # timed_out=False alone made a console that was OOM-killed
+            # mid-exploit field-for-field identical to one that reached a
+            # prompt, so a caller obeying "check timed_out, never success"
+            # reads a crash as a completed run.
+            console_exited = False
+
             while time.time() - start_time < timeout:
                 time.sleep(0.5)
-                
+
+                # msfconsole is gone: no further output can arrive, so stop
+                # waiting out the rest of the budget for it. Before this, a
+                # crashed console blocked for the full timeout -- survivable at
+                # the old 300s default, a 4-hour uncancellable block at 14400.
+                if self.process is None or self.process.poll() is not None:
+                    console_exited = True
+                    timed_out = False
+                    # The console cannot serve another command; say so rather
+                    # than keep advertising a readiness that no longer holds.
+                    self.is_ready = False
+                    break
+
                 with self.output_lock:
-                    current_len = len(self.output_buffer)
-                    
+                    current_len = self._output_len
+
                     # Check if output has stabilized (no new output for 2 seconds)
                     if current_len == last_output_len:
                         stable_count += 1
                         if stable_count >= 4:  # 2 seconds of stability
-                            # Check for prompt
-                            if "msf" in self.output_buffer[-200:] and ">" in self.output_buffer[-200:]:
+                            # Check for prompt. The bounded tail is exactly
+                            # buffer[-_PROMPT_TAIL_CHARS:], which is all
+                            # _ends_on_prompt ever looked at.
+                            if _ends_on_prompt(self._output_tail):
+                                timed_out = False
                                 break
                     else:
                         stable_count = 0
                         last_output_len = current_len
-            
+
             with self.output_lock:
                 output = self.output_buffer
-            
+
+            if timed_out:
+                logger.warning(
+                    f"Metasploit command in session {self.session_id} hit its "
+                    f"{timeout}s budget without reaching a prompt; output is partial"
+                )
+            elif console_exited:
+                logger.warning(
+                    f"msfconsole in session {self.session_id} exited before "
+                    "reaching a prompt; output is whatever it printed first"
+                )
+
+            # success stays True on a timeout deliberately: a truncated module run
+            # is still worth reading, and this is the contract CommandExecutor
+            # already uses. Callers must read timed_out, not success, to know the
+            # command actually finished.
             return {
                 "success": True,
                 "output": output,
                 "session_id": self.session_id,
-                "execution_time": time.time() - start_time
+                "execution_time": time.time() - start_time,
+                "timed_out": timed_out,
+                "console_exited": console_exited,
+                "partial_results": bool((timed_out or console_exited) and output),
             }
-            
+
         except Exception as e:
             logger.error(f"Error executing command: {e}")
-            return {"error": str(e), "success": False}
+            return {
+                "error": str(e),
+                "success": False,
+                "timed_out": False,
+                "console_exited": False,
+            }
     
     def stop(self):
         """Stop the msfconsole session."""
@@ -216,17 +363,33 @@ class MetasploitManager:
             else:
                 return {"error": "Failed to start Metasploit session", "success": False}
     
-    def execute_command(self, session_id: str, command: str, timeout: float = 300) -> Dict[str, Any]:
+    def execute_command(
+        self,
+        session_id: str,
+        command: str,
+        timeout: float = 14400,
+        read_delay: float = 2,
+    ) -> Dict[str, Any]:
         """Execute a command in an existing session."""
         with self._lock:
             session = self.sessions.get(session_id)
             if not session:
-                return {"error": f"Session {session_id} not found", "success": False}
+                return {
+                    "error": f"Session {session_id} not found",
+                    "success": False,
+                    "timed_out": False,
+                    "console_exited": False,
+                }
             if not session.is_alive():
                 del self.sessions[session_id]
-                return {"error": f"Session {session_id} is no longer running", "success": False}
-        
-        return session.execute(command, timeout)
+                return {
+                    "error": f"Session {session_id} is no longer running",
+                    "success": False,
+                    "timed_out": False,
+                    "console_exited": True,
+                }
+
+        return session.execute(command, timeout, read_delay)
     
     def list_sessions(self) -> Dict[str, Any]:
         """List all active sessions."""

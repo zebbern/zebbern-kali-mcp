@@ -37,12 +37,15 @@ def msf_session_execute():
         params = request.json or {}
         session_id = params.get("session_id", "")
         command = params.get("command", "")
-        timeout = params.get("timeout", 300)
+        # This default wins over the manager's own: raising one without the other
+        # is a no-op for every real request.
+        timeout = params.get("timeout", 14400)
+        read_delay = params.get("read_delay", 2)
 
         if not session_id or not command:
             return jsonify({"error": "session_id and command are required", "success": False}), 400
 
-        result = msf_manager.execute_command(session_id, command, timeout)
+        result = msf_manager.execute_command(session_id, command, timeout, read_delay)
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error executing msf command: {str(e)}")

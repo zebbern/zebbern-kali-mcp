@@ -18,18 +18,26 @@ def register(mcp: FastMCP, kali_client) -> None:
         return kali_client.safe_post("api/msf/session/create", {})
 
     @mcp.tool()
-    def msf_session_execute(session_id: str, command: str, timeout: int = 300, read_delay: int = 2) -> Dict[str, Any]:
+    def msf_session_execute(session_id: str, command: str, timeout: int = 14400, read_delay: int = 2) -> Dict[str, Any]:
         """
         Execute a command in an existing Metasploit session.
 
         Args:
             session_id: The session ID from msf_session_create
             command: The Metasploit command to execute (e.g., "use exploit/...", "set RHOSTS ...", "run")
-            timeout: Command timeout in seconds (default: 300)
-            read_delay: Seconds to wait before reading output for slow-responding commands (default: 2)
+            timeout: Command timeout in seconds (default: 14400 = 4 hours). This is a
+                     backstop for a wedged console, not a budget -- a module that
+                     legitimately runs for hours should be allowed to.
+            read_delay: Seconds to wait after sending the command before reading
+                        output, for slow-responding commands (default: 2)
 
         Returns:
-            Command output and status
+            Command output and status. `timed_out` is True when the budget expired
+            before msfconsole returned to a prompt: `success` is still True and the
+            partial output is kept, so check timed_out, not success, to know the
+            command finished. `console_exited` is True when msfconsole itself died
+            mid-command -- a separate fact from the budget expiring, and without it
+            a crashed console is indistinguishable from a clean run.
         """
         data = {"session_id": session_id, "command": command, "timeout": timeout, "read_delay": read_delay}
         return kali_client.safe_post("api/msf/session/execute", data)

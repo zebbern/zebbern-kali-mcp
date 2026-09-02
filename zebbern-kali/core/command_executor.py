@@ -18,27 +18,45 @@ class CommandExecutor:
         self.command = command
         self.timeout = timeout
         self.process = None
+        # Public, and str, exactly as before -- _finalize_output fills them in
+        # from the chunk lists below before anything reads them. The readers used
+        # to do ``self.stdout_data += line``, which rebuilds the whole buffer on
+        # every line and is O(n^2) in line count. That was survivable at a
+        # 5-minute cap; at 8-24 hours of scanner output it is not.
         self.stdout_data = ""
         self.stderr_data = ""
+        self._stdout_chunks = []
+        self._stderr_chunks = []
         self.stdout_thread = None
         self.stderr_thread = None
         self.return_code = None
         self.timed_out = False
 
+    def _finalize_output(self):
+        """Collapse the chunk lists into the public stdout_data/stderr_data.
+
+        Called on every path that reads them, including the timeout path where
+        the reader threads are still running -- list.append and str.join are
+        each atomic under the GIL, so a concurrent append lands either side of
+        the join and no output is lost, only deferred to the next call.
+        """
+        self.stdout_data = ''.join(self._stdout_chunks)
+        self.stderr_data = ''.join(self._stderr_chunks)
+
     def _read_stdout(self):
         """Thread function to continuously read stdout"""
         for line in iter(self.process.stdout.readline, ''):
-            self.stdout_data += line
+            self._stdout_chunks.append(line)
 
     def _read_stderr(self):
         """Thread function to continuously read stderr"""
         for line in iter(self.process.stderr.readline, ''):
-            self.stderr_data += line
+            self._stderr_chunks.append(line)
 
     def _read_stdout_with_streaming(self, on_output):
         """Thread function to continuously read stdout with streaming callback"""
         for line in iter(self.process.stdout.readline, ''):
-            self.stdout_data += line
+            self._stdout_chunks.append(line)
             if on_output and line.strip():
                 try:
                     on_output("stdout", line.strip())
@@ -48,7 +66,7 @@ class CommandExecutor:
     def _read_stderr_with_streaming(self, on_output):
         """Thread function to continuously read stderr with streaming callback"""
         for line in iter(self.process.stderr.readline, ''):
-            self.stderr_data += line
+            self._stderr_chunks.append(line)
             if on_output and line.strip():
                 try:
                     on_output("stderr", line.strip())
@@ -100,6 +118,8 @@ class CommandExecutor:
                 # Update final output
                 self.return_code = -1
 
+            self._finalize_output()
+
             # Always consider it a success if we have output, even with timeout
             success = True if self.timed_out and (self.stdout_data or self.stderr_data) else (self.return_code == 0)
 
@@ -109,13 +129,14 @@ class CommandExecutor:
                 "return_code": self.return_code,
                 "success": success,
                 "timed_out": self.timed_out,
-                "partial_results": self.timed_out and (self.stdout_data or self.stderr_data)
+                "partial_results": bool(self.timed_out and (self.stdout_data or self.stderr_data)),
             }
             self._inject_kill_message(result)
             return result
 
         except Exception as e:
             logger.error(f"Error executing command: {str(e)}")
+            self._finalize_output()
             return {
                 "stdout": self.stdout_data,
                 "stderr": f"Error executing command: {str(e)}\n{self.stderr_data}",
@@ -187,6 +208,8 @@ class CommandExecutor:
                 # Update final output
                 self.return_code = -1
 
+            self._finalize_output()
+
             # Always consider it a success if we have output, even with timeout
             success = True if self.timed_out and (self.stdout_data or self.stderr_data) else (self.return_code == 0)
 
@@ -196,7 +219,7 @@ class CommandExecutor:
                 "return_code": self.return_code,
                 "success": success,
                 "timed_out": self.timed_out,
-                "partial_results": self.timed_out and (self.stdout_data or self.stderr_data),
+                "partial_results": bool(self.timed_out and (self.stdout_data or self.stderr_data)),
                 "streaming_enabled": True
             }
             self._inject_kill_message(result)
@@ -204,6 +227,7 @@ class CommandExecutor:
 
         except Exception as e:
             logger.error(f"Error executing command with streaming: {str(e)}")
+            self._finalize_output()
             return {
                 "stdout": self.stdout_data,
                 "stderr": f"Error executing command: {str(e)}\n{self.stderr_data}",
@@ -227,7 +251,7 @@ def execute_command(command: str, on_output: Callable[[str, str], None] = None, 
     Returns:
         A dictionary containing the stdout, stderr, and return code
     """
-    from .tool_config import is_streaming_tool, get_tool_timeout
+    from .tool_config import is_streaming_tool, get_command_timeout
 
     # Parse the command to detect the tool
     command_parts = command.strip().split()
@@ -242,9 +266,12 @@ def execute_command(command: str, on_output: Callable[[str, str], None] = None, 
 
     tool_name = command_parts[0]
 
-    # Get tool-specific timeout if not provided
+    # Get tool-specific timeout if not provided. Resolved from the whole command
+    # line, not command_parts[0]: `sudo nmap`, `/usr/bin/nmap`, `timeout 4h nmap`
+    # and `echo x | waybackurls` all used to miss their table entry and collapse
+    # onto the default.
     if timeout is None:
-        timeout = get_tool_timeout(tool_name)
+        timeout = get_command_timeout(command)
 
     # Check if the tool requires streaming
     requires_streaming = is_streaming_tool(tool_name)

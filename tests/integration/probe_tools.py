@@ -177,14 +177,22 @@ CASES = [
     ("hosts_clear", {}),
 ]
 
-PER_CALL_TIMEOUT = 75
+# Wall-clock cap for one probe call. Session._read() blocks on a bare readline,
+# so this is enforced by the spawned MCP server's HTTP read timeout, not here.
+# It used to be dead code and the probe silently inherited whatever
+# DEFAULT_REQUEST_TIMEOUT happened to be.
+PER_CALL_TIMEOUT = 300
 
 
 class Session:
     def __init__(self):
         env = {**os.environ, "KALI_API_URL": API}
         self.p = subprocess.Popen(
-            [sys.executable, str(ROOT / "mcp_server.py"), "--profile", "full"],
+            [
+                sys.executable, str(ROOT / "mcp_server.py"),
+                "--profile", "full",
+                "--timeout", str(PER_CALL_TIMEOUT),
+            ],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             text=True, env=env, bufsize=1, cwd=str(ROOT),
         )

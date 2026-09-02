@@ -26,6 +26,18 @@ from .logging_utils import render_command
 
 logger = logging.getLogger(__name__)
 
+# The spray deadline is the one backend budget computed by FORMULA rather than
+# looked up in core.tool_config.TOOL_TIMEOUTS, so the headroom guard that keeps
+# every table entry under the client's read timeout cannot see it. Unclamped,
+# a SecLists username file (~8.3M lines) yields ~41,500,000s -- far past the
+# client's 90000s read timeout, so `requests` raises ReadTimeout, safe_post
+# returns {"error": "... ReadTimeout"} and the partial spray below (including
+# every credential it already parsed) is destroyed. Clamping loses nothing: the
+# TimeoutExpired handler returns the partial output and its parsed hits, which
+# is strictly more than the ReadTimeout path returns.
+SPRAY_TIMEOUT_FLOOR = 300
+SPRAY_TIMEOUT_CEILING = 86400  # 24h, matching the longest TOOL_TIMEOUTS entry
+
 
 class ADTools:
     """Active Directory penetration testing toolkit"""
@@ -699,6 +711,18 @@ class ADTools:
             valid_creds = []
             tested = 0
 
+            # len(users) * 5 with no floor expired against any real DC, and the
+            # bare handler below then re-sprayed every user through the manual
+            # loop -- doubling authentication attempts and causing the lockouts
+            # the delay parameter exists to avoid. The ceiling keeps it under
+            # the client's read timeout; see the constants. Both the netexec
+            # branch and the manual fallback share this budget, because the
+            # fallback is what runs when netexec is missing and it used to have
+            # no aggregate deadline at all.
+            spray_timeout = min(
+                max(SPRAY_TIMEOUT_FLOOR, len(users) * 5), SPRAY_TIMEOUT_CEILING
+            )
+
             # Use netexec/crackmapexec if available
             if self.available_tools.get("crackmapexec") or self.available_tools.get("netexec"):
                 nxc_bin = shutil.which("netexec") or shutil.which("nxc") or shutil.which("crackmapexec") or "netexec"
@@ -715,7 +739,7 @@ class ADTools:
 
                 try:
                     result = subprocess.run(
-                        cmd, capture_output=True, text=True, timeout=len(users) * 5
+                        cmd, capture_output=True, text=True, timeout=spray_timeout
                     )
 
                     safe_output = result.stdout
@@ -730,6 +754,7 @@ class ADTools:
 
                     return {
                         "success": True,
+                        "timed_out": False,
                         "target": target,
                         "protocol": protocol,
                         "users_tested": len(users),
@@ -738,13 +763,56 @@ class ADTools:
                         "timestamp": datetime.now().isoformat()
                     }
 
+                except subprocess.TimeoutExpired as exc:
+                    # Deliberately NOT falling through to the manual loop: the
+                    # spray has already been partially delivered, so retrying it
+                    # sprays every user a second time.
+                    partial = exc.stdout or ""
+                    if isinstance(partial, bytes):
+                        partial = partial.decode("utf-8", errors="replace")
+                    for line in partial.split('\n'):
+                        if "[+]" in line or "Pwn3d" in line:
+                            valid_creds.append({"line": line.strip(), "success": True})
+                    logger.warning(
+                        f"Password spray timed out after {spray_timeout}s; not "
+                        "retrying manually to avoid a second full spray"
+                    )
+                    return {
+                        "success": True,
+                        "timed_out": True,
+                        "target": target,
+                        "protocol": protocol,
+                        "users_tested": len(users),
+                        "valid_credentials": valid_creds,
+                        "output": partial,
+                        "timestamp": datetime.now().isoformat()
+                    }
+
                 except Exception as e:
                     logger.warning(f"CrackMapExec failed: {e}, falling back to manual")
 
             # Fallback to manual testing (SMB only)
             import socket
+            import time as _time
+
+            # Each iteration below costs up to 10s plus delay, and the bare
+            # handler swallows every per-user TimeoutExpired, so a large list
+            # against an unresponsive DC ran unbounded -- past the client's read
+            # timeout, which discards the whole response and every credential
+            # already found. Share the netexec branch's budget so the partial
+            # result comes back instead.
+            spray_deadline = _time.monotonic() + spray_timeout
+            spray_timed_out = False
 
             for user in users:
+                if _time.monotonic() >= spray_deadline:
+                    spray_timed_out = True
+                    logger.warning(
+                        f"Password spray hit its {spray_timeout}s budget after "
+                        f"{tested} of {len(users)} users; returning what it found"
+                    )
+                    break
+
                 tested += 1
 
                 # Simple SMB auth check using smbclient
@@ -782,6 +850,7 @@ class ADTools:
                 "target": target,
                 "users_tested": tested,
                 "valid_credentials": valid_creds,
+                "timed_out": spray_timed_out,
                 "timestamp": datetime.now().isoformat()
             }
 
