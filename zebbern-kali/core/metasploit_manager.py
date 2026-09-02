@@ -27,8 +27,16 @@ _ANSI_RE = re.compile(
 # "msf" + ">" anywhere in the last 200 characters was the old test, and it
 # misses every post-exploitation workflow: a meterpreter or shell prompt after a
 # successful exploit contains neither. Anchor on the trailing line instead and
-# accept msf/msf6, meterpreter, shell, and generic > # $ prompts.
-_PROMPT_RE = re.compile(r"^\s*(?:msf\d*|meterpreter|shell)?[^\n]*[>#$]\s*$")
+# accept msf/msf6, meterpreter, and generic > # $ prompts. The msf and
+# meterpreter keywords sit in named groups so execute() can report which one
+# ended the wait; the generic > # $ path -- a bare shell prompt like
+# root@box:/# , or the case worth measuring, a line that merely ends in
+# punctuation -- is reported as "generic_prompt". Dropping the old "shell"
+# alternative changes no match: [^\n]* already absorbs the word, so the boolean
+# _ends_on_prompt returns is unchanged (the existing prompt tests guard that).
+_PROMPT_RE = re.compile(
+    r"^\s*(?:(?P<msf>msf\d*)|(?P<meterpreter>meterpreter))?[^\n]*[>#$]\s*$"
+)
 
 # Only the tail is inspected. Once output goes stable this runs every 0.5s for
 # the rest of the budget -- up to 4 hours -- so it has to cost the same whether
@@ -38,11 +46,29 @@ _PROMPT_RE = re.compile(r"^\s*(?:msf\d*|meterpreter|shell)?[^\n]*[>#$]\s*$")
 _PROMPT_TAIL_CHARS = 512
 
 
-def _ends_on_prompt(buffer: str) -> bool:
-    """Does the buffer's last line look like an interactive prompt?"""
+def _prompt_kind(buffer: str) -> Optional[str]:
+    """Which interactive prompt, if any, the buffer's last line ends on.
+
+    Returns the detector name -- "exact_msf", "meterpreter" or "generic_prompt"
+    -- or None when the last line is not a prompt. The cost is the same bounded
+    tail slice plus one regex match _ends_on_prompt always did; the group
+    lookups are reached only on a match, i.e. once, at the exit.
+    """
     tail = buffer[-_PROMPT_TAIL_CHARS:]
     last_line = tail[tail.rfind("\n") + 1:]
-    return bool(_PROMPT_RE.match(_ANSI_RE.sub("", last_line)))
+    match = _PROMPT_RE.match(_ANSI_RE.sub("", last_line))
+    if match is None:
+        return None
+    if match.group("msf") is not None:
+        return "exact_msf"
+    if match.group("meterpreter") is not None:
+        return "meterpreter"
+    return "generic_prompt"
+
+
+def _ends_on_prompt(buffer: str) -> bool:
+    """Does the buffer's last line look like an interactive prompt?"""
+    return _prompt_kind(buffer) is not None
 
 
 class MetasploitSession:
@@ -192,6 +218,7 @@ class MetasploitSession:
                 "success": False,
                 "timed_out": False,
                 "console_exited": True,
+                "detector": "not_running",
             }
 
         try:
@@ -221,6 +248,11 @@ class MetasploitSession:
             # prompt, so a caller obeying "check timed_out, never success"
             # reads a crash as a completed run.
             console_exited = False
+            # Which condition ends the wait, as field telemetry: in particular
+            # how often the generic > # $ path (generic_prompt) stands in for a
+            # real msf/meterpreter prompt. Overwritten by whichever early exit
+            # fires; stays "timeout" only when the budget is what ends the loop.
+            detector = "timeout"
 
             while time.time() - start_time < timeout:
                 time.sleep(0.5)
@@ -232,6 +264,7 @@ class MetasploitSession:
                 if self.process is None or self.process.poll() is not None:
                     console_exited = True
                     timed_out = False
+                    detector = "console_exited"
                     # The console cannot serve another command; say so rather
                     # than keep advertising a readiness that no longer holds.
                     self.is_ready = False
@@ -244,11 +277,13 @@ class MetasploitSession:
                     if current_len == last_output_len:
                         stable_count += 1
                         if stable_count >= 4:  # 2 seconds of stability
-                            # Check for prompt. The bounded tail is exactly
-                            # buffer[-_PROMPT_TAIL_CHARS:], which is all
-                            # _ends_on_prompt ever looked at.
-                            if _ends_on_prompt(self._output_tail):
+                            # The bounded tail is exactly
+                            # buffer[-_PROMPT_TAIL_CHARS:], all _prompt_kind
+                            # ever looks at.
+                            kind = _prompt_kind(self._output_tail)
+                            if kind is not None:
                                 timed_out = False
+                                detector = kind
                                 break
                     else:
                         stable_count = 0
@@ -279,6 +314,7 @@ class MetasploitSession:
                 "execution_time": time.time() - start_time,
                 "timed_out": timed_out,
                 "console_exited": console_exited,
+                "detector": detector,
                 "partial_results": bool((timed_out or console_exited) and output),
             }
 
@@ -289,6 +325,7 @@ class MetasploitSession:
                 "success": False,
                 "timed_out": False,
                 "console_exited": False,
+                "detector": "error",
             }
     
     def stop(self):

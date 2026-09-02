@@ -594,6 +594,86 @@ def test_mid_command_output_is_not_mistaken_for_a_prompt(buffer):
 
 
 # ---------------------------------------------------------------------------
+# Which condition ended the wait.
+#
+# The three exits already report themselves through timed_out/console_exited,
+# but the prompt exit collapses three very different matches into one silence:
+# an exact `msf6 >`, a `meterpreter >`, and the generic `> # $` catch-all that
+# also fires on any trailing line ending in punctuation. `detector` names the
+# one that fired so the loose case can be counted in the field instead of
+# guessed at.
+# ---------------------------------------------------------------------------
+
+
+@requires_msf_module
+@pytest.mark.parametrize(
+    "prompt,expected",
+    [
+        ("msf6 > ", "exact_msf"),
+        ("msf6 exploit(multi/handler) > ", "exact_msf"),
+        ("meterpreter > ", "meterpreter"),
+        ("[*] session opened\nroot@target:/# ", "generic_prompt"),
+        ("www-data@box:/var/www$ ", "generic_prompt"),
+    ],
+)
+def test_msf_execute_names_which_prompt_ended_the_wait(monkeypatch, prompt, expected):
+    """Driven through the real wait loop, not through the matcher: a helper-only
+    test passes even when execute() never reports what the helper found, which
+    is the exact shape of guard this file has already got wrong twice."""
+    result = _drive_execute(monkeypatch, reply=prompt)
+
+    assert result["detector"] == expected
+    assert result["timed_out"] is False
+
+
+@requires_msf_module
+def test_msf_execute_detector_is_timeout_on_budget_expiry(monkeypatch):
+    """The budget exit is the one detector value that is never assigned by an
+    early exit -- it has to survive as the initial value."""
+    result = _drive_execute(
+        monkeypatch,
+        reply="[*] Started reverse TCP handler on 10.0.0.1:4444\n",
+        timeout=0.02,
+    )
+
+    assert result["detector"] == "timeout"
+    assert result["timed_out"] is True
+
+
+@requires_msf_module
+def test_msf_execute_detector_is_console_exited_on_death(monkeypatch):
+    """A dead console clears timed_out, so without its own detector value the
+    death exit would be reported as whatever the initial value happens to be."""
+    result = _drive_execute(
+        monkeypatch,
+        reply="[-] Handler failed to bind\n",
+        poll_results=(None, 1),
+    )
+
+    assert result["detector"] == "console_exited"
+    assert result["console_exited"] is True
+
+
+@requires_msf_module
+@pytest.mark.parametrize(
+    "buffer,expected",
+    [
+        ("msf6 > ", "exact_msf"),
+        ("meterpreter > ", "meterpreter"),
+        ("root@box:/# ", "generic_prompt"),
+        # The regex dropped its `shell` alternative when the keywords became
+        # named groups: [^\n]* already absorbs the word, so this still matches
+        # and the boolean _ends_on_prompt returns is unchanged.
+        ("shell> ", "generic_prompt"),
+        ("[*] just output\n", None),
+        ("", None),
+    ],
+)
+def test_prompt_kind_classifies_the_alternative(buffer, expected):
+    assert msf_module._prompt_kind(buffer) == expected
+
+
+# ---------------------------------------------------------------------------
 # The console buffer's accumulation shape.
 #
 # _read_output did `self.output_buffer += data.decode(...)` on every 4096-byte
