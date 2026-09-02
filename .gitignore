@@ -249,3 +249,7 @@ scan_results/
 exploit_output/
 /.VSCodeCounter
 /tmp
+
+# Run artifact from tests/integration/probe_tools.py; the committed baseline
+# beside it is the durable part.
+tests/integration/probe_results.json

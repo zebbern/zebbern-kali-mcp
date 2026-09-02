@@ -125,9 +125,10 @@ both patterns are already used in `tests/`.
 ## Tests
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q            # ~628 passed, 1 skipped
+.venv/Scripts/python.exe -m pytest -q            # ~640 passed, 1 skipped
 .venv/Scripts/python.exe -m pytest -m live -q    # 9, needs a backend on :5000
 python tests/integration/run_smoke.py --image <img> --expect-variant full --check-trim
+python tests/integration/probe_tools.py          # all 131 tools, needs a backend
 ```
 
 `live` tests skip themselves when no backend answers, which is why CI stays
@@ -137,3 +138,14 @@ port 8888.
 
 Most other tests are contract-level with a mocked client: they prove the client
 shapes the right request, not that a tool runs.
+
+`probe_tools.py` is the only thing that exercises the whole 131-tool surface.
+It calls each tool once and compares the outcome against
+`tests/integration/probe_baseline.json`, so a run prints only what changed.
+Deliberately manual and not collected by pytest: it runs real scanners, starts
+and stops real listeners, and reaches the public internet for a handful of
+OSINT tools, which is why those are marked best-effort in the baseline. A raw
+"BROKEN count" is not a pass criterion — a tool truthfully reporting that no
+VPN is configured looks the same as one that regressed, and only the baseline
+tells them apart. Re-record the baseline when a tool's expected outcome
+legitimately changes.
