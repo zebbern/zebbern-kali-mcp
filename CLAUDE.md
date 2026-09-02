@@ -137,8 +137,9 @@ a backend that does not honour the flag, then
 `docker exec zebbern-kali ps -eo pid,etime,cmd | grep nmap` — the scan is still
 going minutes after the client gave up, with nothing left to reach it by.
 
-**`background=True` is the only escape.** Every subprocess-backed `tools_*`
-wrapper takes it. The flag rides `params` into the runner, `execute_command`
+**A background job is the only escape.** The fourteen heavy `tools_*` wrappers
+take one automatically (see below); the rest, and `zebbern_exec`, take
+`background=True`. The flag rides `params` into the runner, `execute_command`
 hands the command to `job_manager`, and the job dict comes back through an
 unchanged route. Drive it with `job_status` / `job_output` / `job_cancel`, and
 `job_list` when the id itself is gone. Backgrounded jobs keep their table
@@ -153,9 +154,15 @@ harness running in the foreground while the flag reads as supported.
 
 Three things that look like bugs and are not:
 
-- **The default is False, so a forgotten flag still orphans at ~60s.** The
-  docstrings are the whole mechanism. Auto-promoting a synchronous call to a job
-  at a soft deadline is the more robust design and a materially larger change.
+- **The fourteen heavy `tools_*` wrappers ignore `background` on the way in and
+  always post `background=True`.** They auto-promote: the job starts first, then
+  the client waits inline for `ZKM_INLINE_WAIT_SECONDS` (default 50, floored at
+  1) and returns either the finished result or a `job_id` handle. `background=True`
+  now means only "do not wait". Starting the job *before* the wait is the whole
+  safety argument — a mis-tuned budget costs a poll, never the scan, because the
+  harness abort lands on the poll and `job_list` still finds the job. The other
+  seven backgroundable wrappers stay opt-in; their tiers are under 3600 and a
+  poll round-trip would cost more than it saves.
 - **`run_subzy` leaks its temp targets file when backgrounded, on purpose.**
   With an inline `target` it writes a `NamedTemporaryFile` and unlinks it after
   `execute_command` returns; backgrounded that return is immediate, so the
@@ -169,12 +176,13 @@ Known and still open:
 
 - **`api_nuclei_scan` posts to `/api/api-security/nuclei`**, a different route
   with no background support. It can still orphan.
-- **`heavy_tool_post` holds its semaphore slot for the full client read
-  timeout.** Nine tools share `MAX_HEAVY_TASKS = 5`; when the harness walks away
-  the MCP thread is still blocked in `safe_post`, so five orphaned scans can
-  wedge the heavy surface for up to 90000s.
-- **`exec_stream`'s description recommends it for "long-running commands like
-  nmap, nuclei, fuzzing"**, which is the opposite of true.
+- **`heavy_tool_post` still holds its semaphore slot for whatever read timeout
+  it is given.** Auto-promotion mostly dissolves this — the job-start POST
+  returns in milliseconds and polling uses `safe_get`, which never touches the
+  semaphore — and `run_promotable` bounds that POST at the inline budget so even
+  a backend that ignores `background` caps the hold at ~50s instead of 90000s.
+  What remains: any *other* caller of `heavy_tool_post` without `read_timeout`
+  is still unbounded.
 
 The MSF chain is the exception to "smallest wins": `msf_session_execute` always
 puts `timeout` in the request body, so the route's `params.get("timeout", 14400)`
@@ -329,8 +337,8 @@ accepted cost of never dropping output.
 ## Tests
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q            # ~785 passed, 1 skipped
-.venv/Scripts/python.exe -m pytest -m live -q    # 14, needs a backend on :5000
+.venv/Scripts/python.exe -m pytest -q            # ~822 passed, 1 skipped
+.venv/Scripts/python.exe -m pytest -m live -q    # 15, needs a backend on :5000
 python tests/integration/run_smoke.py --image <img> --expect-variant full --check-trim
 python tests/integration/probe_tools.py          # all 132 tools, needs a backend
 ```

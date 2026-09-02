@@ -3,6 +3,8 @@
 from typing import Dict, Any, List
 from mcp.server.fastmcp import FastMCP
 
+from ._autopromote import run_promotable
+
 
 def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
     """Register all Kali tool wrapper functions."""
@@ -25,12 +27,12 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             additional_args: Extra nmap arguments
             output_format: Output format — 'normal', 'xml', or 'grepable' (default: normal).
                 When 'xml', adds -oX - for structured XML output.
-            background: If True, start the scan as a background job and return
-                immediately with a job_id, then manage it with job_status /
-                job_output / job_cancel. Set this for anything that may run
-                longer than ~60s: the MCP client abandons a synchronous tool
-                call around then and orphans the scan with no handle.
-                Default False.
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote).
         """
         data: Dict[str, Any] = {"target": target, "scan_type": scan_type, "ports": ports, "additional_args": additional_args}
         if output_format and output_format != "normal":
@@ -38,9 +40,10 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             if output_format == "xml":
                 xml_flag = "-oX -"
                 data["additional_args"] = f"{additional_args} {xml_flag}".strip() if additional_args else xml_flag
-        if background:
-            data["background"] = True
-        return kali_client.heavy_tool_post("api/tools/nmap", data)
+        return run_promotable(
+            kali_client, "api/tools/nmap", data,
+            heavy=True, background=background,
+        )
 
     @mcp.tool()
     def tools_nikto(
@@ -56,21 +59,22 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             additional_args: Extra nikto arguments
             tuning: Nikto scan tuning options (e.g., '1' for interesting file, '2' for misconfiguration)
             output_format: Output format (e.g., 'htm', 'csv', 'xml', 'txt')
-            background: If True, start the scan as a background job and return
-                immediately with a job_id, then manage it with job_status /
-                job_output / job_cancel. Set this for anything that may run
-                longer than ~60s: the MCP client abandons a synchronous tool
-                call around then and orphans the scan with no handle.
-                Default False.
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote).
         """
         data: Dict[str, Any] = {"target": target, "additional_args": additional_args}
         if tuning:
             data["tuning"] = tuning
         if output_format:
             data["output_format"] = output_format
-        if background:
-            data["background"] = True
-        return kali_client.heavy_tool_post("api/tools/nikto", data)
+        return run_promotable(
+            kali_client, "api/tools/nikto", data,
+            heavy=True, background=background,
+        )
 
     @mcp.tool()
     def tools_ssh_audit(
@@ -117,12 +121,12 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             threads: Number of concurrent threads (default: 10)
             extensions: File extensions to search for, comma-separated (e.g., 'php,html,txt')
             status_codes: Positive status codes to match, comma-separated (e.g., '200,301,302')
-            background: If True, start the scan as a background job and return
-                immediately with a job_id, then manage it with job_status /
-                job_output / job_cancel. Set this for anything that may run
-                longer than ~60s: the MCP client abandons a synchronous tool
-                call around then and orphans the scan with no handle.
-                Default False.
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote).
         """
         data: Dict[str, Any] = {"url": url, "mode": mode, "wordlist": wordlist, "additional_args": additional_args}
         if threads != 10:
@@ -131,9 +135,10 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             data["extensions"] = extensions
         if status_codes:
             data["status_codes"] = status_codes
-        if background:
-            data["background"] = True
-        return kali_client.heavy_tool_post("api/tools/gobuster", data)
+        return run_promotable(
+            kali_client, "api/tools/gobuster", data,
+            heavy=True, background=background,
+        )
 
     @mcp.tool()
     def tools_wpscan(
@@ -150,12 +155,12 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             api_token: WPScan API token for vulnerability data lookups
             enumerate: Enumeration options (e.g., 'vp' for vulnerable plugins, 'u' for users)
             output_format: Output format — 'cli', 'json', or 'cli-no-colour' (default: cli)
-            background: If True, start the scan as a background job and return
-                immediately with a job_id, then manage it with job_status /
-                job_output / job_cancel. Set this for anything that may run
-                longer than ~60s: the MCP client abandons a synchronous tool
-                call around then and orphans the scan with no handle.
-                Default False.
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote).
         """
         data: Dict[str, Any] = {"url": url, "additional_args": additional_args}
         if api_token:
@@ -164,9 +169,10 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             data["enumerate"] = enumerate
         if output_format and output_format != "cli":
             data["output_format"] = output_format
-        if background:
-            data["background"] = True
-        return kali_client.heavy_tool_post("api/tools/wpscan", data)
+        return run_promotable(
+            kali_client, "api/tools/wpscan", data,
+            heavy=True, background=background,
+        )
 
     # ── SQL injection ────────────────────────────────────────
 
@@ -190,12 +196,12 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             dbs: Enumerate DBMS databases (default: False)
             tables: Enumerate DBMS database tables (default: False)
             dump: Dump DBMS database table entries (default: False)
-            background: If True, start the scan as a background job and return
-                immediately with a job_id, then manage it with job_status /
-                job_output / job_cancel. Set this for anything that may run
-                longer than ~60s: the MCP client abandons a synchronous tool
-                call around then and orphans the scan with no handle.
-                Default False.
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote).
         """
         post_data: Dict[str, Any] = {"url": url, "data": data, "additional_args": additional_args}
         if technique:
@@ -210,9 +216,10 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             post_data["tables"] = tables
         if dump:
             post_data["dump"] = dump
-        if background:
-            post_data["background"] = True
-        return kali_client.heavy_tool_post("api/tools/sqlmap", post_data)
+        return run_promotable(
+            kali_client, "api/tools/sqlmap", post_data,
+            heavy=True, background=background,
+        )
 
     # ── Password cracking / brute-force ──────────────────────
 
@@ -238,12 +245,12 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             tasks: Number of parallel connection threads (default: 16)
             wait: Timeout in seconds for each connection attempt (default: 32)
             port: Target port override (default: 0 means use service default)
-            background: If True, start the scan as a background job and return
-                immediately with a job_id, then manage it with job_status /
-                job_output / job_cancel. Set this for anything that may run
-                longer than ~60s: the MCP client abandons a synchronous tool
-                call around then and orphans the scan with no handle.
-                Default False.
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote).
         """
         data: Dict[str, Any] = {
             "target": target, "service": service,
@@ -257,9 +264,10 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             data["wait"] = wait
         if port:
             data["port"] = port
-        if background:
-            data["background"] = True
-        return kali_client.heavy_tool_post("api/tools/hydra", data)
+        return run_promotable(
+            kali_client, "api/tools/hydra", data,
+            heavy=True, background=background,
+        )
 
     @mcp.tool()
     def tools_john(hash_file: str, wordlist: str = "", format_type: str = "", additional_args: str = "", background: bool = False) -> Dict[str, Any]:
@@ -271,17 +279,18 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             wordlist: Wordlist path
             format_type: Hash format (e.g., 'NT', 'md5crypt', 'raw-sha256')
             additional_args: Extra john arguments
-            background: If True, start the scan as a background job and return
-                immediately with a job_id, then manage it with job_status /
-                job_output / job_cancel. Set this for anything that may run
-                longer than ~60s: the MCP client abandons a synchronous tool
-                call around then and orphans the scan with no handle.
-                Default False.
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote).
         """
         data = {"hash_file": hash_file, "wordlist": wordlist, "format_type": format_type, "additional_args": additional_args}
-        if background:
-            data["background"] = True
-        return kali_client.safe_post("api/tools/john", data)
+        return run_promotable(
+            kali_client, "api/tools/john", data,
+            heavy=False, background=background,
+        )
 
     # ── Enumeration ──────────────────────────────────────────
 
@@ -293,17 +302,18 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
         Args:
             target: Target IP
             additional_args: Enum4linux flags (default: -a for all)
-            background: If True, start the scan as a background job and return
-                immediately with a job_id, then manage it with job_status /
-                job_output / job_cancel. Set this for anything that may run
-                longer than ~60s: the MCP client abandons a synchronous tool
-                call around then and orphans the scan with no handle.
-                Default False.
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote).
         """
         data = {"target": target, "additional_args": additional_args}
-        if background:
-            data["background"] = True
-        return kali_client.safe_post("api/tools/enum4linux", data)
+        return run_promotable(
+            kali_client, "api/tools/enum4linux", data,
+            heavy=False, background=background,
+        )
 
     # ── Subdomain / asset discovery ──────────────────────────
 
@@ -366,12 +376,12 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             threads: Number of concurrent threads (default: 2)
             include: Only test these parameters (comma-separated)
             exclude: Skip these parameters (comma-separated)
-            background: If True, start the scan as a background job and return
-                immediately with a job_id, then manage it with job_status /
-                job_output / job_cancel. Set this for anything that may run
-                longer than ~60s: the MCP client abandons a synchronous tool
-                call around then and orphans the scan with no handle.
-                Default False.
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote).
         """
         data: Dict[str, Any] = {"url": url, "method": method}
         if headers:
@@ -386,9 +396,10 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             data["include"] = include
         if exclude:
             data["exclude"] = exclude
-        if background:
-            data["background"] = True
-        return kali_client.safe_post("api/tools/arjun", data)
+        return run_promotable(
+            kali_client, "api/tools/arjun", data,
+            heavy=False, background=background,
+        )
 
     @mcp.tool()
     def tools_fierce(domain: str, additional_args: str = "", background: bool = False) -> Dict[str, Any]:
@@ -398,17 +409,18 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
         Args:
             domain: Target domain
             additional_args: Extra fierce arguments
-            background: If True, start the scan as a background job and return
-                immediately with a job_id, then manage it with job_status /
-                job_output / job_cancel. Set this for anything that may run
-                longer than ~60s: the MCP client abandons a synchronous tool
-                call around then and orphans the scan with no handle.
-                Default False.
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote).
         """
         data = {"domain": domain, "additional_args": additional_args}
-        if background:
-            data["background"] = True
-        return kali_client.safe_post("api/tools/fierce", data)
+        return run_promotable(
+            kali_client, "api/tools/fierce", data,
+            heavy=False, background=background,
+        )
 
     @mcp.tool()
     def tools_byp4xx(url: str, method: str = "GET", additional_args: str = "", background: bool = False) -> Dict[str, Any]:
@@ -515,12 +527,12 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
                 but may overwhelm the network or trigger IDS. Common values:
                 1000 (safe), 10000 (moderate), 100000 (aggressive).
             additional_args: Extra masscan arguments (e.g., '--banners' to grab service banners)
-            background: If True, start the scan as a background job and return
-                immediately with a job_id, then manage it with job_status /
-                job_output / job_cancel. Set this for anything that may run
-                longer than ~60s: the MCP client abandons a synchronous tool
-                call around then and orphans the scan with no handle.
-                Default False.
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote).
 
         Example usage:
             tools_masscan(target='192.168.1.0/24', ports='80,443,8080', rate=5000)
@@ -530,9 +542,10 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
         data: Dict[str, Any] = {"target": target, "ports": ports, "rate": rate}
         if additional_args:
             data["additional_args"] = additional_args
-        if background:
-            data["background"] = True
-        return kali_client.heavy_tool_post("api/tools/masscan", data)
+        return run_promotable(
+            kali_client, "api/tools/masscan", data,
+            heavy=True, background=background,
+        )
 
     @mcp.tool()
     def tools_katana(
@@ -558,12 +571,12 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             scope: Regex pattern to restrict crawl scope (e.g., '.*\\.example\\.com').
                 Empty string means no scope restriction.
             additional_args: Extra katana arguments (e.g., '-H "Authorization: Bearer token"')
-            background: If True, start the scan as a background job and return
-                immediately with a job_id, then manage it with job_status /
-                job_output / job_cancel. Set this for anything that may run
-                longer than ~60s: the MCP client abandons a synchronous tool
-                call around then and orphans the scan with no handle.
-                Default False.
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote).
 
         Example usage:
             tools_katana(url='https://example.com')
@@ -575,9 +588,10 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             data["scope"] = scope
         if additional_args:
             data["additional_args"] = additional_args
-        if background:
-            data["background"] = True
-        return kali_client.heavy_tool_post("api/tools/katana", data)
+        return run_promotable(
+            kali_client, "api/tools/katana", data,
+            heavy=True, background=background,
+        )
 
     # ── SSL/TLS & certificate transparency ───────────────────
 
@@ -664,12 +678,12 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             threads: Number of concurrent screenshot threads (default: 4)
             resolution: Browser viewport resolution as WIDTHxHEIGHT (default: '1280x720')
             additional_args: Extra gowitness arguments
-            background: If True, start the scan as a background job and return
-                immediately with a job_id, then manage it with job_status /
-                job_output / job_cancel. Set this for anything that may run
-                longer than ~60s: the MCP client abandons a synchronous tool
-                call around then and orphans the scan with no handle.
-                Default False.
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote).
 
         Example usage:
             tools_gowitness(url='https://example.com')
@@ -682,9 +696,10 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             data["resolution"] = resolution
         if additional_args:
             data["additional_args"] = additional_args
-        if background:
-            data["background"] = True
-        return kali_client.safe_post("api/tools/gowitness", data)
+        return run_promotable(
+            kali_client, "api/tools/gowitness", data,
+            heavy=False, background=background,
+        )
 
     @mcp.tool()
     def tools_amass(
@@ -704,12 +719,12 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             mode: Enumeration mode — 'passive' for OSINT-only or 'active' for
                 DNS resolution and zone transfers (default: 'passive')
             additional_args: Extra amass arguments
-            background: If True, start the scan as a background job and return
-                immediately with a job_id, then manage it with job_status /
-                job_output / job_cancel. Set this for anything that may run
-                longer than ~60s: the MCP client abandons a synchronous tool
-                call around then and orphans the scan with no handle.
-                Default False.
+            background: Optional. This tool auto-promotes to a background job and
+                waits inline up to ~50s; if it finishes you get the full result,
+                otherwise you get {finished: false, status: "running", job_id, ...}
+                to drive with job_status / job_output / job_cancel. Set
+                background=True only to skip the inline wait and get the job_id
+                immediately. Default False (auto-promote).
 
         Example usage:
             tools_amass(domain='example.com')
@@ -720,9 +735,10 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             data["mode"] = mode
         if additional_args:
             data["additional_args"] = additional_args
-        if background:
-            data["background"] = True
-        return kali_client.heavy_tool_post("api/tools/amass", data)
+        return run_promotable(
+            kali_client, "api/tools/amass", data,
+            heavy=True, background=background,
+        )
 
     # ── CVE / Vulnerability Database Tools ────────────────────────
 
