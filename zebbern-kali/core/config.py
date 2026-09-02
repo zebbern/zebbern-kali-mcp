@@ -6,7 +6,7 @@ import logging
 import sys
 
 # Version information
-VERSION = "1.0.9"
+VERSION = "1.0.10"
 
 # Configuration
 API_PORT = int(os.environ.get("API_PORT", 5000))
