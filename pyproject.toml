@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zebbern-kali-mcp"
-version = "1.0.5"
+version = "1.0.6"
 description = "Capability-aware MCP client for a Docker-hosted Kali Linux tools API"
 readme = "README.md"
 requires-python = ">=3.10"
