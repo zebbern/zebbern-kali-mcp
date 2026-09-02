@@ -152,6 +152,13 @@ def wait_for_live(url: str, timeout: float) -> dict[str, Any]:
     raise TimeoutError(f"timed out waiting for {endpoint}: {last_error}")
 
 
+# Wall-clock cap for a single harness tool call. The MCP stdio session sets no
+# read_timeout_seconds, so the spawned server's --timeout is the only brake on a
+# wedged tool. It used to be DEFAULT_REQUEST_TIMEOUT by accident; pinning it here
+# keeps the harness bounded independently of what that default becomes.
+HARNESS_REQUEST_TIMEOUT = 300
+
+
 @asynccontextmanager
 async def mcp_session(api_url: str, token: str, profile: str) -> AsyncIterator[ClientSession]:
     """Open a real MCP stdio session against the smoke API."""
@@ -173,6 +180,8 @@ async def mcp_session(api_url: str, token: str, profile: str) -> AsyncIterator[C
             token,
             "--profile",
             profile,
+            "--timeout",
+            str(HARNESS_REQUEST_TIMEOUT),
         ],
         cwd=ROOT,
         env=child_env,

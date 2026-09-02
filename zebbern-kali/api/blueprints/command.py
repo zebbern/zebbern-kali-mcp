@@ -136,12 +136,28 @@ def unrestricted_exec():
                 "timed_out": False,
             })
 
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            # subprocess.run attaches what the process had already written. This
+            # used to be discarded, so a scan that outran its budget returned
+            # literally nothing. Partial results are kept and success follows
+            # CommandExecutor's contract: True when there is output to read.
+            stdout = exc.stdout or ""
+            stderr = exc.stderr or ""
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode("utf-8", errors="replace")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+            partial = bool(stdout or stderr)
             return jsonify({
-                "success": False,
+                "success": partial,
                 "error": f"Command timed out after {timeout} seconds",
+                "stdout": stdout,
+                "stderr": stderr,
+                "return_code": -1,
                 "command": render_command(command),
+                "execution_time": round(time.time() - start_time, 2),
                 "timed_out": True,
+                "partial_results": partial,
             })
 
     except Exception as e:

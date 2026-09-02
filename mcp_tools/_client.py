@@ -10,6 +10,29 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# requests read timeout for every synchronous tool call. The invariant: THE
+# CLIENT ALWAYS OUTLIVES THE BACKEND. Set below a backend budget it does not cap
+# that budget, it destroys the answer -- requests raises ReadTimeout before the
+# backend can serialize its reply, safe_post returns {"error": "... ReadTimeout"}
+# and every byte of partial output is gone, so the timed_out/partial_results
+# contract becomes unreachable. Worse, the backend never notices: it keeps
+# running the subprocess with nobody listening, so the scan is orphaned rather
+# than cancelled. This sat at 14400 while the table's longest entries (hydra,
+# john) were 86400, which inverted exactly that.
+#
+# 90000 is 25 hours: strictly above max(TOOL_TIMEOUTS.values()) == 86400, with
+# margin for the executor's 5s terminate window plus serializing the output.
+# Raise it whenever a TOOL_TIMEOUTS entry grows past it -- the guard in
+# tests/test_tool_timeouts.py enforces the ordering. It is not a practical
+# hazard: the MCP client applies its own far shorter per-tool deadline, and an
+# unreachable server still fails in DEFAULT_CONNECT_TIMEOUT seconds.
+# mcp_server.py's --timeout defaults to this; keep the two in step.
+DEFAULT_REQUEST_TIMEOUT = 90000  # 25 hours
+
+# Connect phase only: an unreachable server must fail fast, so this stays short
+# no matter how long the read timeout gets.
+DEFAULT_CONNECT_TIMEOUT = 10
+
 
 def _origin(url: str) -> tuple[str, str, Optional[int]]:
     """Return the normalized network origin for a URL."""
@@ -117,7 +140,7 @@ class KaliToolsClient:
     def __init__(
         self,
         server_url: str,
-        timeout: int = 300,
+        timeout: int = DEFAULT_REQUEST_TIMEOUT,
         api_token: Optional[str] = None,
     ):
         self.server_url = server_url.rstrip("/")
@@ -125,7 +148,7 @@ class KaliToolsClient:
         self.api_token = (
             api_token if api_token is not None else os.environ.get("KALI_API_TOKEN", "")
         )
-        self._connect_timeout = 10
+        self._connect_timeout = DEFAULT_CONNECT_TIMEOUT
         self._heavy_semaphore = threading.Semaphore(self.MAX_HEAVY_TASKS)
         logger.info("Initialized Kali Tools Client connecting to %s", server_url)
 

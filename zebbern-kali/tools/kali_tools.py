@@ -7,6 +7,7 @@ from typing import Dict, Any
 from flask import request, jsonify
 from core.config import logger
 from core.command_executor import execute_command, execute_command_argv
+from core.tool_config import get_tool_timeout
 import shlex
 import shutil
 
@@ -146,7 +147,7 @@ def run_fierce(params: Dict[str, Any]) -> Dict[str, Any]:
         if additional_args:
             command += f" {additional_args}"
 
-        result = execute_command(command, timeout=300)
+        result = execute_command(command)
         return result
     except Exception as e:
         logger.error(f"Error in fierce: {str(e)}")
@@ -507,7 +508,7 @@ def run_byp4xx(params: Dict[str, Any]) -> Dict[str, Any]:
         argv += shlex.split(additional_args)
     argv.append(url)
 
-    return execute_command_argv(argv, timeout=120)
+    return execute_command_argv(argv)
 
 
 def run_subfinder(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -522,7 +523,7 @@ def run_subfinder(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         command += f" {additional_args}"
 
-    return execute_command(command, timeout=300)
+    return execute_command(command)
 
 def run_httpx(params: Dict[str, Any]) -> Dict[str, Any]:
     """Execute ProjectDiscovery httpx (probing)."""
@@ -545,7 +546,7 @@ def run_httpx(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         argv += shlex.split(additional_args)
 
-    return execute_command_argv(argv, timeout=900)
+    return execute_command_argv(argv)
 
 
 def run_searchsploit(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -560,7 +561,7 @@ def run_searchsploit(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         command += f" {additional_args}"
 
-    return execute_command(command, timeout=60)
+    return execute_command(command)
 
 def run_nuclei(params: Dict[str, Any]) -> Dict[str, Any]:
     """Execute Nuclei with safer defaults and correct flags."""
@@ -595,7 +596,7 @@ def run_nuclei(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         argv += shlex.split(additional_args)
 
-    return execute_command_argv(argv, timeout=1800)
+    return execute_command_argv(argv)
 
 
 def run_arjun(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -632,7 +633,7 @@ def run_arjun(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         command += f" {additional_args}"
 
-    return execute_command(command, timeout=300)
+    return execute_command(command)
 
 def run_subzy(params: Dict[str, Any]) -> Dict[str, Any]:
     """Execute Subzy for subdomain takeover detection."""
@@ -659,7 +660,7 @@ def run_subzy(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         command += f" {additional_args}"
 
-    result = execute_command(command, timeout=300)
+    result = execute_command(command)
 
     # Cleanup temp file if created
     if target:
@@ -691,7 +692,7 @@ def run_assetfinder(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         command += f" {additional_args}"
 
-    return execute_command(command, timeout=120)
+    return execute_command(command)
 
 def run_waybackurls(params: Dict[str, Any]) -> Dict[str, Any]:
     """Execute waybackurls to fetch URLs from Wayback Machine."""
@@ -709,7 +710,7 @@ def run_waybackurls(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         command += f" {additional_args}"
 
-    return execute_command(command, timeout=2000)
+    return execute_command(command)
 
 
 def run_masscan(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -728,7 +729,7 @@ def run_masscan(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         argv += shlex.split(additional_args)
 
-    return execute_command_argv(argv, timeout=600)
+    return execute_command_argv(argv)
 
 
 def run_katana(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -755,7 +756,7 @@ def run_katana(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         argv += shlex.split(additional_args)
 
-    return execute_command_argv(argv, timeout=600)
+    return execute_command_argv(argv)
 
 
 def run_sslscan(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -776,7 +777,7 @@ def run_sslscan(params: Dict[str, Any]) -> Dict[str, Any]:
     host_target = f"{target}:{port}" if port != 443 else target
     argv.append(host_target)
 
-    return execute_command_argv(argv, timeout=120)
+    return execute_command_argv(argv)
 
 
 def run_crtsh(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -797,7 +798,7 @@ def run_crtsh(params: Dict[str, Any]) -> Dict[str, Any]:
         url = f"https://crt.sh/?q={query}&output=json"
         ctx = ssl.create_default_context()
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
+        with urllib.request.urlopen(req, timeout=get_tool_timeout("crtsh"), context=ctx) as resp:
             data = json_lib.loads(resp.read().decode())
 
         results = []
@@ -858,7 +859,7 @@ def run_gowitness(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         argv += shlex.split(additional_args)
 
-    return execute_command_argv(argv, timeout=120)
+    return execute_command_argv(argv)
 
 
 def run_amass(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -884,7 +885,7 @@ def run_amass(params: Dict[str, Any]) -> Dict[str, Any]:
     if additional_args:
         argv += shlex.split(additional_args)
 
-    return execute_command_argv(argv, timeout=1800)
+    return execute_command_argv(argv)
 
 
 def run_cve_search(params: Dict[str, Any]) -> Dict[str, Any]:

@@ -6,13 +6,17 @@ import logging
 import sys
 
 # Version information
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 
 # Configuration
 API_PORT = int(os.environ.get("API_PORT", 5000))
 API_LISTEN_HOST = os.environ.get("API_LISTEN_HOST", "0.0.0.0")
 DEBUG_MODE = os.environ.get("DEBUG_MODE", "0").lower() in ("1", "true", "yes", "y")
-COMMAND_TIMEOUT = 300  # 5 minutes default timeout
+# Backstop for a CommandExecutor built without a resolved timeout. Almost every
+# caller goes through execute_command(), which resolves core.tool_config first,
+# so this only fires on a direct CommandExecutor(cmd). It is a "this process is
+# hung" bound, not a scan budget -- keep it in step with TOOL_TIMEOUTS["default"].
+COMMAND_TIMEOUT = 3600  # 1 hour backstop
 
 # Configure logging
 logging.basicConfig(

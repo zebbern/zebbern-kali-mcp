@@ -104,6 +104,109 @@ fix that was never published. Run it from somewhere else and assert on
 (`importlib.util.spec_from_file_location`) or assert on the **source text** —
 both patterns are already used in `tests/`.
 
+## Timeouts and truncation
+
+A timeout here is a backstop for a **hung** process, not a budget for a slow
+one. A four-hour scan is the workload, not a bug.
+
+**Which layer binds first.** Four independent deadlines stack on one synchronous
+tool call, and the smallest wins:
+
+```
+mcp_server --timeout  ->  mcp_tools/_client.py  DEFAULT_REQUEST_TIMEOUT (90000)
+                          requests read timeout, connect stays 10s
+api/blueprints/*      ->  the route's own params.get("timeout", N)
+core/tool_config.py   ->  TOOL_TIMEOUTS[tool], default 3600, max 86400
+core/command_executor ->  subprocess wait
+```
+
+The MSF chain is the exception to "smallest wins": `msf_session_execute` always
+puts `timeout` in the request body, so the route's `params.get("timeout", 14400)`
+never fires for an MCP caller and **the outermost default decides**. All three
+(`mcp_tools/metasploit.py`, the route, `MetasploitSession.execute`) must be
+raised together; the first is the only one on the wheel track, so it can regress
+in a PyPI-only change that never touches the image.
+
+**The client must always outlive the backend.** Set below a backend budget it
+does not cap that budget, it destroys the answer: `requests` raises
+`ReadTimeout` before the backend can serialize its reply, `safe_post` returns
+`{"error": "Request failed: ReadTimeout"}`, and every byte of partial output is
+gone — which makes the whole `timed_out`/`partial_results` contract below
+unreachable. Worse, the backend does **not** notice: it keeps running the
+subprocess with nobody listening, so the scan is orphaned rather than cancelled
+and its output is unreachable forever.
+
+The shipped defaults satisfy that rule with margin — client `90000` (25h) >
+table max `86400` (hydra, john) — and
+`test_the_client_read_timeout_outlives_the_longest_tool_budget` asserts
+`DEFAULT_REQUEST_TIMEOUT > max(TOOL_TIMEOUTS.values())` so the two release
+tracks cannot drift back past each other. They already had: the client sat at
+14400 while eight table entries were at or above it. Raise the client whenever
+a table entry grows past it; do not shorten a tool's budget to fit under the
+client. The connect timeout stays 10s — an unreachable server is a different
+failure and must still fail fast.
+
+That guard only sees `TOOL_TIMEOUTS`. The one backend deadline computed by
+**formula** is `ad_tools.password_spray`'s `len(users) * 5`, which a SecLists
+username file turns into ~41,500,000s, far past the client. It is clamped to
+`SPRAY_TIMEOUT_CEILING` (86400) for that reason — and clamping loses nothing,
+because the `TimeoutExpired` handler returns the partial spray and the
+credentials it already parsed, which is strictly more than the `ReadTimeout`
+path returns. Any future formula-derived deadline needs the same ceiling and
+its own guard.
+
+`get_tool_timeout` keys on a bare binary name. `execute_command` resolves it
+with `get_command_timeout`, which strips `sudo`/`timeout 4h`/`env FOO=1`/an
+absolute path and takes the longest budget across a pipeline — before that,
+`sudo nmap`, `/usr/bin/nmap` and `echo x | waybackurls` all missed their entry
+and silently dropped to the default.
+
+**`success: True` and `timed_out: True` coexist on purpose.** A truncated scan's
+partial output is worth keeping, so `CommandExecutor`, `/api/exec` and
+`MetasploitSession.execute` all report success with output present. Callers
+must check `timed_out`, never `success`, to know a command finished. Do not
+"fix" this by flipping success. `partial_results` is a real `bool` from all
+four emitters — two of them used to return the stdout *string*, truthy but not
+a bool, which a strict client reads as a type change rather than a flag.
+
+**Output is never capped or truncated.** `CommandExecutor` accumulates into a
+list and joins once (it used to do `self.stdout_data += line`, O(n^2) in line
+count — tolerable under a 5-minute cap, not under 24 hours). `MetasploitSession`
+does the same for its PTY reader: `output_buffer` is a property over a chunk
+list, with `_output_len` and a 512-char `_output_tail` so the wait loop's
+per-poll work stays constant. 64MB of 4096-byte reads measured at 131.3s by
+concatenation against 0.004s of appends plus one 0.016s join — roughly half a
+megabyte a second, which a verbose module outruns. `stdout_data`,
+`stderr_data` and `output_buffer` all stay public `str`s holding every byte;
+the tail exists for the prompt *match* only.
+
+Unbounded memory on a very long run is a **known, accepted** hazard: dropping
+operator output to bound it is the same sin as redacting it. If it ever needs
+bounding, spill to disk; do not discard.
+
+Because those attributes are now **derived**, deleting a `_finalize_output()`
+call makes every tool's output vanish while still reporting `success: True`, and
+the whole suite stayed green through it. `tests/test_command_executor_output.py`
+runs the real class on real processes for exactly that reason.
+
+**`exec_stream` registers no job and cannot be cancelled.** On client disconnect
+the `finally` in `stream_command_execution` only sets `consumer_closed`, which
+stops the queue; the subprocess is never killed and runs to its full timeout,
+untracked. For anything you may need to abort, use
+`zebbern_exec(background=True)` and `job_cancel`.
+
+**A backend restart drops every session silently.** Jobs, reverse-shell
+listeners, SSH sessions and MSF sessions are in-memory only; after a restart the
+`*_status` tools return empty with no error, which reads exactly like "it never
+started". Pivot tunnels are the exception — `network_pivot` persists to
+`state.json` and reloads them as `status="stopped"`, visibly dropped rather than
+vanished. Given how routine `docker compose up -d --force-recreate` is here,
+this is the first thing to suspect when a long scan disappears.
+
+**`probe_tools.py` compares outcome categories, not output.** A clean run proves
+outcome stability, not correctness: a tool whose output format drifts but still
+exits 0 passes the probe. "0 BROKEN" is not evidence that a tool still works.
+
 ## Invariants not to break
 
 - **Fail-open in `mcp_tools/__init__.py`.** A malformed, unknown-schema or
@@ -114,6 +217,34 @@ both patterns are already used in `tests/`.
 - **`exec_stream`'s return contract**: `success`, `output`, `return_code`,
   `timed_out`, `streamed`, plus `incomplete`/`error` only when no result frame
   arrived. A missing result frame must never report success.
+- **`msf_session_execute` must keep reporting `timed_out` *and*
+  `console_exited`.** The wait loop's three exits — prompt reached, msfconsole
+  died, budget expired — all fall through to one return, and before the flags
+  existed a module that outran its timeout was indistinguishable from one that
+  finished. `timed_out` starts `True` and only the two early exits clear it;
+  that is not inverted, it has been misread as inverted twice. It means "the
+  budget expired" and nothing else. The death exit clears it too, so it needs
+  its own flag: `console_exited` is the difference between a console that was
+  OOM-killed mid-exploit and one that reached a prompt, which were otherwise
+  field-for-field identical dicts — and under the rule below (check `timed_out`,
+  never `success`) that made a crash read as a completed run. It feeds
+  `partial_results = bool((timed_out or console_exited) and output)`, and it
+  does **not** flip `success` or cap the output. The death exit also clears
+  `is_ready`, which is honest but effectively unobservable through
+  `msf_session_list`: that path calls `_cleanup_dead_sessions()` first, which
+  evicts the dead session before `is_ready` is read. Nothing between the session
+  and the MCP caller reshapes that dict — the route does `jsonify(result)`,
+  `safe_post` does `response.json()` — so both fields survive on their own; keep
+  it that way. Guarded semantically (not just by source substrings) in
+  `tests/test_tool_timeouts.py`, which drives the real loop with a stubbed
+  process.
+- **The MSF prompt test matches the trailing line, not the last 200 chars.**
+  `"msf" in buf[-200:] and ">" in buf[-200:]` misses a `meterpreter` or shell
+  prompt, i.e. exactly what you wait on after an exploit lands, and at a 14400
+  default that miss is a 4-hour uncancellable block rather than a 5-minute
+  stall. `_ends_on_prompt` anchors on the last line and accepts msf/msf6,
+  meterpreter, shell and generic `>` `#` `$` prompts. It strips ANSI for the
+  **match only** — the buffer returned to the operator is never rewritten.
 - **SSE frames**: one JSON object per `data:` line. Both emitters serialize
   through `json.dumps`; never add `indent=`, and never hand-build a frame that
   interpolates anything. (`_helpers.py` still emits one hand-built heartbeat,
@@ -125,8 +256,8 @@ both patterns are already used in `tests/`.
 ## Tests
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q            # ~640 passed, 1 skipped
-.venv/Scripts/python.exe -m pytest -m live -q    # 9, needs a backend on :5000
+.venv/Scripts/python.exe -m pytest -q            # ~698 passed, 1 skipped
+.venv/Scripts/python.exe -m pytest -m live -q    # 11, needs a backend on :5000
 python tests/integration/run_smoke.py --image <img> --expect-variant full --check-trim
 python tests/integration/probe_tools.py          # all 131 tools, needs a backend
 ```

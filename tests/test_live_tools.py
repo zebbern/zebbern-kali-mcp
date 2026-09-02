@@ -52,6 +52,35 @@ def _backend_is_up() -> bool:
         return False
 
 
+def _backend_version() -> tuple:
+    """The backend's own version as a comparable tuple, or () if unreadable."""
+    try:
+        headers = {"X-API-Key": TOKEN} if TOKEN else {}
+        body = requests.get(f"{API_URL}/health", headers=headers, timeout=3).json()
+        parts = str(body.get("version", "")).split(".")
+        return tuple(int(part) for part in parts if part.isdigit())
+    except (OSError, requests.RequestException, ValueError, AttributeError):
+        return ()
+
+
+# The truncation contract ships in the image, not the wheel. integration.yml
+# pins an immutable digest, so on the very change that introduces the contract
+# the gate still boots the *previous* backend -- these two cases would fail for
+# the one run between merging and re-pinning the digest. Gating on the backend's
+# own version keeps that window honest without weakening the assertions: against
+# a current image they run for real, and the non-live guards catch a regression
+# in the source either way.
+TRUNCATION_CONTRACT_VERSION = (1, 0, 8)
+
+requires_truncation_contract = pytest.mark.skipif(
+    _backend_version() < TRUNCATION_CONTRACT_VERSION,
+    reason=(
+        "backend predates the truncation contract "
+        f"({'.'.join(str(p) for p in TRUNCATION_CONTRACT_VERSION)})"
+    ),
+)
+
+
 pytestmark = [
     pytest.mark.live,
     pytest.mark.skipif(not _backend_is_up(), reason=f"no Kali backend at {API_URL}"),
@@ -201,3 +230,49 @@ def test_exec_stream_reports_a_backend_timeout_with_a_result_frame():
     assert result["success"] is True
     assert result.get("incomplete") is not True
     assert "[stdout] tick-1" in result["output"]
+
+
+@requires_truncation_contract
+def test_zebbern_exec_reports_a_timeout_and_keeps_what_the_command_printed():
+    """A timed-out command used to return an error string and nothing else --
+    every byte it had already produced was discarded. The signal that separates
+    truncation from completion is `timed_out`, not `success`."""
+    nonce = f"zkm-timeout-{uuid.uuid4().hex[:12]}"
+
+    result = _call(
+        "zebbern_exec",
+        command=f"sh -c 'printf {nonce}; sleep 30'",
+        timeout=3,
+    )
+
+    assert result["timed_out"] is True
+    assert nonce in result["stdout"]
+    assert result["partial_results"] is True
+
+
+@requires_truncation_contract
+def test_msf_session_execute_distinguishes_truncation_from_completion():
+    """The wait loop's two exits -- prompt reached, or budget expired -- both fell
+    through to one unconditional success, so a module that outran its timeout
+    looked exactly like one that finished."""
+    created = _call("msf_session_create")
+    session_id = created.get("session_id")
+    if not session_id:
+        pytest.skip(f"no msfconsole session available: {created!r}")
+
+    try:
+        result = _call(
+            "msf_session_execute",
+            session_id=session_id,
+            command="version",
+            timeout=1,
+            read_delay=0,
+        )
+
+        assert "timed_out" in result, f"no truncation signal in {result!r}"
+        assert result["timed_out"] is True
+        # Partial output stays readable and success stays True on purpose; this
+        # matches CommandExecutor's contract.
+        assert result["success"] is True
+    finally:
+        _call("msf_session_destroy", session_id=session_id)
