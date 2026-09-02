@@ -203,8 +203,19 @@ class KaliToolsClient:
         return response
 
     def safe_get(
-        self, endpoint: str, params: Optional[Dict[str, Any]] = None
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        read_timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
+        """GET a JSON endpoint.
+
+        ``read_timeout`` is opt-in and defaults to None, which leaves
+        ``request`` to apply ``(connect, self.timeout)`` -- the unbounded
+        behaviour every tool call depends on. Pass it only for a request that
+        genuinely returns fast (a job poll, a job start), never for one that
+        carries a tool's own budget.
+        """
         if params is None:
             params = {}
         try:
@@ -212,6 +223,11 @@ class KaliToolsClient:
                 "GET",
                 endpoint,
                 params=params,
+                timeout=(
+                    (self._connect_timeout, read_timeout)
+                    if read_timeout is not None
+                    else None
+                ),
             )
             response.raise_for_status()
             return response.json()
@@ -220,12 +236,26 @@ class KaliToolsClient:
         except Exception as e:
             return _request_failure("GET", endpoint, e, unexpected=True, server=_safe_origin(self.server_url))
 
-    def safe_post(self, endpoint: str, json_data: Dict[str, Any]) -> Dict[str, Any]:
+    def safe_post(
+        self,
+        endpoint: str,
+        json_data: Dict[str, Any],
+        read_timeout: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """POST JSON and read the JSON reply.
+
+        See ``safe_get`` for what ``read_timeout`` is for and when not to use it.
+        """
         try:
             response = self.request(
                 "POST",
                 endpoint,
                 json=json_data,
+                timeout=(
+                    (self._connect_timeout, read_timeout)
+                    if read_timeout is not None
+                    else None
+                ),
             )
             response.raise_for_status()
             return response.json()
@@ -235,7 +265,11 @@ class KaliToolsClient:
             return _request_failure("POST", endpoint, e, unexpected=True, server=_safe_origin(self.server_url))
 
     def heavy_tool_post(
-        self, endpoint: str, json_data: Dict[str, Any], semaphore_timeout: int = 120
+        self,
+        endpoint: str,
+        json_data: Dict[str, Any],
+        semaphore_timeout: int = 120,
+        read_timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
         acquired = self._heavy_semaphore.acquire(timeout=semaphore_timeout)
         if not acquired:
@@ -250,7 +284,7 @@ class KaliToolsClient:
                 "success": False,
             }
         try:
-            return self.safe_post(endpoint, json_data)
+            return self.safe_post(endpoint, json_data, read_timeout=read_timeout)
         finally:
             self._heavy_semaphore.release()
 
