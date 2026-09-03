@@ -52,6 +52,97 @@ def header_pairs(headers) -> List[tuple]:
     return pairs
 
 
+# GraphQL fuzzing works by substituting payloads into a query's variables, so
+# with no variables it sends nothing at all. The MCP wrapper never exposed
+# them, which made "no findings" the guaranteed answer for every agent that
+# called it -- against an endpoint that echoed a SQL error back verbatim.
+# These two derive variables when the caller does not supply them: from the
+# query's own declarations first, and failing that from the schema.
+
+_VAR_DECL = re.compile(r"\$(\w+)\s*:\s*([\[\]!\w]+)")
+
+
+def declared_variables(query: str) -> Dict[str, str]:
+    """Variable names a query declares, seeded with a benign value.
+
+    `query($term: String)` is the normal way to write a fuzzable query, so the
+    names are already there; asking the caller to repeat them in a second
+    argument is what made the tool look empty.
+    """
+    if not query:
+        return {}
+    return {name: "1" for name, _type in _VAR_DECL.findall(query)}
+
+
+def _type_name(type_ref) -> str:
+    """Unwrap NON_NULL/LIST wrappers down to the named type."""
+    seen = 0
+    while isinstance(type_ref, dict) and seen < 10:
+        if type_ref.get("name"):
+            return type_ref["name"]
+        type_ref = type_ref.get("ofType")
+        seen += 1
+    return ""
+
+
+def _selection_set(types_by_name, type_ref, depth: int) -> str:
+    """A selection set for a field's return type, nested at most `depth` deep.
+
+    GraphQL rejects a query that selects nothing from an object type, so a
+    generated query without this is a syntax error rather than a scan.
+    """
+    if depth <= 0:
+        return ""
+    target = types_by_name.get(_type_name(type_ref))
+    if not target or target.get("kind") != "OBJECT":
+        return ""
+    parts = []
+    for field in (target.get("fields") or [])[:5]:
+        if field.get("args"):
+            continue
+        parts.append(field["name"] + _selection_set(types_by_name, field.get("type"), depth - 1))
+    if not parts:
+        return ""
+    return " { " + " ".join(parts) + " }"
+
+
+def build_query_from_schema(schema: Dict, depth: int = 3):
+    """Build a fuzzable query from an introspection result.
+
+    Returns (query, variables), or (None, {}) when the schema exposes no field
+    that takes an argument -- there is nothing to fuzz in that case, and saying
+    so beats reporting a clean scan.
+    """
+    types = schema.get("types") or []
+    types_by_name = {t.get("name"): t for t in types if t.get("name")}
+    root_name = (schema.get("queryType") or {}).get("name") or "Query"
+    root = types_by_name.get(root_name)
+    if not root:
+        return None, {}
+
+    for field in root.get("fields") or []:
+        args = field.get("args") or []
+        if not args:
+            continue
+        decls, pairs, variables = [], [], {}
+        for arg in args:
+            name = arg.get("name")
+            if not name:
+                continue
+            decls.append("$%s: %s" % (name, _type_name(arg.get("type")) or "String"))
+            pairs.append("%s: $%s" % (name, name))
+            variables[name] = "1"
+        if not variables:
+            continue
+        selection = _selection_set(types_by_name, field.get("type"), max(1, depth))
+        query = "query(%s) { %s(%s)%s }" % (
+            ", ".join(decls), field["name"], ", ".join(pairs), selection
+        )
+        return query, variables
+
+    return None, {}
+
+
 # Suppress SSL warnings
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -309,17 +400,31 @@ class APISecurityTester:
             logger.error(f"GraphQL introspection error: {e}")
             return {"success": False, "error": str(e)}
 
-    def graphql_fuzz(self, url: str, query: str, variables: Dict = None,
-                     headers: Dict = None, auth_token: str = "") -> Dict[str, Any]:
+    def graphql_fuzz(self, url: str, query: str = "", variables: Dict = None,
+                     headers: Dict = None, auth_token: str = "",
+                     depth: int = 3) -> Dict[str, Any]:
         """
         Fuzz a GraphQL query for vulnerabilities.
 
+        Payloads are substituted into the query's variables, so with no
+        variables this sends no requests at all. It used to report success and
+        an empty finding list in that case, which is the worst answer a
+        security tool can give -- and it was the only answer an MCP caller
+        could get, because the wrapper had no way to pass variables.
+
+        Both are now derived when the caller does not supply them: from the
+        query's own `$name: Type` declarations, or by introspecting the schema
+        and building a query against the first field that takes an argument.
+        If nothing fuzzable turns up, that is reported as a failure rather than
+        as a clean scan.
+
         Args:
             url: GraphQL endpoint
-            query: Base query to fuzz
-            variables: Variables to fuzz
+            query: Base query to fuzz; generated from the schema when empty
+            variables: Variables to fuzz; taken from the query when omitted
             headers: Additional headers
             auth_token: Bearer token
+            depth: Nesting depth for a generated query's selection set
 
         Returns:
             Fuzzing results with potential vulnerabilities
@@ -334,7 +439,64 @@ class APISecurityTester:
                 req_headers["Authorization"] = f"Bearer {auth_token}"
 
             findings = []
-            variables = variables or {}
+            variables = dict(variables or {})
+            generated_query = False
+
+            if not variables and query:
+                variables = declared_variables(query)
+
+            if not query:
+                introspection = requests.post(
+                    url,
+                    json={"query": self.introspection_query},
+                    headers=req_headers,
+                    timeout=30,
+                    verify=False,
+                )
+                schema = {}
+                if introspection.status_code == 200:
+                    try:
+                        schema = (introspection.json().get("data") or {}).get("__schema") or {}
+                    except ValueError:
+                        schema = {}
+                if not schema:
+                    return {
+                        "success": False,
+                        "url": url,
+                        "error": (
+                            "no query given and the schema could not be read "
+                            "(introspection disabled or not a GraphQL endpoint); "
+                            "pass query= to fuzz it anyway"
+                        ),
+                        "introspection_enabled": False,
+                    }
+                query, generated = build_query_from_schema(schema, depth)
+                if not query:
+                    return {
+                        "success": False,
+                        "url": url,
+                        "error": (
+                            "the schema exposes no field taking an argument, so "
+                            "there is nothing to substitute a payload into"
+                        ),
+                        "introspection_enabled": True,
+                    }
+                variables = variables or generated
+                generated_query = True
+
+            if not variables:
+                return {
+                    "success": False,
+                    "url": url,
+                    "query": query,
+                    "error": (
+                        "the query declares no variables, so no payload can be "
+                        "substituted and no request would be sent; declare one "
+                        "as query($x: String) or pass variables="
+                    ),
+                    "variables_tested": [],
+                    "total_requests": 0,
+                }
 
             # Test each variable with fuzz payloads
             for var_name, var_value in variables.items():
@@ -382,6 +544,11 @@ class APISecurityTester:
             return {
                 "success": True,
                 "url": url,
+                # What was actually fuzzed. When the query is generated the
+                # caller never saw it, and "no findings" means nothing without
+                # knowing which query produced it.
+                "query": query,
+                "query_generated": generated_query,
                 "variables_tested": list(variables.keys()),
                 "findings": findings,
                 "total_requests": len(variables) * sum(len(p) for p in self.fuzz_payloads.values()),
@@ -1046,6 +1213,12 @@ class APISecurityTester:
                     "-mc", match_codes,
                     "-rate", str(rate),
                     "-json",
+                    # ffuf repaints a progress counter on stderr, and with no
+                    # TTY every repaint is its own line: a common.txt run gave
+                    # 430 lines and 38KB of banner and progress against 14
+                    # findings. Silent mode drops all of it and leaves the JSON
+                    # records on stdout byte-for-byte unchanged.
+                    "-s",
                     "-timeout", "10",
                 ]
                 if filter_codes:

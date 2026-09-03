@@ -2,7 +2,7 @@
 
 from flask import Blueprint, request, jsonify
 from core.config import logger
-from core.api_security import api_tester
+from core.api_security import header_pairs, api_tester
 
 bp = Blueprint("api_security", __name__)
 
@@ -33,16 +33,23 @@ def graphql_fuzz():
     try:
         params = request.json or {}
         url = params.get("url", "")
-        query = params.get("query", "")
-        if not url or not query:
-            return jsonify({"error": "url and query are required", "success": False}), 400
+        if not url:
+            return jsonify({"error": "url is required", "success": False}), 400
 
+        # query used to be required here while the wrapper documented it as
+        # "auto-generated from schema if empty", so the documented call was a
+        # 400. The runner generates it now, and depth was accepted and dropped
+        # on the floor the whole time.
+        headers = params.get("headers") or {}
+        if isinstance(headers, str):
+            headers = dict(header_pairs(headers))
         result = api_tester.graphql_fuzz(
             url=url,
-            query=query,
-            variables=params.get("variables", {}),
-            headers=params.get("headers", {}),
-            auth_token=params.get("auth_token", "")
+            query=params.get("query", ""),
+            variables=params.get("variables") or {},
+            headers=headers,
+            auth_token=params.get("auth_token", ""),
+            depth=int(params.get("depth", 3) or 3),
         )
         return jsonify(result)
     except Exception as e:
@@ -95,12 +102,24 @@ def api_fuzz():
         if not url:
             return jsonify({"error": "url is required", "success": False}), 400
 
+        # The wrapper sends "parameters" as the comma-separated string its
+        # docstring describes, plus "headers" as a "k: v, k: v" string. This
+        # route read "params" and expected dicts, so every one of them was
+        # dropped on the floor: api_fuzz_endpoint fuzzed nothing at all and
+        # still answered success with an empty parameters_tested.
+        names = params.get("parameters") or params.get("params") or {}
+        if isinstance(names, str):
+            names = {n.strip(): "1" for n in names.split(",") if n.strip()}
+        headers = params.get("headers") or {}
+        if isinstance(headers, str):
+            headers = dict(header_pairs(headers))
+
         result = api_tester.api_fuzz_endpoint(
             url=url,
             method=params.get("method", "GET"),
-            params=params.get("params", {}),
+            params=names,
             data=params.get("data", {}),
-            headers=params.get("headers", {})
+            headers=headers,
         )
         return jsonify(result)
     except Exception as e:

@@ -1,5 +1,6 @@
 """API security testing tools."""
 
+import json
 from typing import Dict, Any
 from mcp.server.fastmcp import FastMCP
 
@@ -21,16 +22,43 @@ def register(mcp: FastMCP, kali_client) -> None:
         return kali_client.safe_post("api/api-security/graphql/introspect", data)
 
     @mcp.tool()
-    def api_graphql_fuzz(url: str, query: str = "", depth: int = 3) -> Dict[str, Any]:
+    def api_graphql_fuzz(url: str, query: str = "", variables: str = "",
+                         depth: int = 3) -> Dict[str, Any]:
         """
-        Fuzz a GraphQL endpoint for vulnerabilities.
+        Fuzz a GraphQL endpoint for injection vulnerabilities.
+
+        Payloads are substituted into the query's VARIABLES, so a query with no
+        variables is fuzzed with nothing. url alone is enough: the schema is
+        introspected and a query built against the first field taking an
+        argument. If nothing fuzzable can be found you get an error saying so,
+        never an empty finding list -- check `variables_tested` and
+        `total_requests` to see what was actually sent.
 
         Args:
             url: GraphQL endpoint URL
-            query: Specific query to fuzz (auto-generated from schema if empty)
-            depth: Fuzzing depth (default: 3)
+            query: Query to fuzz, e.g. 'query($term: String){ search(term: $term)
+                { title } }'. Generated from the schema when empty.
+            variables: Variables to fuzz as comma-separated names ("id,term") or
+                a JSON object ('{"term": "abc"}'). Taken from the query's own
+                $name declarations when empty, which is usually what you want.
+            depth: Nesting depth of a generated query's selection set (default 3).
+                Ignored when you pass your own query.
+
+        Returns:
+            findings, plus the query actually used and query_generated.
         """
-        data = {"url": url, "query": query, "depth": depth}
+        parsed: Dict[str, Any] = {}
+        text = (variables or "").strip()
+        if text.startswith("{"):
+            try:
+                loaded = json.loads(text)
+                if isinstance(loaded, dict):
+                    parsed = loaded
+            except ValueError:
+                parsed = {}
+        elif text:
+            parsed = {name.strip(): "1" for name in text.split(",") if name.strip()}
+        data = {"url": url, "query": query, "variables": parsed, "depth": depth}
         return kali_client.safe_post("api/api-security/graphql/fuzz", data)
 
     @mcp.tool()

@@ -405,6 +405,37 @@ the previous digest.
 Most other tests are contract-level with a mocked client: they prove the client
 shapes the right request, not that a tool runs.
 
+**Neither the suite nor the probe can tell you a tool works.** One sweep of
+calling each tool through an MCP client and reading the reply found six broken,
+all green in `pytest` and in the probe beforehand:
+
+- `tools_ssh_audit` sent `-2`, a flag `ssh-audit` dropped with SSH1 support, so
+  every default call died on `unrecognized arguments: -2`.
+- `tools_waybackurls` and `tools_subzy` ran `/home/kali/go/bin/<tool>`, a
+  directory the image does not have. Exit 127 on every call, while `/health`
+  reported both available -- and was right, since it searches a list of
+  candidate directories and the binaries are in `/root/go/bin`.
+- `tools_crtsh` returned crt.sh's `name_value` whole, and that field holds a
+  certificate's entire SAN list newline-separated. A multi-SAN cert came back
+  as one "subdomain" no resolver can take (514 of 4037 certs on one domain),
+  and six names existed only inside a blob and were lost.
+- `api_fuzz_endpoint`'s route read `params` while the wrapper sends
+  `parameters`, so it fuzzed nothing and answered `success: true` with
+  `parameters_tested: []`.
+- `api_graphql_fuzz` substitutes payloads into a query's *variables*, and the
+  wrapper had no way to pass any -- so it sent zero requests and called the
+  target clean, against an endpoint echoing SQL errors back verbatim.
+
+Three of the six answered `success: true`. Nothing catches this class: the
+contract tests assert the request the *client* builds, and the client was
+correct every time; the probe compares outcome categories, and "non-zero exit"
+was already the expected category. A wrapper's docstring is not evidence
+either -- `api_graphql_fuzz` documented auto-generation the route rejected with
+a 400, and a `depth` argument nothing read.
+
+So: call the tool, read the reply, and check it says what that tool should say.
+One call, one output. `success: true` is the least informative field in it.
+
 `probe_tools.py` is the only thing that exercises the whole 132-tool surface.
 It calls each tool once and compares the outcome against
 `tests/integration/probe_baseline.json`, so a run prints only what changed.

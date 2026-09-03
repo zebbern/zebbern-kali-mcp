@@ -71,7 +71,13 @@ def register(mcp: FastMCP, kali_client) -> None:
 
     @mcp.tool()
     def ssh_sessions() -> Dict[str, Any]:
-        """List all active SSH sessions."""
+        """List all active SSH sessions.
+
+        Sessions live in backend memory only. A backend restart drops them all
+        and this returns an empty list with no error, which reads exactly like
+        "the session never started" -- check `health` and whether the backend
+        was recreated before concluding a connection failed.
+        """
         return kali_client.safe_get("api/ssh/sessions")
 
     @mcp.tool()

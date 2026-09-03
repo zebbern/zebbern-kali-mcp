@@ -84,10 +84,20 @@ def ssh_audit():
         if json_output:
             cmd.append("-j")
 
+        # ssh-audit dropped -1/-2 when it dropped SSH1 support; the installed
+        # build only takes -4/-6. scan_type defaulted to "ssh2", so every
+        # default call appended -2 and died on
+        # "unrecognized arguments: -2" before contacting the target -- the tool
+        # could not work at all. SSH2 is the only mode now, so the ssh2 case is
+        # simply the absence of a flag, and ssh1 is honestly unsupported.
         if scan_type == "ssh1":
-            cmd.append("-1")
-        elif scan_type == "ssh2":
-            cmd.append("-2")
+            return jsonify({
+                "error": (
+                    "ssh-audit no longer supports SSH1; it dropped the -1/-2 "
+                    "flags along with SSH1 itself. Use scan_type='ssh2'."
+                ),
+                "success": False,
+            }), 400
 
         if policy_file:
             cmd.extend(["-P", policy_file])

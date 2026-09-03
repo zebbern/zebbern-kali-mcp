@@ -69,6 +69,12 @@ def register(mcp: FastMCP, kali_client) -> None:
         Returns whether the listeners are running, which ports they
         are on, and counts of captured HTTP and DNS callbacks.
 
+        Listeners and captured callbacks live in backend memory only. A backend
+        restart drops both and this reports not-running with zero callbacks and
+        no error -- indistinguishable from a payload that never fired. Check
+        whether the backend was recreated before concluding the target is
+        clean, and restart the listener if so.
+
         Returns:
             Status dict with running state, ports, and callback counts.
 

@@ -77,6 +77,11 @@ def register(mcp: FastMCP, kali_client) -> None:
         """
         Get the status of reverse shell sessions.
 
+        Listeners and caught shells live in backend memory only. A backend
+        restart drops them and this returns empty with no error, which reads
+        exactly like a payload that never called back -- check whether the
+        backend was recreated before concluding the target never fired.
+
         Args:
             session_id: Optional specific session ID to check (if empty, shows all sessions)
 

@@ -140,7 +140,14 @@ def register(mcp: FastMCP, kali_client) -> None:
 
     @mcp.tool()
     def pivot_list_tunnels() -> Dict[str, Any]:
-        """List all active tunnels and port forwards."""
+        """List all active tunnels and port forwards.
+
+        Unlike the other session listings, tunnels are persisted to state.json
+        and survive a backend restart -- but only as records. They come back
+        with status="stopped" because the process is gone, so a tunnel you
+        started is visibly dropped rather than silently missing. Restart it
+        rather than assuming it is still carrying traffic.
+        """
         return kali_client.safe_get("api/pivot/tunnels")
 
     @mcp.tool()

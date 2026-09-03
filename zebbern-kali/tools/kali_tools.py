@@ -661,8 +661,7 @@ def run_subzy(params: Dict[str, Any]) -> Dict[str, Any]:
     if not target and not targets_file:
         return {'success': False, 'error': 'Either target or targets_file parameter is required'}
 
-    # Subzy is in ~/go/bin
-    subzy_path = "/home/kali/go/bin/subzy"
+    subzy_path = _which_or_go("subzy")
 
     if target:
         # Create temp file with target
@@ -725,8 +724,7 @@ def run_waybackurls(params: Dict[str, Any]) -> Dict[str, Any]:
     if not domain:
         return {'success': False, 'error': 'domain parameter is required'}
 
-    # Use the waybackurls from go/bin
-    waybackurls_path = "/home/kali/go/bin/waybackurls"
+    waybackurls_path = _which_or_go("waybackurls")
 
     command = f"echo {shlex.quote(domain)} | {waybackurls_path}"
 
@@ -830,21 +828,34 @@ def run_crtsh(params: Dict[str, Any]) -> Dict[str, Any]:
         results = []
         seen = set()
         for entry in data:
-            name = entry.get('name_value', '').strip().lower()
-            if not name or name in seen:
-                continue
             if not include_expired:
                 not_after = entry.get('not_after', '')
                 if not_after:
-                    from datetime import datetime
+                    from datetime import datetime, timezone
                     try:
-                        exp = datetime.strptime(not_after, "%Y-%m-%dT%H:%M:%S")
-                        if exp < datetime.utcnow():
+                        # crt.sh reports naive UTC. utcnow() is deprecated and
+                        # slated for removal, and the AttributeError that would
+                        # leave behind is not a ValueError -- it would escape to
+                        # the outer handler and report a query failure that
+                        # never happened.
+                        exp = datetime.strptime(
+                            not_after, "%Y-%m-%dT%H:%M:%S"
+                        ).replace(tzinfo=timezone.utc)
+                        if exp < datetime.now(timezone.utc):
                             continue
                     except ValueError:
                         pass
-            seen.add(name)
-            results.append(name)
+            # One certificate covers every name in its SAN list, and crt.sh
+            # returns them newline-separated inside a single name_value. Taken
+            # whole, a multi-SAN cert became one "subdomain" that no resolver
+            # can take, and the dedupe missed: anthropic.com came back both on
+            # its own and buried inside three blobs. 514 of 4037 certs here.
+            for name in entry.get('name_value', '').split('\n'):
+                name = name.strip().lower()
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                results.append(name)
 
         return {
             'success': True,
