@@ -108,7 +108,7 @@ def register(mcp: FastMCP, kali_client) -> None:
     @mcp.tool()
     def reverse_shell_upload_content(
         session_id: str, content: str, remote_file: str,
-        method: str = "base64", encoding: str = "utf-8",
+        method: str = "base64", encoding: str = "base64",
     ) -> Dict[str, Any]:
         """
         Upload content directly to the target via reverse shell.
@@ -118,7 +118,12 @@ def register(mcp: FastMCP, kali_client) -> None:
             content: Base64 encoded content to upload
             remote_file: Path where to save the file on the target
             method: Upload method (base64)
-            encoding: Content encoding (utf-8, binary)
+            encoding: How to treat `content` before writing. "base64"
+                decodes it, which is what the content argument above
+                describes and the default. Pass "utf-8" only to write the
+                string through literally -- with base64 content that lands
+                as the base64 text itself, and the checksum still matches
+                because both ends hash the same wrong bytes.
         """
         data = {
             "session_id": session_id,
