@@ -673,6 +673,22 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
         Useful for visual reconnaissance, documenting findings, and
         identifying web technologies from page appearance.
 
+        CHECK THE OUTPUT, NOT success. gowitness exits 0 whether or not it
+        captured anything, so a run that took no screenshot still comes back
+        success=True with return_code 0. Its result line is the only signal:
+
+            INFO result ... status-code=200 title=... have-screenshot=true
+
+        `have-screenshot=false` means Chrome lost its startup race -- measured
+        at roughly one run in five while the container was also starting an
+        msfconsole, and none in five when idle, each success taking 4-5s
+        against a ~60s failure. Retry, or run it when less is competing for the
+        container. The image sets /dev/shm to 1GB because the 64MB default made
+        this happen every time.
+
+        Screenshots land in /app/tmp/screenshots inside the container; read one
+        back with kali_download or zebbern_exec.
+
         Args:
             url: Target URL to screenshot (e.g., 'https://example.com')
             threads: Number of concurrent screenshot threads (default: 4)

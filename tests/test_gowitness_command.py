@@ -16,6 +16,7 @@ Three independent faults, each hidden behind the previous one:
 The command asserted here is the one verified live to produce a 291KB PNG.
 """
 
+import inspect
 import sys
 from pathlib import Path
 
@@ -88,3 +89,18 @@ def test_gowitness_always_sends_threads(monkeypatch):
 
     assert "--threads" in argv
     assert argv[argv.index("--threads") + 1] == "4"
+
+
+def test_the_wrapper_warns_that_success_does_not_mean_a_screenshot():
+    """gowitness exits 0 whether or not it captured, so the tool result cannot
+    distinguish them. The docstring is the only place an agent learns that."""
+    import mcp_tools.kali_tools as wrappers
+
+    src = inspect.getsource(wrappers)
+    start = src.index("def tools_gowitness")
+    doc = src[start:src.index('"""', src.index('"""', start) + 3)]
+
+    assert "have-screenshot" in doc, (
+        "an agent has no other way to tell a captured run from an empty one"
+    )
+    assert "success" in doc
