@@ -66,9 +66,15 @@ services:
           # anything else starting at the same time -- gowitness failed about
           # one run in five alongside a booting msfconsole and never when idle
           # -- and it fails by writing no screenshot while still exiting 0.
-          # Half the host's cores leaves the host and the lab plenty.
+          #
+          # There is deliberately NO cpus cap. Any fixed number is wrong
+          # somewhere: `cpus` is validated against the host's core count and
+          # Docker REFUSES TO START the container when it does not fit --
+          # "range of CPUs is from 0.01 to 4.00, as there are only 4 CPUs
+          # available" is how an 8.0 cap failed every CI run on a 4-core
+          # runner. Uncapped is both more headroom than any cap and portable;
+          # the scheduler still shares fairly with the host.
           memory: 10g
-          cpus: "8.0"
     # -- CTF network helpers (uncomment as needed) --
     # dns:
     #   - 8.8.8.8
