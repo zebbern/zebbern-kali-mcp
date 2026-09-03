@@ -661,8 +661,7 @@ def run_subzy(params: Dict[str, Any]) -> Dict[str, Any]:
     if not target and not targets_file:
         return {'success': False, 'error': 'Either target or targets_file parameter is required'}
 
-    # Subzy is in ~/go/bin
-    subzy_path = "/home/kali/go/bin/subzy"
+    subzy_path = _which_or_go("subzy")
 
     if target:
         # Create temp file with target
@@ -725,8 +724,7 @@ def run_waybackurls(params: Dict[str, Any]) -> Dict[str, Any]:
     if not domain:
         return {'success': False, 'error': 'domain parameter is required'}
 
-    # Use the waybackurls from go/bin
-    waybackurls_path = "/home/kali/go/bin/waybackurls"
+    waybackurls_path = _which_or_go("waybackurls")
 
     command = f"echo {shlex.quote(domain)} | {waybackurls_path}"
 
