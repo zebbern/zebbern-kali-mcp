@@ -282,11 +282,36 @@ def backend_is_up() -> bool:
 _LISTENER_STARTERS = frozenset({"reverse_shell_listener_start"})
 
 
+def tool_payload(reply):
+    """The tool's own dict out of the JSON-RPC envelope.
+
+    session.call returns the raw reply, so the payload is a JSON string nested
+    in result.content[].text -- reading session_id straight off the reply
+    silently yields None and the cleanup below never fires. classify() does the
+    same unwrapping; this is the reusable half of it.
+    """
+    if not isinstance(reply, dict):
+        return {}
+    content = (reply.get("result") or {}).get("content") or []
+    text = "".join(
+        item.get("text", "") for item in content if item.get("type") == "text"
+    )
+    if not text.strip():
+        return {}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _stop_started_listeners(session, session_ids):
     """Close the listeners this probe opened, so the next run starts clean."""
     for session_id in session_ids:
         try:
-            session.call("reverse_shell_stop", {"session_id": session_id})
+            reply = session.call("reverse_shell_stop", {"session_id": session_id})
+            if tool_payload(reply).get("success") is not True:
+                print(f"cleanup: stop refused for {session_id}", flush=True)
         except Exception as exc:
             print(f"cleanup: could not stop {session_id}: {exc}", flush=True)
 
@@ -320,8 +345,8 @@ def main():
             status, detail = "BROKEN", f"{type(exc).__name__}: {exc}"
         rows.append((name, status, round(elapsed, 1), detail))
         print(f"{status:9} {elapsed:6.1f}s  {name:34} {detail[:100]}", flush=True)
-        if name in _LISTENER_STARTERS and isinstance(reply, dict):
-            session_id = reply.get("session_id")
+        if name in _LISTENER_STARTERS:
+            session_id = tool_payload(reply).get("session_id")
             if session_id:
                 started_sessions.append(session_id)
     _stop_started_listeners(session, started_sessions)
