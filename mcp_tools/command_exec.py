@@ -198,20 +198,6 @@ def register(mcp: FastMCP, kali_client) -> None:
                     "config) and restart it."
                 )
         return reply
-        client_version = _client_version()
-        reply["client_version"] = client_version
-        backend_version = reply.get("version")
-        if client_version and backend_version:
-            reply["version_match"] = client_version == backend_version
-            if client_version != backend_version:
-                reply["version_note"] = (
-                    f"This MCP client is {client_version} but the backend is "
-                    f"{backend_version}. Tools added after {client_version} are "
-                    "missing and newer arguments are ignored. Reinstall the "
-                    "client (uvx --refresh, or pin the version in the MCP "
-                    "config) and restart it."
-                )
-        return reply
 
     @mcp.tool()
     def job_list(status: str = "", limit: int = 20) -> Dict[str, Any]:
