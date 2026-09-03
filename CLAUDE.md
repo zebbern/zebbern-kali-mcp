@@ -427,37 +427,48 @@ the previous digest.
 Most other tests are contract-level with a mocked client: they prove the client
 shapes the right request, not that a tool runs.
 
-**Neither the suite nor the probe can tell you a tool works.** One sweep of
-calling each tool through an MCP client and reading the reply found six broken,
-all green in `pytest` and in the probe beforehand:
+**Neither the suite nor the probe can tell you a tool works.** Calling each
+tool through an MCP client and reading the reply found roughly twenty
+defects across ~65 tools, every one of them green in `pytest` and in the
+probe first. Around a third answered `success: true`.
 
-- `tools_ssh_audit` sent `-2`, a flag `ssh-audit` dropped with SSH1 support, so
-  every default call died on `unrecognized arguments: -2`.
-- `tools_waybackurls` and `tools_subzy` ran `/home/kali/go/bin/<tool>`, a
-  directory the image does not have. Exit 127 on every call, while `/health`
-  reported both available -- and was right, since it searches a list of
-  candidate directories and the binaries are in `/root/go/bin`.
-- `tools_crtsh` returned crt.sh's `name_value` whole, and that field holds a
-  certificate's entire SAN list newline-separated. A multi-SAN cert came back
-  as one "subdomain" no resolver can take (514 of 4037 certs on one domain),
-  and six names existed only inside a blob and were lost.
-- `api_fuzz_endpoint`'s route read `params` while the wrapper sends
-  `parameters`, so it fuzzed nothing and answered `success: true` with
-  `parameters_tested: []`.
-- `api_graphql_fuzz` substitutes payloads into a query's *variables*, and the
-  wrapper had no way to pass any -- so it sent zero requests and called the
-  target clean, against an endpoint echoing SQL errors back verbatim.
+The shapes that keep recurring, worth checking first in anything new:
 
-Three of the six answered `success: true`. Nothing catches this class: the
-contract tests assert the request the *client* builds, and the client was
-correct every time; the probe compares outcome categories, and "non-zero exit"
-was already the expected category. A wrapper's docstring is not evidence
-either -- `api_graphql_fuzz` documented auto-generation the route rejected with
-a 400, and a `depth` argument nothing read.
+- **An argument the wrapper sends and nothing reads.** `pivot_add_pivot`'s
+  `method`, the three SSH tunnels' `password`, `api_fuzz_endpoint`'s
+  `parameters` (the route read `params`), `api_graphql_fuzz`'s `variables`
+  (absent entirely, so it sent zero requests and called the target clean).
+- **`success: true` for work that did not happen.** `reverse_shell_command`
+  against a dead shell, `exploit_copy` carrying "Could not find EDB-ID #" as
+  its message, a chisel client already defunct, `payload_generate` with an
+  empty file. Check the thing the tool exists to produce, not the exit code.
+- **Verification that confirms the wrong invariant.** The upload checksum
+  hashed what the caller sent and what landed, and down the utf-8 path those
+  were the same base64 string -- so it certified a faithful transfer of the
+  wrong bytes. `end_marker_found` was the same: a PTY echoes the command
+  line, so the markers arrive with no shell behind them.
+- **A default that contradicts the docstring above it.** Three upload tools
+  documented base64 content and defaulted `encoding="utf-8"`;
+  `callback_wait` defaulted to 60s, exactly the harness abort.
+- **Copy-paste output that does not run.** Two of three `callback_generate`
+  DNS commands were malformed, and a lookup that never leaves the box looks
+  exactly like a target that did not call back.
+- **A tool reaching outside itself.** `payload_host_start` called `os.chdir`,
+  which is process-wide, moving the cwd of every later `zebbern_exec` from
+  the mounted volume to a container-layer directory.
 
-So: call the tool, read the reply, and check it says what that tool should say.
-One call, one output. `success: true` is the least informative field in it.
+Nothing automated catches this class: the contract tests assert the request
+the *client* builds and the client was usually right, and the probe compares
+outcome categories, where "non-zero exit" was already expected. A docstring
+is not evidence either -- several documented arguments no code read.
 
+So: call the tool, read the reply, and check it says what that tool should
+say. One call, one output. `success: true` is the least informative field in
+it.
+
+`ad_*`, `ctf_*` and `vpn_*` (20 tools) are **UNEXECUTED**, not passing: there
+is no AD domain, CTF platform or VPN peer here. Recording them green would be
+the probe failure above, in person.
 `probe_tools.py` is the only thing that exercises the whole 133-tool surface.
 It calls each tool once and compares the outcome against
 `tests/integration/probe_baseline.json`, so a run prints only what changed.
