@@ -33,16 +33,23 @@ def graphql_fuzz():
     try:
         params = request.json or {}
         url = params.get("url", "")
-        query = params.get("query", "")
-        if not url or not query:
-            return jsonify({"error": "url and query are required", "success": False}), 400
+        if not url:
+            return jsonify({"error": "url is required", "success": False}), 400
 
+        # query used to be required here while the wrapper documented it as
+        # "auto-generated from schema if empty", so the documented call was a
+        # 400. The runner generates it now, and depth was accepted and dropped
+        # on the floor the whole time.
+        headers = params.get("headers") or {}
+        if isinstance(headers, str):
+            headers = dict(header_pairs(headers))
         result = api_tester.graphql_fuzz(
             url=url,
-            query=query,
-            variables=params.get("variables", {}),
-            headers=params.get("headers", {}),
-            auth_token=params.get("auth_token", "")
+            query=params.get("query", ""),
+            variables=params.get("variables") or {},
+            headers=headers,
+            auth_token=params.get("auth_token", ""),
+            depth=int(params.get("depth", 3) or 3),
         )
         return jsonify(result)
     except Exception as e:

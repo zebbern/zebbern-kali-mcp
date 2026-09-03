@@ -129,3 +129,49 @@ def test_fuzz_route_still_accepts_a_dict_from_a_direct_caller(monkeypatch):
 
     assert seen["params"] == {"id": "1"}
     assert seen["headers"] == {"X-A": "1"}
+
+
+def test_graphql_fuzz_route_no_longer_demands_the_query_it_promised_to_generate(monkeypatch):
+    """The wrapper documented query as "auto-generated from schema if empty"
+    while the route answered 400 to exactly that call."""
+    mod = _load("api_security")
+    seen = {}
+
+    class _Tester:
+        def graphql_fuzz(self, **kwargs):
+            seen.update(kwargs)
+            return {"success": True}
+
+    monkeypatch.setattr(mod, "api_tester", _Tester())
+    resp = _client(mod).post("/api/api-security/graphql/fuzz", json={"url": "http://t"})
+
+    assert resp.status_code == 200, resp.get_json()
+    assert seen["query"] == ""
+
+
+def test_graphql_fuzz_route_forwards_depth_and_variables(monkeypatch):
+    """depth rode in the request body and was never read; variables are the
+    only thing the fuzzer substitutes into."""
+    mod = _load("api_security")
+    seen = {}
+
+    class _Tester:
+        def graphql_fuzz(self, **kwargs):
+            seen.update(kwargs)
+            return {"success": True}
+
+    monkeypatch.setattr(mod, "api_tester", _Tester())
+    _client(mod).post(
+        "/api/api-security/graphql/fuzz",
+        json={"url": "http://t", "depth": 5, "variables": {"id": "1"}},
+    )
+
+    assert seen["depth"] == 5
+    assert seen["variables"] == {"id": "1"}
+
+
+def test_graphql_fuzz_route_still_requires_a_url(monkeypatch):
+    mod = _load("api_security")
+    resp = _client(mod).post("/api/api-security/graphql/fuzz", json={})
+
+    assert resp.status_code == 400
