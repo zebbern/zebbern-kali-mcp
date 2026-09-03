@@ -563,10 +563,19 @@ class CallbackCatcher:
                 ],
                 "identifier": tag,
             },
+            # These are copy-paste payloads, so a malformed one costs the
+            # operator the conclusion rather than the command: a lookup that
+            # never leaves the box looks exactly like a target that did not
+            # call back. Two of the three were wrong.
+            #
+            # nslookup takes its options BEFORE the host on Linux -- with them
+            # trailing it printed its usage message and exited without
+            # querying. host has no positional port at all and went to 53,
+            # where nothing is listening, so it reported connection refused.
             "dns": lambda: {
-                "nslookup": f"nslookup {tag}.test {listener_ip} -port={dns_port}",
+                "nslookup": f"nslookup -port={dns_port} {tag}.test {listener_ip}",
                 "dig": f"dig @{listener_ip} -p {dns_port} {tag}.test",
-                "host": f"host {tag}.test {listener_ip}",
+                "host": f"host -p {dns_port} {tag}.test {listener_ip}",
                 "identifier": tag,
             },
         }
