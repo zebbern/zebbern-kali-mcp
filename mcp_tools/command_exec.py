@@ -214,8 +214,8 @@ def register(mcp: FastMCP, kali_client) -> None:
         return reply
 
     @mcp.tool()
-    def job_list() -> Dict[str, Any]:
-        """List every background job the Kali server still tracks, newest first.
+    def job_list(status: str = "", limit: int = 20) -> Dict[str, Any]:
+        """List background jobs the Kali server still tracks, newest first.
 
         Use this to get back to work you already started: job_status and
         job_output both need a job_id you are still holding, so after a context
@@ -223,11 +223,38 @@ def register(mcp: FastMCP, kali_client) -> None:
         launched is still running -- this is the only way to find one again.
         Also the way to check what is running before starting something heavy.
 
+        Args:
+            status: Optional filter, e.g. "running" to see only live work.
+                Empty means every state.
+            limit: Newest N to return (default 20). The server keeps up to 256,
+                and a busy session fills them: an unbounded listing was 147 jobs
+                and 62KB, which is a poor trade for a call whose whole job is to
+                find one id. Nothing is hidden -- `count` is always the true
+                total and `returned` says how many came back.
+
         Returns each job's id, status, pid, return_code and timestamps, without
         its output; read that with job_output once you have the id. Jobs live in
         server memory only, so a backend restart empties this list.
         """
-        return kali_client.safe_get("api/jobs")
+        reply = kali_client.safe_get("api/jobs")
+        if not isinstance(reply, dict) or not isinstance(reply.get("jobs"), list):
+            return reply
+        jobs = reply["jobs"]
+        if status:
+            jobs = [job for job in jobs if job.get("status") == status]
+        matched = len(jobs)
+        if limit and limit > 0 and matched > limit:
+            reply["note"] = (
+                f"{matched} jobs matched; showing the newest {limit}. Raise "
+                "limit, or filter with status, to see the rest."
+            )
+            jobs = jobs[:limit]
+        reply["jobs"] = jobs
+        reply["returned"] = len(jobs)
+        if status:
+            reply["matched"] = matched
+            reply["filtered_by_status"] = status
+        return reply
 
     @mcp.tool()
     def job_status(job_id: str) -> Dict[str, Any]:

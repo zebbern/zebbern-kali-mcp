@@ -89,3 +89,65 @@ def test_health_passes_an_error_reply_through_untouched(monkeypatch):
     assert result["success"] is False
     assert "version_match" not in result
     assert result["client_version"] == "1.0.12"
+
+
+def _job_list_tool(reply):
+    mcp = _RecordingMCP()
+
+    class _JobsClient:
+        def safe_get(self, endpoint, params=None):
+            return reply
+
+        def check_health(self):
+            return {}
+
+    command_exec.register(mcp, _JobsClient())
+    return mcp.tools["job_list"]
+
+
+def _jobs(n, status="succeeded"):
+    return {"count": n, "jobs": [{"job_id": f"j{i}", "status": status} for i in range(n)]}
+
+
+def test_job_list_bounds_what_it_hands_back():
+    """The recovery call must not cost more context than the work it recovers.
+
+    Measured against a real session: 147 tracked jobs came back as 62KB, all of
+    them terminal, on the one call whose entire job is to find a single id.
+    """
+    result = _job_list_tool(_jobs(147))()
+
+    assert result["returned"] == 20
+    assert len(result["jobs"]) == 20
+    assert result["count"] == 147, "the true total must survive the trim"
+    assert "147" in result["note"] and "20" in result["note"]
+
+
+def test_job_list_says_nothing_was_trimmed_when_nothing_was():
+    result = _job_list_tool(_jobs(3))()
+
+    assert result["returned"] == 3
+    assert "note" not in result
+
+
+def test_job_list_filters_to_running_work():
+    reply = {"count": 4, "jobs": [
+        {"job_id": "a", "status": "succeeded"},
+        {"job_id": "b", "status": "running"},
+        {"job_id": "c", "status": "failed"},
+        {"job_id": "d", "status": "running"},
+    ]}
+
+    result = _job_list_tool(reply)(status="running")
+
+    assert [j["job_id"] for j in result["jobs"]] == ["b", "d"]
+    assert result["matched"] == 2
+    assert result["filtered_by_status"] == "running"
+    assert result["count"] == 4, "the unfiltered total is still reported"
+
+
+def test_job_list_passes_an_error_reply_through():
+    result = _job_list_tool({"error": "Request failed: ConnectionError", "success": False})()
+
+    assert result["success"] is False
+    assert "returned" not in result
