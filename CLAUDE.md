@@ -85,6 +85,17 @@ Nothing keeps that pin in step with `:latest`. It drifted three builds within
 hours of being introduced. Re-pin as a release step, and pin a digest you have
 **actually booted**, not one you only looked up.
 
+**A backend-only PR is all-green having never run its own code.** The gate's
+`pull_request.paths` covers `mcp_tools/**`, `tests/integration/**` and the
+compose files, but **not `zebbern-kali/**`** -- and that is structural, not an
+oversight: the gate boots a pinned *published* digest, and an unmerged backend
+change is not in any published image, so running it would certify the old
+backend and prove nothing about the diff. The consequence is what matters: a PR
+that rewrites tool execution shows lint and Trivy green and nothing else, which
+reads exactly like a validated change. The only real check is post-merge --
+rebuild, boot the new digest, and call the tools through a client before
+re-pinning.
+
 The digest is also passed to compose as `ZKM_IMAGE`, because a digest pull
 leaves no local tag — without it, `docker compose up` would miss `:latest` and
 rebuild from the Dockerfile, far exceeding the job timeout.
