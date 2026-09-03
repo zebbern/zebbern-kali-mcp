@@ -50,6 +50,12 @@ RUN apt-get update && \
         python3-pip \
         python3-dev \
         build-essential \
+        # evil-winrm pulls in readline-ext, whose native extension needs
+        # readline/readline.h and a curses library. Neither was here, so
+        # `gem install evil-winrm` failed with "Could not create Makefile"
+        # -- latent until a cache miss rebuilt that layer.
+        libreadline-dev \
+        libncurses-dev \
         git \
         curl \
         wget \
