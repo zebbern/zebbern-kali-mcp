@@ -405,6 +405,17 @@ the previous digest.
 Most other tests are contract-level with a mocked client: they prove the client
 shapes the right request, not that a tool runs.
 
+**Neither the suite nor the probe can tell you a tool works.** Two tools were
+dead on arrival and both were green everywhere: `tools_ssh_audit` sent a `-2`
+flag `ssh-audit` removed with SSH1 support, so every default call died on
+`unrecognized arguments: -2`; `api_fuzz_endpoint`'s route read `params` while
+the wrapper sends `parameters`, so it fuzzed nothing and answered
+`success: true` with `parameters_tested: []`. The contract tests passed (they
+assert the request the client builds, and the client was right), and the probe
+passed (a non-zero exit is a category it already expected). Both were found by
+calling the tool through an MCP client and reading the reply. Do that before
+believing a tool works -- one call, one output, read for what it should say.
+
 `probe_tools.py` is the only thing that exercises the whole 132-tool surface.
 It calls each tool once and compares the outcome against
 `tests/integration/probe_baseline.json`, so a run prints only what changed.

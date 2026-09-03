@@ -2,7 +2,7 @@
 
 from flask import Blueprint, request, jsonify
 from core.config import logger
-from core.api_security import api_tester
+from core.api_security import header_pairs, api_tester
 
 bp = Blueprint("api_security", __name__)
 
@@ -95,12 +95,24 @@ def api_fuzz():
         if not url:
             return jsonify({"error": "url is required", "success": False}), 400
 
+        # The wrapper sends "parameters" as the comma-separated string its
+        # docstring describes, plus "headers" as a "k: v, k: v" string. This
+        # route read "params" and expected dicts, so every one of them was
+        # dropped on the floor: api_fuzz_endpoint fuzzed nothing at all and
+        # still answered success with an empty parameters_tested.
+        names = params.get("parameters") or params.get("params") or {}
+        if isinstance(names, str):
+            names = {n.strip(): "1" for n in names.split(",") if n.strip()}
+        headers = params.get("headers") or {}
+        if isinstance(headers, str):
+            headers = dict(header_pairs(headers))
+
         result = api_tester.api_fuzz_endpoint(
             url=url,
             method=params.get("method", "GET"),
-            params=params.get("params", {}),
+            params=names,
             data=params.get("data", {}),
-            headers=params.get("headers", {})
+            headers=headers,
         )
         return jsonify(result)
     except Exception as e:
