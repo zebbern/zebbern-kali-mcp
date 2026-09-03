@@ -170,9 +170,14 @@ def register(mcp: FastMCP, kali_client) -> None:
                 otherwise you get {finished: false, status: "running", job_id, ...}
                 to drive with job_status / job_output / job_cancel. Set
                 background=True only to skip the inline wait and get the job_id
-                immediately. Default False (auto-promote). Findings stream as
-                newline-delimited JSON on stdout and are teed in full to the
-                job's output_path.
+                immediately. Default False (auto-promote). Findings are written
+                as newline-delimited JSON on stdout and teed in full to the
+                job's output_path -- but nuclei does not emit them
+                incrementally: measured against a live target, template loading
+                and its update check dominated and the findings appeared only at
+                completion, around three minutes in, after minutes of nothing
+                but a banner on stderr. Expect an empty-looking job for a while;
+                that is startup, not a stall.
         """
         data = {"target": url, "tags": tags, "severity": severity}
         return run_promotable(

@@ -1,5 +1,6 @@
 """Command execution and system info tools."""
 
+import importlib.metadata
 import json
 import logging
 from typing import Dict, Any
@@ -8,6 +9,14 @@ import requests
 from mcp.server.fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
+
+
+def _client_version() -> str:
+    """This MCP server's own version, or "" when it cannot be read."""
+    try:
+        return importlib.metadata.version("zebbern-kali-mcp")
+    except Exception:
+        return ""
 
 
 def register(mcp: FastMCP, kali_client) -> None:
@@ -156,12 +165,53 @@ def register(mcp: FastMCP, kali_client) -> None:
     @mcp.tool()
     def health() -> Dict[str, Any]:
         """
-        Check the health status of the Kali API server.
+        Check the Kali API server, and this client's own version against it.
+
+        `version` is the BACKEND's. `client_version` is this MCP server's. They
+        ship on separate tracks and drift silently: `uvx zebbern-kali-mcp` with
+        no version reuses whatever environment it cached, so restarting the MCP
+        does not pick up a newer wheel. A client can sit several releases behind
+        a freshly pulled backend while this call still looks perfectly healthy,
+        because the version it reported was never the client's.
+
+        Check `version_match` before concluding a missing tool or an ignored
+        argument is a bug -- it usually means the client is stale.
 
         Returns:
-            Server health information
+            Server health, plus client_version, version_match, and a note when
+            they disagree.
         """
-        return kali_client.check_health()
+        reply = kali_client.check_health()
+        if not isinstance(reply, dict):
+            return reply
+        client_version = _client_version()
+        reply["client_version"] = client_version
+        backend_version = reply.get("version")
+        if client_version and backend_version:
+            reply["version_match"] = client_version == backend_version
+            if client_version != backend_version:
+                reply["version_note"] = (
+                    f"This MCP client is {client_version} but the backend is "
+                    f"{backend_version}. Tools added after {client_version} are "
+                    "missing and newer arguments are ignored. Reinstall the "
+                    "client (uvx --refresh, or pin the version in the MCP "
+                    "config) and restart it."
+                )
+        return reply
+        client_version = _client_version()
+        reply["client_version"] = client_version
+        backend_version = reply.get("version")
+        if client_version and backend_version:
+            reply["version_match"] = client_version == backend_version
+            if client_version != backend_version:
+                reply["version_note"] = (
+                    f"This MCP client is {client_version} but the backend is "
+                    f"{backend_version}. Tools added after {client_version} are "
+                    "missing and newer arguments are ignored. Reinstall the "
+                    "client (uvx --refresh, or pin the version in the MCP "
+                    "config) and restart it."
+                )
+        return reply
 
     @mcp.tool()
     def job_list() -> Dict[str, Any]:
