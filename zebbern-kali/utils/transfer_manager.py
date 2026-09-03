@@ -628,7 +628,20 @@ class FileTransferManager:
             if source_checksum != target_checksum:
                 return {
                     "success": False,
-                    "error": f"Checksum mismatch: source={source_checksum[:16]}..., target={target_checksum[:16]}...",
+                    # Name the file. The bytes were written before the
+                    # comparison, so a mismatch leaves WRONG CONTENT at
+                    # this path -- cleanup_failed_transfer only handles
+                    # local files, so nothing removes it. Two truncated
+                    # hashes and no path did not say that.
+                    "error": (
+                        f"Checksum mismatch for {remote_file}: "
+                        f"source={source_checksum[:16]}..., "
+                        f"target={target_checksum[:16]}.... The file was "
+                        "written and does NOT match; it is still on the "
+                        "target. Delete or re-upload it before relying on it."
+                    ),
+                    "remote_file": remote_file,
+                    "target_file_left_in_place": True,
                     "source_checksum": source_checksum,
                     "target_checksum": target_checksum
                 }
@@ -818,7 +831,14 @@ class FileTransferManager:
             if source_checksum != target_checksum:
                 return {
                     "success": False,
-                    "error": f"Checksum mismatch: source={source_checksum[:16]}..., target={target_checksum[:16]}...",
+                    "error": (
+                        f"Checksum mismatch reading {remote_file}: "
+                        f"source={source_checksum[:16]}..., "
+                        f"target={target_checksum[:16]}.... The content "
+                        "returned does not match the file on the target; "
+                        "do not rely on it."
+                    ),
+                    "remote_file": remote_file,
                     "source_checksum": source_checksum,
                     "target_checksum": target_checksum
                 }
@@ -937,7 +957,20 @@ class FileTransferManager:
             if source_checksum != target_checksum:
                 return {
                     "success": False,
-                    "error": f"Checksum mismatch: source={source_checksum[:16]}..., target={target_checksum[:16]}...",
+                    # Name the file. The bytes were written before the
+                    # comparison, so a mismatch leaves WRONG CONTENT at
+                    # this path -- cleanup_failed_transfer only handles
+                    # local files, so nothing removes it. Two truncated
+                    # hashes and no path did not say that.
+                    "error": (
+                        f"Checksum mismatch for {remote_file}: "
+                        f"source={source_checksum[:16]}..., "
+                        f"target={target_checksum[:16]}.... The file was "
+                        "written and does NOT match; it is still on the "
+                        "target. Delete or re-upload it before relying on it."
+                    ),
+                    "remote_file": remote_file,
+                    "target_file_left_in_place": True,
                     "source_checksum": source_checksum,
                     "target_checksum": target_checksum
                 }
@@ -1093,7 +1126,14 @@ class FileTransferManager:
             if source_checksum != target_checksum:
                 return {
                     "success": False,
-                    "error": f"Checksum mismatch: source={source_checksum[:16]}..., target={target_checksum[:16]}...",
+                    "error": (
+                        f"Checksum mismatch reading {remote_file}: "
+                        f"source={source_checksum[:16]}..., "
+                        f"target={target_checksum[:16]}.... The content "
+                        "returned does not match the file on the target; "
+                        "do not rely on it."
+                    ),
+                    "remote_file": remote_file,
                     "source_checksum": source_checksum,
                     "target_checksum": target_checksum
                 }

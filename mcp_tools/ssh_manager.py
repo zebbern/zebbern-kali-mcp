@@ -83,7 +83,7 @@ def register(mcp: FastMCP, kali_client) -> None:
     @mcp.tool()
     def ssh_session_upload_content(
         session_id: str, content: str, remote_path: str,
-        encoding: str = "utf-8",
+        encoding: str = "base64",
     ) -> Dict[str, Any]:
         """
         Upload content directly to a remote host via SSH (no local temp files).
@@ -92,7 +92,12 @@ def register(mcp: FastMCP, kali_client) -> None:
             session_id: The SSH session ID
             content: Base64-encoded content to upload
             remote_path: Destination path on the remote host
-            encoding: Content encoding (utf-8, binary)
+            encoding: How to treat `content` before writing. "base64"
+                decodes it, which is what the content argument above
+                describes and the default. Pass "utf-8" only to write the
+                string through literally -- with base64 content that lands
+                as the base64 text itself, and the checksum still matches
+                because both ends hash the same wrong bytes.
         """
         data = {
             "session_id": session_id, "content": content,

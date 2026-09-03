@@ -340,6 +340,10 @@ class ReverseShellManager:
                 buffer = b""
                 capture_mode = False
                 end_marker_found = False
+                # How the read loop ended, which decides success. Without
+                # these every exit looked identical to a completed command.
+                session_closed = False
+                read_error = ""
 
                 # For base64 commands, we need to handle continuous output without line breaks
                 if is_base64_command:
@@ -512,6 +516,11 @@ class ReverseShellManager:
                             if self.master_fd in rlist:
                                 data = os.read(self.master_fd, 4096)  # Larger buffer
                                 if not data:
+                                    # EOF on the master fd: the shell on the far
+                                    # end is gone. Nothing ran, and this used to
+                                    # fall through to an unconditional
+                                    # success: True.
+                                    session_closed = True
                                     break
                                 buffer += data
 
@@ -545,17 +554,38 @@ class ReverseShellManager:
                                 time.sleep(0.1)
                         except Exception as e:
                             logger.error(f"Error reading PTY data: {e}")
+                            read_error = str(e)
                             break
 
-                # Return results
+                # The end marker is the only evidence the command actually ran
+                # to completion. This used to return success: True whichever
+                # way the loop exited -- marker seen, EOF because the shell
+                # died, timeout, or a read error -- so a command sent to a dead
+                # session came back successful with empty output, which reads
+                # as "it ran and printed nothing".
+                #
+                # A PTY echoes what is written to it, so both markers can turn
+                # up in the read data as the echo of the command line with no
+                # shell behind it. capture_mode and end_marker_found are
+                # therefore not proof on their own; the session has to still be
+                # alive as well.
+                timed_out = not end_marker_found and not session_closed and not read_error
+                if session_closed:
+                    # Nothing else will come from this session. Say so here so
+                    # the next call's guard fires instead of trying again.
+                    self.is_connected = False
+
                 output = '\n'.join(all_lines)
-                return {
-                    "success": True,
+                result = {
+                    "success": bool(end_marker_found and not session_closed),
                     "output": output,
                     "command": command,
                     "session_id": self.session_id,
                     "lines_captured": len(all_lines),
                     "execution_time": time.time() - start_time,
+                    "session_closed": session_closed,
+                    "timed_out": timed_out,
+                    "partial_results": bool((timed_out or session_closed) and all_lines),
                     "debug_info": {
                         "start_marker": start_marker,
                         "end_marker": end_marker,
@@ -563,6 +593,20 @@ class ReverseShellManager:
                         "capture_mode_activated": capture_mode
                     }
                 }
+                if session_closed:
+                    result["error"] = (
+                        "the reverse shell closed before the command completed; "
+                        "it did not run. Check reverse_shell_status and start a "
+                        "new listener."
+                    )
+                elif timed_out:
+                    result["error"] = (
+                        f"no end marker within {timeout}s; the command may still "
+                        "be running on the target and any output above is partial"
+                    )
+                elif read_error:
+                    result["error"] = f"error reading from the shell: {read_error}"
+                return result
 
             # Use STDIN/STDOUT approach for both netcat and pwncat
             if self.process and self.process.stdin:
