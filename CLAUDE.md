@@ -125,8 +125,17 @@ is a bug.
 ls "$LOCALAPPDATA/uv/cache/archive-v0/<hash>/Lib/site-packages" | grep dist-info
 ```
 
-Pin the version in the MCP config, or pass `--refresh`, if you want a release to
-reach you. **Nothing in the test suite catches this**: `pytest`, the live tests
+**`--refresh` is not sufficient, measured.** Both configs carried it across a
+restart taken minutes after 1.0.14 was on PyPI, and the client still reported
+1.0.13. The flag had genuinely worked -- 1.0.14 was sitting in
+`uv/cache/archive-v0/` -- but the server process came up on the older archive
+anyway, so it refreshed the cache without changing what ran. Nothing about that
+is visible except `version_match`.
+
+Pin the version instead: `uvx zebbern-kali-mcp@X.Y.Z` resolves that exact
+version and nothing else. It has to be bumped by hand each release, and that is
+the point -- forgetting leaves `health` reporting `version_match: false`, a
+failure that announces itself, where `--refresh` fails silently. **Nothing in the test suite catches this**: `pytest`, the live tests
 and `probe_tools.py` all spawn `mcp_server.py` from the repo source, so they
 validate the source and never the installed artifact.
 
