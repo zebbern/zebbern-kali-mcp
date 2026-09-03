@@ -8,6 +8,7 @@ from flask import request, jsonify
 from core.config import logger
 from core.command_executor import execute_command, execute_command_argv
 from core.tool_config import get_tool_timeout
+import glob
 import shlex
 import shutil
 
@@ -857,6 +858,30 @@ def run_crtsh(params: Dict[str, Any]) -> Dict[str, Any]:
         return {'success': False, 'error': f"crt.sh query failed: {str(e)}"}
 
 
+def _gowitness_chrome() -> str:
+    """A Chrome gowitness can actually drive, or "" to let it look itself.
+
+    The image installs chromium through Playwright (`playwright install
+    chromium`), which lands under ~/.cache/ms-playwright rather than on PATH,
+    so gowitness's own lookup for `google-chrome` fails with "failed to
+    initialize chrome context". The directory carries a build number that
+    changes on rebuild, so glob for it instead of hardcoding.
+    """
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        found = shutil.which(name)
+        if found:
+            return found
+    matches = sorted(glob.glob(
+        os.path.expanduser("~/.cache/ms-playwright/chromium-*/chrome-linux*/chrome")
+    ))
+    return matches[-1] if matches else ""
+
+
+GOWITNESS_SCREENSHOT_DIR = os.environ.get(
+    "ZKM_SCREENSHOT_DIR", "/app/tmp/screenshots"
+)
+
+
 def run_gowitness(params: Dict[str, Any]) -> Dict[str, Any]:
     """Execute gowitness for web screenshot capture."""
     url = params.get('url', '')
@@ -872,15 +897,33 @@ def run_gowitness(params: Dict[str, Any]) -> Dict[str, Any]:
     if not os.path.exists(gowitness_bin):
         return {'success': False, 'error': 'gowitness binary not found in PATH or ~/go/bin'}
 
-    argv = [gowitness_bin, 'single', url]
+    # gowitness v3 moved the verb under `scan` and takes the target as a flag.
+    # The old `gowitness single <url>` form fails outright with
+    # `unknown command "single" for "gowitness"`, and because that is a tidy
+    # one-line error the tool looked like it merely found nothing.
+    argv = [gowitness_bin, 'scan', 'single', '--url', url]
 
     if resolution:
         parts = resolution.split('x')
         if len(parts) == 2:
-            argv += ['--resolution-x', parts[0], '--resolution-y', parts[1]]
+            # Also renamed: --resolution-x/y no longer exist.
+            argv += ['--chrome-window-x', parts[0], '--chrome-window-y', parts[1]]
 
-    if threads != 4:
-        argv += ['--threads', str(threads)]
+    # Always sent: this wrapper documents a default of 4 while gowitness's own
+    # default is 6, so skipping it when it "looks default" silently gave 6.
+    argv += ['--threads', str(threads)]
+
+    chrome = _gowitness_chrome()
+    if chrome:
+        argv += ['--chrome-path', chrome]
+
+    # Without an explicit path the run reported have-screenshot=false and wrote
+    # nothing -- a screenshot tool that took no screenshot. An absolute path
+    # under the writable scratch fixes it and, unlike the CWD-relative default,
+    # tells the caller where the file actually is.
+    os.makedirs(GOWITNESS_SCREENSHOT_DIR, exist_ok=True)
+    argv += ['--screenshot-path', GOWITNESS_SCREENSHOT_DIR,
+             '--screenshot-format', 'png']
 
     if additional_args:
         argv += shlex.split(additional_args)
