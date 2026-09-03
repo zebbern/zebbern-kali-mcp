@@ -44,7 +44,14 @@ def register(mcp: FastMCP, kali_client) -> None:
 
     @mcp.tool()
     def msf_session_list() -> Dict[str, Any]:
-        """List all active Metasploit sessions."""
+        """List all active Metasploit sessions.
+
+        Sessions live in backend memory only, so a backend restart drops them
+        all and this returns empty with no error -- indistinguishable from
+        never having started one. This path also reaps dead sessions before
+        listing, so a console that was OOM-killed mid-exploit is evicted rather
+        than shown; an empty list does not mean nothing was ever running.
+        """
         return kali_client.safe_get("api/msf/session/list")
 
     @mcp.tool()
