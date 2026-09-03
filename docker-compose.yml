@@ -61,8 +61,14 @@ services:
     deploy:
       resources:
         limits:
-          memory: 8g
-          cpus: "2.0"
+          # Two cores was not enough headroom for the tools that spawn their
+          # own runtime. Headless Chrome loses a ~60s startup race against
+          # anything else starting at the same time -- gowitness failed about
+          # one run in five alongside a booting msfconsole and never when idle
+          # -- and it fails by writing no screenshot while still exiting 0.
+          # Half the host's cores leaves the host and the lab plenty.
+          memory: 10g
+          cpus: "8.0"
     # -- CTF network helpers (uncomment as needed) --
     # dns:
     #   - 8.8.8.8
