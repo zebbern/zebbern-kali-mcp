@@ -266,7 +266,7 @@
   "status": "OK"
  },
  "reverse_shell_listener_start": {
-  "status": "REPORTED"
+  "status": "OK"
  },
  "reverse_shell_send_payload": {
   "status": "REPORTED"
