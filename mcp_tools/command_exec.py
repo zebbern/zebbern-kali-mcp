@@ -1,5 +1,6 @@
 """Command execution and system info tools."""
 
+import importlib.metadata
 import json
 import logging
 from typing import Dict, Any
@@ -8,6 +9,14 @@ import requests
 from mcp.server.fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
+
+
+def _client_version() -> str:
+    """This MCP server's own version, or "" when it cannot be read."""
+    try:
+        return importlib.metadata.version("zebbern-kali-mcp")
+    except Exception:
+        return ""
 
 
 def register(mcp: FastMCP, kali_client) -> None:
@@ -156,16 +165,57 @@ def register(mcp: FastMCP, kali_client) -> None:
     @mcp.tool()
     def health() -> Dict[str, Any]:
         """
-        Check the health status of the Kali API server.
+        Check the Kali API server, and this client's own version against it.
+
+        `version` is the BACKEND's. `client_version` is this MCP server's. They
+        ship on separate tracks and drift silently: `uvx zebbern-kali-mcp` with
+        no version reuses whatever environment it cached, so restarting the MCP
+        does not pick up a newer wheel. A client can sit several releases behind
+        a freshly pulled backend while this call still looks perfectly healthy,
+        because the version it reported was never the client's.
+
+        Check `version_match` before concluding a missing tool or an ignored
+        argument is a bug -- it usually means the client is stale.
 
         Returns:
-            Server health information
+            Server health, plus client_version, version_match, and a note when
+            they disagree.
         """
-        return kali_client.check_health()
+        reply = kali_client.check_health()
+        if not isinstance(reply, dict):
+            return reply
+        client_version = _client_version()
+        reply["client_version"] = client_version
+        backend_version = reply.get("version")
+        if client_version and backend_version:
+            reply["version_match"] = client_version == backend_version
+            if client_version != backend_version:
+                reply["version_note"] = (
+                    f"This MCP client is {client_version} but the backend is "
+                    f"{backend_version}. Tools added after {client_version} are "
+                    "missing and newer arguments are ignored. Reinstall the "
+                    "client (uvx --refresh, or pin the version in the MCP "
+                    "config) and restart it."
+                )
+        return reply
+        client_version = _client_version()
+        reply["client_version"] = client_version
+        backend_version = reply.get("version")
+        if client_version and backend_version:
+            reply["version_match"] = client_version == backend_version
+            if client_version != backend_version:
+                reply["version_note"] = (
+                    f"This MCP client is {client_version} but the backend is "
+                    f"{backend_version}. Tools added after {client_version} are "
+                    "missing and newer arguments are ignored. Reinstall the "
+                    "client (uvx --refresh, or pin the version in the MCP "
+                    "config) and restart it."
+                )
+        return reply
 
     @mcp.tool()
-    def job_list() -> Dict[str, Any]:
-        """List every background job the Kali server still tracks, newest first.
+    def job_list(status: str = "", limit: int = 20) -> Dict[str, Any]:
+        """List background jobs the Kali server still tracks, newest first.
 
         Use this to get back to work you already started: job_status and
         job_output both need a job_id you are still holding, so after a context
@@ -173,11 +223,38 @@ def register(mcp: FastMCP, kali_client) -> None:
         launched is still running -- this is the only way to find one again.
         Also the way to check what is running before starting something heavy.
 
+        Args:
+            status: Optional filter, e.g. "running" to see only live work.
+                Empty means every state.
+            limit: Newest N to return (default 20). The server keeps up to 256,
+                and a busy session fills them: an unbounded listing was 147 jobs
+                and 62KB, which is a poor trade for a call whose whole job is to
+                find one id. Nothing is hidden -- `count` is always the true
+                total and `returned` says how many came back.
+
         Returns each job's id, status, pid, return_code and timestamps, without
         its output; read that with job_output once you have the id. Jobs live in
         server memory only, so a backend restart empties this list.
         """
-        return kali_client.safe_get("api/jobs")
+        reply = kali_client.safe_get("api/jobs")
+        if not isinstance(reply, dict) or not isinstance(reply.get("jobs"), list):
+            return reply
+        jobs = reply["jobs"]
+        if status:
+            jobs = [job for job in jobs if job.get("status") == status]
+        matched = len(jobs)
+        if limit and limit > 0 and matched > limit:
+            reply["note"] = (
+                f"{matched} jobs matched; showing the newest {limit}. Raise "
+                "limit, or filter with status, to see the rest."
+            )
+            jobs = jobs[:limit]
+        reply["jobs"] = jobs
+        reply["returned"] = len(jobs)
+        if status:
+            reply["matched"] = matched
+            reply["filtered_by_status"] = status
+        return reply
 
     @mcp.tool()
     def job_status(job_id: str) -> Dict[str, Any]:

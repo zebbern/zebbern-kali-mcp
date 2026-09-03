@@ -89,6 +89,36 @@ The digest is also passed to compose as `ZKM_IMAGE`, because a digest pull
 leaves no local tag — without it, `docker compose up` would miss `:latest` and
 rebuild from the Dockerfile, far exceeding the job timeout.
 
+## The deployed MCP client goes stale silently, and `health` used to hide it
+
+`uvx zebbern-kali-mcp` with **no version** reuses whatever environment uv
+already cached for that command. Restarting the MCP does not pick up a newer
+wheel — it re-runs the same cached archive. The deployed client sat on **1.0.5
+through six releases** while every check looked fine.
+
+It hid because `health` returned the backend's `/health` verbatim, and that
+`version` is the **backend's**. Nothing reported the client's own. The symptoms
+all read as product bugs rather than a stale install:
+
+- a tool is missing entirely (`job_list` → "No such tool available")
+- a documented argument is silently ignored (`tools_nmap(background=True)` runs
+  synchronously, because the 1.0.5 wrapper has no such parameter)
+- `/health` says the current version, so nothing looks wrong
+
+`health` now also returns `client_version`, `version_match`, and a
+`version_note` when they disagree. Check that before believing a missing tool
+is a bug.
+
+```bash
+# what the running MCP actually is, not what PyPI has
+ls "$LOCALAPPDATA/uv/cache/archive-v0/<hash>/Lib/site-packages" | grep dist-info
+```
+
+Pin the version in the MCP config, or pass `--refresh`, if you want a release to
+reach you. **Nothing in the test suite catches this**: `pytest`, the live tests
+and `probe_tools.py` all spawn `mcp_server.py` from the repo source, so they
+validate the source and never the installed artifact.
+
 ## Verify published packages from a clean cwd
 
 `uvx --from pkg==X python -c "import mcp_tools..."` run **inside this repo**
@@ -358,7 +388,7 @@ accepted cost of never dropping output.
 ## Tests
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q            # ~837 passed, 1 skipped
+.venv/Scripts/python.exe -m pytest -q            # ~851 passed, 1 skipped
 .venv/Scripts/python.exe -m pytest -m live -q    # 15, needs a backend on :5000
 python tests/integration/run_smoke.py --image <img> --expect-variant full --check-trim
 python tests/integration/probe_tools.py          # all 132 tools, needs a backend
