@@ -28,6 +28,12 @@ from .command_executor import execute_command_argv
 logger = logging.getLogger(__name__)
 
 
+# 7*7 evaluating to 49 is the classic SSTI probe, but 49 is also an
+# ordinary number on an ordinary page, so a match on it is a candidate
+# and not a finding. 7777777 is not something a page says by accident.
+WEAK_SSTI_INDICATOR = r"\b49\b"
+
+
 def header_pairs(headers) -> List[tuple]:
     """Normalise a headers argument into (key, value) pairs.
 
@@ -883,6 +889,19 @@ class APISecurityTester:
             except Exception as e:
                 logger.debug(f"Baseline request failed: {e}")
 
+            # The baseline was fetched and then never consulted, which is what
+            # made this a false-positive machine: "root" was an indicator of
+            # command injection, and every React page ships <div id="root">, so
+            # a static SPA that returned byte-identical HTML to every payload
+            # came back as ten HIGH-severity command injections. Anything the
+            # target says without being provoked is not evidence.
+            baseline_text = ""
+            if baseline_response is not None:
+                try:
+                    baseline_text = baseline_response.text.lower()
+                except Exception:
+                    baseline_text = ""
+
             # Fuzz parameters
             test_data = {}
             if params:
@@ -913,31 +932,81 @@ class APISecurityTester:
                             # Analyze for vulnerabilities
                             resp_text = response.text.lower()
 
-                            # Check for error messages indicating vulnerabilities
+                            # Indicators are regexes matching what the payload
+                            # would have MADE the target say, not the payload
+                            # itself. "/etc/passwd" was an indicator of
+                            # traversal while also being the payload, so any
+                            # app that echoed its input looked exploited;
+                            # "root" and a bare "49" matched ordinary markup.
                             vuln_indicators = {
                                 "sqli": [
-                                    "sql syntax", "mysql", "postgresql", "sqlite",
-                                    "oracle", "unclosed quotation", "syntax error"
+                                    r"sql syntax", r"\bmysql\b", r"\bpostgresql\b",
+                                    r"\bsqlite\b", r"\bora-\d{5}", r"unclosed quotation",
+                                    r"syntax error",
                                 ],
-                                "xss": [payload.lower() for payload in self.fuzz_payloads["xss"]],
-                                "ssti": ["49", "7777777"],
-                                "path_traversal": ["root:", "/etc/passwd", "shadow"],
-                                "command_injection": ["uid=", "gid=", "www-data", "root"],
+                                # Reflection is a candidate, not a confirmed
+                                # XSS -- the context and any escaping decide,
+                                # and neither is visible from here.
+                                "xss": [re.escape(p.lower()) for p in self.fuzz_payloads["xss"]],
+                                # The evaluated result, and only when the
+                                # template was not simply echoed back.
+                                "ssti": [r"\b49\b", r"\b7777777\b"],
+                                # Real /etc/passwd content, not the path.
+                                "path_traversal": [r"root:[^:]*:\d+:\d+:", r"daemon:[^:]*:\d+:"],
+                                # id(1) output, which needs the digits.
+                                "command_injection": [r"uid=\d+", r"gid=\d+"],
                             }
 
                             for vuln_type, indicators in vuln_indicators.items():
-                                if attack_type == vuln_type:
-                                    for indicator in indicators:
-                                        if indicator in resp_text:
-                                            findings.append({
-                                                "vulnerability": vuln_type,
-                                                "parameter": param_name,
-                                                "payload": payload,
-                                                "status_code": response.status_code,
-                                                "evidence": resp_text[:500],
-                                                "severity": "HIGH" if vuln_type in ["sqli", "command_injection"] else "MEDIUM"
-                                            })
-                                            break
+                                if attack_type != vuln_type:
+                                    continue
+                                for indicator in indicators:
+                                    if not re.search(indicator, resp_text):
+                                        continue
+                                    # Present without provocation -> not ours.
+                                    if re.search(indicator, baseline_text):
+                                        continue
+                                    if vuln_type == "ssti" and payload.lower() in resp_text:
+                                        # The template came back verbatim, so
+                                        # it was reflected and not evaluated.
+                                        continue
+                                    reflected = vuln_type == "xss"
+                                    # 7*7 is the classic probe, but 49 is also
+                                    # a price, a count and a version number.
+                                    # Seeing it prove nothing on its own, where
+                                    # 7777777 (from 7*'7') is hard to produce
+                                    # by accident. Report the weak one as a
+                                    # candidate rather than a finding.
+                                    weak = reflected or indicator == WEAK_SSTI_INDICATOR
+                                    note = ""
+                                    if reflected:
+                                        note = (
+                                            "payload reflected in the response; whether it "
+                                            "executes depends on context and escaping, "
+                                            "which this check cannot see"
+                                        )
+                                    elif weak:
+                                        note = (
+                                            "the response contains 49 where the baseline did "
+                                            "not, which is consistent with 7*7 being evaluated "
+                                            "but is not proof; confirm by hand"
+                                        )
+                                    findings.append({
+                                        "vulnerability": "xss_reflection" if reflected else vuln_type,
+                                        "parameter": param_name,
+                                        "payload": payload,
+                                        "status_code": response.status_code,
+                                        "evidence": resp_text[:500],
+                                        "confirmed": not weak,
+                                        "note": note,
+                                        "severity": (
+                                            "LOW" if weak and not reflected
+                                            else "MEDIUM" if reflected
+                                            else "HIGH" if vuln_type in ("sqli", "command_injection")
+                                            else "MEDIUM"
+                                        ),
+                                    })
+                                    break
 
                             # Check for verbose errors
                             error_patterns = [
@@ -946,6 +1015,11 @@ class APISecurityTester:
                             ]
                             for pattern in error_patterns:
                                 if re.search(pattern, resp_text, re.I):
+                                    # "undefined" and "exception" are ordinary
+                                    # words in shipped JS. Only an error the
+                                    # payload provoked is disclosure.
+                                    if re.search(pattern, baseline_text, re.I):
+                                        continue
                                     if not any(f.get("vulnerability") == "information_disclosure"
                                               and f.get("parameter") == param_name for f in findings):
                                         findings.append({
@@ -953,6 +1027,14 @@ class APISecurityTester:
                                             "parameter": param_name,
                                             "payload": payload,
                                             "evidence": resp_text[:500],
+                                            # Every other finding carries this,
+                                            # and a caller filtering on it read
+                                            # a missing key as neither true nor
+                                            # false. The error is not in the
+                                            # baseline, so the payload provoked
+                                            # it -- that much is observed.
+                                            "confirmed": True,
+                                            "note": "",
                                             "severity": "LOW"
                                         })
                                     break
