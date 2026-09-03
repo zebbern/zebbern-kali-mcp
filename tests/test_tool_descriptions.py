@@ -1,7 +1,7 @@
 """Agent-facing contracts for the tool surface.
 
 FastMCP turns each tool's docstring into the description an agent reads when it
-chooses between 132 tools. These checks are deterministic proxies for the
+chooses between 133 tools. These checks are deterministic proxies for the
 failure modes that only show up at agent level: a tool nobody can tell apart
 from its neighbour, or a required argument whose origin is never stated.
 """
@@ -99,7 +99,7 @@ def test_tool_names_are_unique_across_every_module():
     duplicates = _duplicates(_RECORDING.registered_names)
 
     assert not duplicates, f"tool names registered by more than one module: {duplicates}"
-    assert len(_RECORDING.registered_names) == 132
+    assert len(_RECORDING.registered_names) == 133
 
 
 def test_the_duplicate_detector_actually_detects_duplicates():

@@ -52,6 +52,11 @@ class Pivot:
     tunnels: List[str]  # Tunnel IDs
     created_at: str
     notes: str = ""
+    # The MCP wrapper has always sent and documented this -- ssh, chisel,
+    # ligolo, socat -- and nothing stored it, so a pivot came back with no
+    # record of how it is reached. Defaulted because _load_state does
+    # Pivot(**v) against a state.json written before the field existed.
+    method: str = "ssh"
     
     def to_dict(self) -> Dict:
         return asdict(self)
@@ -713,16 +718,17 @@ class NetworkPivotManager:
     # ==================== Pivot Management ====================
     
     def add_pivot(self, name: str, host: str, internal_network: str,
-                  notes: str = "") -> Dict[str, Any]:
+                  notes: str = "", method: str = "ssh") -> Dict[str, Any]:
         """
         Register a pivot point in the network.
-        
+
         Args:
             name: Friendly name for the pivot
             host: Pivot host IP/hostname
             internal_network: Network accessible from this pivot (CIDR)
             notes: Additional notes
-            
+            method: How the pivot is reached (ssh, chisel, ligolo, socat)
+
         Returns:
             Pivot registration status
         """
@@ -736,7 +742,8 @@ class NetworkPivotManager:
                 internal_network=internal_network,
                 tunnels=[],
                 created_at=datetime.now().isoformat(),
-                notes=notes
+                notes=notes,
+                method=method
             )
             
             self.pivots[pivot_id] = pivot
@@ -808,6 +815,40 @@ class NetworkPivotManager:
             "count": len(self.pivots),
             "timestamp": datetime.now().isoformat()
         }
+
+    def remove_pivot(self, pivot_id: str) -> Dict[str, Any]:
+        """Forget a pivot record.
+
+        Pivots are the one thing here that survives a restart -- they persist
+        to state.json and reload -- and there was no way to remove one, so a
+        mistyped host stayed in the operator's map for the life of the volume.
+
+        This forgets the record only. Any tunnel linked to it is a live
+        process and keeps running, so the ids come back in `orphaned_tunnels`
+        rather than being stopped silently: killing an operator's tunnel
+        because they tidied a note would be a much worse surprise.
+        """
+        try:
+            pivot = self.pivots.pop(pivot_id, None)
+            if pivot is None:
+                return {"success": False, "error": f"Pivot {pivot_id} not found"}
+
+            self._save_state()
+            return {
+                "success": True,
+                "removed": pivot.to_dict(),
+                "orphaned_tunnels": list(pivot.tunnels),
+                "note": (
+                    "the pivot record is gone; any tunnel listed in "
+                    "orphaned_tunnels is still running and must be stopped "
+                    "with pivot_stop_tunnel"
+                ) if pivot.tunnels else "",
+                "count": len(self.pivots),
+                "timestamp": datetime.now().isoformat(),
+            }
+        except Exception as e:
+            logger.error(f"Remove pivot error: {e}")
+            return {"success": False, "error": str(e)}
     
     def stop_tunnel(self, tunnel_id: str) -> Dict[str, Any]:
         """Stop a specific tunnel."""

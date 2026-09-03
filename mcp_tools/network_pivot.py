@@ -173,17 +173,23 @@ def register(mcp: FastMCP, kali_client) -> None:
 
     @mcp.tool()
     def pivot_add_pivot(
-        name: str, pivot_host: str, method: str = "ssh",
-        subnet: str = "", notes: str = "",
+        name: str, pivot_host: str, subnet: str,
+        method: str = "ssh", notes: str = "",
     ) -> Dict[str, Any]:
         """
         Add a pivot point for tracking network access chains.
 
+        This is a record, not a connection -- it notes that `subnet` is
+        reachable through `pivot_host`. Start the actual tunnel with
+        pivot_chisel_client, pivot_ligolo_start or pivot_ssh_dynamic.
+
         Args:
             name: Pivot name/identifier
             pivot_host: Host used as pivot
+            subnet: Reachable subnet via this pivot (e.g., 10.10.10.0/24).
+                Required -- the server rejects a pivot without one, and this
+                used to default to empty and 400 on every such call.
             method: Pivot method (ssh, chisel, ligolo, socat)
-            subnet: Reachable subnet via this pivot (e.g., 10.10.10.0/24)
             notes: Additional notes
         """
         data = {
@@ -191,6 +197,24 @@ def register(mcp: FastMCP, kali_client) -> None:
             "internal_network": subnet, "notes": notes,
         }
         return kali_client.safe_post("api/pivot/add", data)
+
+    @mcp.tool()
+    def pivot_remove(pivot_id: str) -> Dict[str, Any]:
+        """
+        Forget a pivot record.
+
+        Pivots are the one thing here that survives a backend restart, so a
+        wrong one stays in your map until you remove it.
+
+        This forgets the record only. A tunnel linked to it is a live process
+        and keeps running -- its id comes back in `orphaned_tunnels`, and
+        pivot_stop_tunnel is what actually stops it.
+
+        Args:
+            pivot_id: The id from pivot_add_pivot or pivot_list_pivots
+                (e.g. "pivot_6402"), not the pivot's name.
+        """
+        return kali_client.safe_post("api/pivot/remove", {"pivot_id": pivot_id})
 
     @mcp.tool()
     def pivot_generate_proxychains(socks_port: int = 1080, proxy_type: str = "socks5") -> Dict[str, Any]:

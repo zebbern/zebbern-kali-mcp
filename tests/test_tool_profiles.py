@@ -80,10 +80,10 @@ def test_auto_profile_selects_every_full_module_in_order():
     assert module_names("auto") == module_names("full")
 
 
-def test_explicit_full_profile_preserves_all_132_unique_tools_despite_capabilities():
+def test_explicit_full_profile_preserves_all_133_unique_tools_despite_capabilities():
     full_tools = registered_names("full")
 
-    assert len(full_tools) == 132
+    assert len(full_tools) == 133
     assert registered_names("full", lean_health()) == full_tools
 
 
@@ -363,8 +363,8 @@ def test_trim_profile_drops_only_the_host_redundant_modules():
     )
 
 
-def test_trim_profile_registers_122_tools():
-    assert len(registered_names("trim")) == 122
+def test_trim_profile_registers_123_tools():
+    assert len(registered_names("trim")) == 123
 
 
 def test_trim_profile_omits_exactly_the_callback_and_parser_tools():
