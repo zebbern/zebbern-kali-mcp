@@ -801,10 +801,21 @@ class ReverseShellManager:
             if self.process:
                 logger.info(f"Stopping reverse shell listener process (PID: {self.process.pid})")
 
-                # Try different stopping approaches based on platform and process state
+                # The listener is spawned with shell=True under
+                # preexec_fn=os.setsid, so self.process is the SHELL and the
+                # actual nc/socat is its child in the same process group.
+                # terminate() on the leader alone left the listener running --
+                # `ss` showed nc still bound with ppid 1 while this returned
+                # success and the route reported the session stopped. Signal
+                # the group, the way MetasploitSession and stop_tunnel already
+                # do, so the port is genuinely released.
+                process_group = getattr(self.process, "pid", None)
+                uses_process_group = bool(process_group and hasattr(os, "killpg"))
                 try:
-                    # First try gentle termination
-                    self.process.terminate()
+                    if uses_process_group:
+                        os.killpg(process_group, signal.SIGTERM)
+                    else:
+                        self.process.terminate()
 
                     # Wait a bit for graceful shutdown
                     try:
@@ -813,8 +824,21 @@ class ReverseShellManager:
                     except subprocess.TimeoutExpired:
                         # If it doesn't terminate gracefully, force kill
                         logger.warning("Process didn't terminate gracefully, forcing kill")
-                        self.process.kill()
+                        if uses_process_group:
+                            os.killpg(process_group, getattr(signal, "SIGKILL", 9))
+                        else:
+                            self.process.kill()
                         self.process.wait(timeout=2)
+
+                    # The leader can be gone while a child still holds the port:
+                    # probe the group and reap whatever is left.
+                    if uses_process_group:
+                        try:
+                            os.killpg(process_group, 0)
+                        except ProcessLookupError:
+                            pass
+                        else:
+                            os.killpg(process_group, getattr(signal, "SIGKILL", 9))
 
                 except (ProcessLookupError, OSError) as e:
                     # Process might already be dead
