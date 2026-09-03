@@ -40,7 +40,7 @@ env:
   # `docker buildx imagetools inspect <image>:<tag>` and take its top-level
   # Digest. A stale pin means the gate certifies an older image than the
   # published tag serves, so re-pin next to the version bump.
-  IMAGE: ghcr.io/zebbern/zebbern-kali-mcp@sha256:5a6896eface3b68f5503caf43e18a83fe6588c5f1cd7fc82db4f6bc0112a0c41
+  IMAGE: ghcr.io/zebbern/zebbern-kali-mcp@sha256:e487cf97517d74a5a09a9cd8f1091d4459061e84a4c32f1f4f55a6d6c64f5c5f
 
 jobs:
   integration:
