@@ -41,7 +41,7 @@ UNAFFECTED_TOOLS = {
 
 def _full_variant_tools():
     tools = VARIANT_ONLY_TOOLS | UNAFFECTED_TOOLS
-    tools.update(f"tool_{index}" for index in range(132 - len(tools)))
+    tools.update(f"tool_{index}" for index in range(133 - len(tools)))
     return tools
 
 
@@ -61,7 +61,7 @@ TRIM_OMITTED_TOOLS = {
 
 def _full_trim_tools():
     tools = VARIANT_ONLY_TOOLS | UNAFFECTED_TOOLS | TRIM_OMITTED_TOOLS
-    tools.update(f"tool_{index}" for index in range(132 - len(tools)))
+    tools.update(f"tool_{index}" for index in range(133 - len(tools)))
     return tools
 
 
@@ -73,8 +73,8 @@ def test_validate_trim_profile_returns_json_evidence_for_a_valid_surface():
 
     assert evidence == {
         "profile": "trim",
-        "trim_count": 122,
-        "full_count": 132,
+        "trim_count": 123,
+        "full_count": 133,
         "omitted_names": sorted(TRIM_OMITTED_TOOLS),
     }
     json.dumps(evidence)
@@ -82,7 +82,7 @@ def test_validate_trim_profile_returns_json_evidence_for_a_valid_surface():
 
 def test_validate_trim_profile_rejects_wrong_full_count():
     full = _full_trim_tools() - {"tool_0"}
-    with pytest.raises(RuntimeError, match="full profile must contain exactly 132 unique tools"):
+    with pytest.raises(RuntimeError, match="full profile must contain exactly 133 unique tools"):
         run_smoke.validate_trim_profile(full - TRIM_OMITTED_TOOLS, full)
 
 
@@ -117,7 +117,7 @@ def test_validate_variant_tools_returns_json_evidence_for_valid_surfaces(variant
     assert evidence == {
         "expected_variant": variant,
         "auto_count": len(auto),
-        "full_count": 132,
+        "full_count": 133,
         "omitted_names": sorted(VARIANT_ONLY_TOOLS if variant == "lean" else set()),
     }
     json.dumps(evidence)
@@ -125,7 +125,7 @@ def test_validate_variant_tools_returns_json_evidence_for_valid_surfaces(variant
 
 def test_validate_variant_tools_rejects_wrong_full_count():
     full = _full_variant_tools() - {"tool_0"}
-    with pytest.raises(RuntimeError, match="full profile must contain exactly 132 unique tools"):
+    with pytest.raises(RuntimeError, match="full profile must contain exactly 133 unique tools"):
         run_smoke.validate_variant_tools("full", full, full)
 
 
@@ -221,8 +221,8 @@ def test_run_smoke_lists_auto_and_full_once_and_validates_before_nonce(monkeypat
     assert result.tools == full
     assert result.variant_evidence == {
         "expected_variant": "full",
-        "auto_count": 132,
-        "full_count": 132,
+        "auto_count": 133,
+        "full_count": 133,
         "omitted_names": [],
     }
     assert calls[0][0][-3:] == ["up", "-d", "--no-build"]
@@ -280,8 +280,8 @@ def test_run_smoke_validates_the_trim_profile_when_requested(monkeypatch):
     assert list_calls == ["auto", "full", "trim"]
     assert result.trim_evidence == {
         "profile": "trim",
-        "trim_count": 122,
-        "full_count": 132,
+        "trim_count": 123,
+        "full_count": 133,
         "omitted_names": sorted(TRIM_OMITTED_TOOLS),
     }
 

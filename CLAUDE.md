@@ -413,7 +413,7 @@ accepted cost of never dropping output.
 .venv/Scripts/python.exe -m pytest -q            # ~917 passed, 1 skipped
 .venv/Scripts/python.exe -m pytest -m live -q    # 15, needs a backend on :5000
 python tests/integration/run_smoke.py --image <img> --expect-variant full --check-trim
-python tests/integration/probe_tools.py          # all 132 tools, needs a backend
+python tests/integration/probe_tools.py          # all 133 tools, needs a backend
 ```
 
 `live` tests skip themselves when no backend answers, which is why CI stays
@@ -458,7 +458,7 @@ a 400, and a `depth` argument nothing read.
 So: call the tool, read the reply, and check it says what that tool should say.
 One call, one output. `success: true` is the least informative field in it.
 
-`probe_tools.py` is the only thing that exercises the whole 132-tool surface.
+`probe_tools.py` is the only thing that exercises the whole 133-tool surface.
 It calls each tool once and compares the outcome against
 `tests/integration/probe_baseline.json`, so a run prints only what changed.
 Deliberately manual and not collected by pytest: it runs real scanners, starts

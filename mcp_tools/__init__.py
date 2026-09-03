@@ -89,7 +89,7 @@ _HOST_REDUNDANT_MODULES = frozenset({callback_catcher, output_parser})
 # image. Over-hiding is the unrecoverable failure direction -- discovery is a
 # startup snapshot, so a hidden tool stays invisible for the life of the process
 # -- so past this point the manifest is ignored rather than obeyed. The
-# legitimate lean case hides 7 of 132 (~5%), leaving enormous margin.
+# legitimate lean case hides 7 of 133 (~5%), leaving enormous margin.
 _MAX_AUTO_HIDDEN_FRACTION = 0.5
 
 _PROFILES: dict[str, tuple[ModuleType, ...]] = {

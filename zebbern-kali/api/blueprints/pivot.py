@@ -216,11 +216,30 @@ def add_pivot():
             name=params["name"],
             host=params["host"],
             internal_network=params["internal_network"],
-            notes=params.get("notes", "")
+            notes=params.get("notes", ""),
+            # The wrapper has always sent this and the route always dropped it,
+            # so a pivot recorded as chisel came back indistinguishable from ssh.
+            method=params.get("method", "ssh"),
         )
         return jsonify(result)
     except Exception as e:
         logger.error(f"Add pivot error: {str(e)}")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+
+@bp.route("/api/pivot/remove", methods=["POST"])
+def remove_pivot():
+    """Forget a pivot record. Linked tunnels keep running."""
+    try:
+        params = request.json or {}
+        pivot_id = params.get("pivot_id", "")
+        if not pivot_id:
+            return jsonify({"error": "pivot_id is required", "success": False}), 400
+
+        result = pivot_manager.remove_pivot(pivot_id)
+        return jsonify(result), 200 if result.get("success") else 404
+    except Exception as e:
+        logger.error(f"Remove pivot error: {str(e)}")
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 

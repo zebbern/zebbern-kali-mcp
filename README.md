@@ -126,7 +126,7 @@ The default `auto` profile starts with the complete `full` tool set. With a vali
 | `web` | Core plus web/API testing and callback capture |
 | `ad` | Core plus AD, pivoting, SSH, shells, payloads, and VPN |
 | `ctf` | Core plus scanners, CTF platforms, payloads, shells, VPN, and callbacks |
-| `trim` | All modules except `callback_catcher` and `output_parser`; 122 tools |
+| `trim` | All modules except `callback_catcher` and `output_parser`; 123 tools |
 | `full` | All 17 modules; complete operator override |
 
 The explicit profiles are `core`, `recon`, `web`, `ad`, `ctf`, `trim`, and `full`. Select one with `--profile web` or `MCP_TOOL_PROFILE=web`. Use `--profile full` to register every current MCP tool regardless of discovery results. An invalid profile fails during startup.
@@ -137,13 +137,13 @@ The explicit profiles are `core`, `recon`, `web`, `ad`, `ctf`, `trim`, and `full
 
 ```bash
 zebbern-kali-mcp --profile web --exclude-module callback_catcher      # 57 tools
-zebbern-kali-mcp --profile full --exclude-module callback_catcher,output_parser  # 122, same as trim
+zebbern-kali-mcp --profile full --exclude-module callback_catcher,output_parser  # 123, same as trim
 MCP_EXCLUDE_MODULES=callback_catcher zebbern-kali-mcp --profile ctf    # 75 tools
 ```
 
 Names are case-insensitive and whitespace-tolerant; an unknown module name fails at startup with the full list of valid names. Exclusion composes with `auto`, applying after capability discovery.
 
-`trim` is the full tool set minus the two modules that duplicate capabilities most MCP hosts already provide: `callback_catcher` (9 tools, overlapping hosted webhook/interactsh services) and `output_parser` (1 tool, duplicating the agent's own stdout parsing). It registers 122 of the 132 tools. Prefer `full` when the host has no webhook capability of its own, or when the engagement runs on an isolated network with no egress — the built-in callback listener is the only one that works there.
+`trim` is the full tool set minus the two modules that duplicate capabilities most MCP hosts already provide: `callback_catcher` (9 tools, overlapping hosted webhook/interactsh services) and `output_parser` (1 tool, duplicating the agent's own stdout parsing). It registers 123 of the 133 tools. Prefer `full` when the host has no webhook capability of its own, or when the engagement runs on an isolated network with no egress — the built-in callback listener is the only one that works there.
 
 ---
 
@@ -439,7 +439,7 @@ python tests/integration/run_ad_lab.py --image zebbern-kali-mcp:goal-lean
 python tests/integration/run_smoke.py --image zebbern-kali-mcp:goal-full --network-mode host --expect-variant full
 ```
 
-Add `--check-trim` to any `run_smoke.py` invocation to additionally assert the live `trim` profile against the running image: it must expose 122 tools and omit exactly the nine `callback_*` tools plus `parse_tool_output`, with no other additions or losses. The check is opt-in because it costs one extra MCP session per run. It is independent of the image variant, since `trim` is a static profile that ignores capability discovery.
+Add `--check-trim` to any `run_smoke.py` invocation to additionally assert the live `trim` profile against the running image: it must expose 123 tools and omit exactly the nine `callback_*` tools plus `parse_tool_output`, with no other additions or losses. The check is opt-in because it costs one extra MCP session per run. It is independent of the image variant, since `trim` is a static profile that ignores capability discovery.
 
 ```bash
 python tests/integration/run_smoke.py --image zebbern-kali-mcp:goal-full --network-mode bridge --expect-variant full --check-trim

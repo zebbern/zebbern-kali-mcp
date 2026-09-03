@@ -26,7 +26,7 @@ from mcp.client.stdio import stdio_client
 ROOT = Path(__file__).resolve().parents[2]
 SMOKE_COMPOSE = "tests/integration/docker-compose.smoke.yml"
 SAFE_PROJECT = re.compile(r"^zkm-smoke-[a-z0-9][a-z0-9-]*$")
-FULL_TOOL_COUNT = 132
+FULL_TOOL_COUNT = 133
 LEAN_OMITTED_TOOLS = frozenset(
     {
         "msf_session_create",
