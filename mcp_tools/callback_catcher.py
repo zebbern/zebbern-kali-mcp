@@ -214,17 +214,27 @@ def register(mcp: FastMCP, kali_client) -> None:
 
     @mcp.tool()
     def callback_wait(
-        timeout_seconds: int = 60,
+        timeout_seconds: int = 45,
         callback_type: str = "all",
     ) -> Dict[str, Any]:
         """
         Wait for a new callback to arrive at the local catcher.
 
-        Polls the callback catcher until a new entry appears or the
-        timeout is reached. Checks every 2 seconds.
+        Polls the catcher until a new entry appears or the timeout is
+        reached, checking every 2 seconds. The waiting happens inside this
+        call, so the MCP harness's ~60s abort is a hard ceiling on it: at 60
+        the two race, and past that you always lose the tool's own answer and
+        get a harness timeout instead -- which cannot tell you whether nothing
+        called back or the call was simply abandoned.
+
+        To watch for longer, call this repeatedly. Nothing is missed between
+        calls: callbacks are stored, so callback_check(identifier) still finds
+        one that landed while you were not waiting.
 
         Args:
-            timeout_seconds: Maximum time to wait in seconds (default 60).
+            timeout_seconds: Maximum time to wait in seconds (default 45).
+                Keep it under ~50; a larger value does not wait longer, it
+                just loses the answer.
             callback_type: Wait for a specific type: 'http', 'dns',
                 or 'all' (default 'all').
 
@@ -233,7 +243,7 @@ def register(mcp: FastMCP, kali_client) -> None:
 
         Example:
             callback_wait()
-            callback_wait(timeout_seconds=120, callback_type='http')
+            callback_wait(timeout_seconds=30, callback_type='http')
         """
         # Get the initial count so we can detect new arrivals
         status = kali_client.safe_get("api/callback/status")
