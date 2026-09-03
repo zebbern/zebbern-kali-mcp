@@ -14,6 +14,7 @@ import re
 import json
 import subprocess
 import logging
+import shutil
 import socket
 import signal
 import threading
@@ -254,13 +255,31 @@ class NetworkPivotManager:
             if not self.chisel_path:
                 return {"success": False, "error": "Chisel not found"}
             
-            cmd = [self.chisel_path, "client", f"{server}:{port}"]
-            
-            if tunnels:
-                cmd.extend(tunnels)
+            # The MCP wrapper sends a full URL as `server`, and this appended
+            # the port to it regardless, producing
+            # "http://127.0.0.1:8080:8080" -- an address chisel cannot parse.
+            endpoint = str(server).strip()
+            host_part = endpoint.split("://", 1)[-1]
+            if ":" not in host_part.split("/", 1)[0]:
+                endpoint = f"{endpoint}:{port}"
+
+            cmd = [self.chisel_path, "client", endpoint]
+
+            # tunnels arrives from the route as a STRING, and extend() over a
+            # string spreads it one character per argument -- chisel then
+            # reported "Failed to decode remote '0'" and exited, while this
+            # function reported success with the pid of an already-dead
+            # process. Accept either form and split on whitespace or commas.
+            if isinstance(tunnels, str):
+                specs = [t for t in re.split(r"[,\s]+", tunnels.strip()) if t]
+            else:
+                specs = [t for t in (tunnels or []) if t]
+
+            if specs:
+                cmd.extend(specs)
             else:
                 # Default to SOCKS proxy
-                cmd.append(f"R:socks")
+                cmd.append("R:socks")
             
             # Start client
             log_file = os.path.join(
@@ -274,30 +293,51 @@ class NetworkPivotManager:
                     preexec_fn=os.setpgrp
                 )
             
+            # A chisel client that cannot parse its arguments dies immediately,
+            # and this used to return success with the pid of a process that
+            # was already defunct. Give it a moment and check.
+            time.sleep(1.5)
+            if proc.poll() is not None:
+                try:
+                    with open(log_file) as handle:
+                        reason = handle.read().strip()[-500:]
+                except OSError:
+                    reason = ""
+                return {
+                    "success": False,
+                    "error": (
+                        f"chisel client exited immediately (code {proc.returncode}); "
+                        "no tunnel was established"
+                    ),
+                    "chisel_output": reason,
+                    "command": " ".join(cmd),
+                    "log_file": log_file,
+                }
+
             tunnel_id = self._generate_id("chisel_cli")
-            
+
             tunnel = Tunnel(
                 id=tunnel_id,
                 tunnel_type="chisel_client",
                 local_port=socks_port,
-                remote_host=server,
+                remote_host=endpoint,
                 remote_port=port,
                 pid=proc.pid,
                 status="active",
                 created_at=datetime.now().isoformat(),
-                description=f"Chisel client to {server}:{port}"
+                description=f"Chisel client to {endpoint}"
             )
-            
+
             self.tunnels[tunnel_id] = tunnel
             self.processes[tunnel_id] = proc
             self._save_state()
-            
+
             return {
                 "success": True,
                 "tunnel_id": tunnel_id,
                 "pid": proc.pid,
-                "server": f"{server}:{port}",
-                "tunnels": tunnels or ["R:socks"],
+                "server": endpoint,
+                "tunnels": specs or ["R:socks"],
                 "log_file": log_file,
                 "timestamp": datetime.now().isoformat()
             }
@@ -308,9 +348,47 @@ class NetworkPivotManager:
     
     # ==================== SSH Tunneling ====================
     
+    def _ssh_base(self, ssh_user: str, ssh_host: str, ssh_port: int,
+                  key_file: str = "", password: str = ""):
+        """Build the shared part of an ssh tunnel command, with auth.
+
+        All three tunnels documented a password, the wrappers sent one, and
+        nothing here accepted it -- the route dropped the field and these
+        signatures had no parameter for it. Password auth was advertised by
+        three tools and supported by none, so every such call died on
+        "Permission denied (publickey,password)" with no hint that the
+        argument had never been plumbed.
+
+        Mirrors core/ssh_manager.py, which already had this right: sshpass for
+        a password, and StrictHostKeyChecking off because a tunnel to a host
+        you just compromised has no entry in known_hosts and an interactive
+        prompt would hang a backgrounded ssh forever.
+
+        Returns (prefix, options, target) or raises ValueError with a reason.
+        """
+        if password and not key_file and not shutil.which("sshpass"):
+            raise ValueError(
+                "sshpass is not installed, so a password cannot be used; "
+                "pass key_file instead"
+            )
+
+        options = ["-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
+                   "-p", str(ssh_port)]
+        if key_file:
+            options.extend(["-i", key_file])
+        elif password:
+            # Without these ssh can still exhaust key auth first and never
+            # reach the password it was given.
+            options.extend(["-o", "PubkeyAuthentication=no",
+                            "-o", "PreferredAuthentications=password"])
+
+        prefix = ["sshpass", "-p", password] if (password and not key_file) else []
+        return prefix, options, f"{ssh_user}@{ssh_host}"
+
     def ssh_tunnel_local(self, ssh_host: str, ssh_user: str,
                          local_port: int, remote_host: str, remote_port: int,
-                         ssh_port: int = 22, key_file: str = "") -> Dict[str, Any]:
+                         ssh_port: int = 22, key_file: str = "",
+                         password: str = "") -> Dict[str, Any]:
         """
         Create a local SSH port forward (-L).
         Access remote_host:remote_port via localhost:local_port.
@@ -331,17 +409,17 @@ class NetworkPivotManager:
             if self._is_port_in_use(local_port):
                 return {"success": False, "error": f"Port {local_port} already in use"}
             
-            cmd = [
-                "ssh", "-N", "-f",
-                "-L", f"{local_port}:{remote_host}:{remote_port}",
-                "-p", str(ssh_port)
-            ]
-            
-            if key_file:
-                cmd.extend(["-i", key_file])
-            
-            cmd.append(f"{ssh_user}@{ssh_host}")
-            
+            try:
+                prefix, options, target = self._ssh_base(
+                    ssh_user, ssh_host, ssh_port, key_file, password
+                )
+            except ValueError as e:
+                return {"success": False, "error": str(e)}
+
+            cmd = prefix + ["ssh", "-N", "-f",
+                            "-L", f"{local_port}:{remote_host}:{remote_port}"] \
+                + options + [target]
+
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             
             if result.returncode == 0:
@@ -388,7 +466,8 @@ class NetworkPivotManager:
     
     def ssh_tunnel_remote(self, ssh_host: str, ssh_user: str,
                           remote_port: int, local_host: str, local_port: int,
-                          ssh_port: int = 22, key_file: str = "") -> Dict[str, Any]:
+                          ssh_port: int = 22, key_file: str = "",
+                          password: str = "") -> Dict[str, Any]:
         """
         Create a remote SSH port forward (-R).
         Allow remote_host:remote_port to access local_host:local_port.
@@ -406,16 +485,17 @@ class NetworkPivotManager:
             Tunnel status
         """
         try:
-            cmd = [
+            try:
+                prefix, options, target = self._ssh_base(
+                    ssh_user, ssh_host, ssh_port, key_file, password
+                )
+            except ValueError as e:
+                return {"success": False, "error": str(e)}
+
+            cmd = prefix + [
                 "ssh", "-N", "-f",
-                "-R", f"{remote_port}:{local_host}:{local_port}",
-                "-p", str(ssh_port)
-            ]
-            
-            if key_file:
-                cmd.extend(["-i", key_file])
-            
-            cmd.append(f"{ssh_user}@{ssh_host}")
+                "-R", f"{remote_port}:{local_host}:{local_port}"
+            ] + options + [target]
             
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             
@@ -459,7 +539,8 @@ class NetworkPivotManager:
     
     def ssh_tunnel_dynamic(self, ssh_host: str, ssh_user: str,
                            socks_port: int = 1080,
-                           ssh_port: int = 22, key_file: str = "") -> Dict[str, Any]:
+                           ssh_port: int = 22, key_file: str = "",
+                           password: str = "") -> Dict[str, Any]:
         """
         Create a dynamic SSH SOCKS proxy (-D).
         
@@ -477,16 +558,17 @@ class NetworkPivotManager:
             if self._is_port_in_use(socks_port):
                 return {"success": False, "error": f"Port {socks_port} already in use"}
             
-            cmd = [
+            try:
+                prefix, options, target = self._ssh_base(
+                    ssh_user, ssh_host, ssh_port, key_file, password
+                )
+            except ValueError as e:
+                return {"success": False, "error": str(e)}
+
+            cmd = prefix + [
                 "ssh", "-N", "-f",
-                "-D", str(socks_port),
-                "-p", str(ssh_port)
-            ]
-            
-            if key_file:
-                cmd.extend(["-i", key_file])
-            
-            cmd.append(f"{ssh_user}@{ssh_host}")
+                "-D", str(socks_port)
+            ] + options + [target]
             
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             

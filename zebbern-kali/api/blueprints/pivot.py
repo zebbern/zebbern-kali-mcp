@@ -60,7 +60,11 @@ def ssh_tunnel_local():
             remote_host=params["remote_host"],
             remote_port=params["remote_port"],
             ssh_port=params.get("ssh_port", 22),
-            key_file=params.get("key_file", "")
+            key_file=params.get("key_file", ""),
+            # The wrappers have always sent a password and this route
+            # always dropped it, so password auth was advertised by three
+            # tools and reached none of them.
+            password=params.get("password", ""),
         )
         return jsonify(result)
     except Exception as e:
@@ -85,7 +89,11 @@ def ssh_tunnel_remote():
             local_host=params["local_host"],
             local_port=params["local_port"],
             ssh_port=params.get("ssh_port", 22),
-            key_file=params.get("key_file", "")
+            key_file=params.get("key_file", ""),
+            # The wrappers have always sent a password and this route
+            # always dropped it, so password auth was advertised by three
+            # tools and reached none of them.
+            password=params.get("password", ""),
         )
         return jsonify(result)
     except Exception as e:
@@ -108,7 +116,11 @@ def ssh_tunnel_dynamic():
             ssh_user=params["ssh_user"],
             socks_port=params.get("socks_port", 1080),
             ssh_port=params.get("ssh_port", 22),
-            key_file=params.get("key_file", "")
+            key_file=params.get("key_file", ""),
+            # The wrappers have always sent a password and this route
+            # always dropped it, so password auth was advertised by three
+            # tools and reached none of them.
+            password=params.get("password", ""),
         )
         return jsonify(result)
     except Exception as e:
