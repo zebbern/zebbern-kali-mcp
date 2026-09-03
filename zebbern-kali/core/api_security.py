@@ -1046,6 +1046,12 @@ class APISecurityTester:
                     "-mc", match_codes,
                     "-rate", str(rate),
                     "-json",
+                    # ffuf repaints a progress counter on stderr, and with no
+                    # TTY every repaint is its own line: a common.txt run gave
+                    # 430 lines and 38KB of banner and progress against 14
+                    # findings. Silent mode drops all of it and leaves the JSON
+                    # records on stdout byte-for-byte unchanged.
+                    "-s",
                     "-timeout", "10",
                 ]
                 if filter_codes:
