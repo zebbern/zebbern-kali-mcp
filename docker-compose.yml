@@ -32,6 +32,11 @@ services:
       JOB_OUTPUT_MAX_WAIT: ${JOB_OUTPUT_MAX_WAIT:-30}
       CTF_MAX_DOWNLOAD_BYTES: ${CTF_MAX_DOWNLOAD_BYTES:-104857600}
       SOCKS_LISTEN_HOST: ${SOCKS_LISTEN_HOST:-0.0.0.0}
+    # Headless Chrome maps its renderer shared memory here, and Docker's 64MB
+    # default is not enough: gowitness navigated fine -- it reported the real
+    # status code and page title -- and then wrote no image, reporting
+    # have-screenshot=false with no error of its own.
+    shm_size: 1gb
     cap_add:
       - NET_RAW
       - NET_ADMIN

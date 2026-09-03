@@ -383,3 +383,30 @@ def test_ad_runner_builds_before_reserving_and_releases_ports_before_start(monke
     assert events.index("subnet") < events.index("build") < events.index("reserve-enter")
     assert events.index("environment") < events.index("reserve-exit") < events.index("up")
     assert events[-1] == "down"
+
+
+def test_compose_gives_headless_chrome_enough_shared_memory():
+    """Docker's 64MB /dev/shm default is not enough for Chrome's renderer.
+
+    gowitness navigated fine on the default -- it reported the real status code
+    and page title -- then wrote no image and said have-screenshot=false, with
+    no error of its own. Raising shm to 1GB and changing nothing else produced
+    the screenshot, so this is load-bearing rather than tuning.
+    """
+    config = render_compose("docker-compose.yml")
+    service = config["services"]["kali-server"]
+
+    shm = service.get("shm_size")
+    assert shm, "without this a screenshot silently comes back empty"
+    as_bytes = shm if isinstance(shm, int) else None
+    if as_bytes is None:
+        text = str(shm).lower().strip()
+        units = {"b": 1, "k": 1024, "kb": 1024, "m": 1024**2, "mb": 1024**2,
+                 "g": 1024**3, "gb": 1024**3}
+        for suffix, factor in sorted(units.items(), key=lambda kv: -len(kv[0])):
+            if text.endswith(suffix):
+                as_bytes = int(float(text[: -len(suffix)]) * factor)
+                break
+        else:
+            as_bytes = int(text)
+    assert as_bytes >= 512 * 1024**2, f"{shm} is too small for a Chrome renderer"
