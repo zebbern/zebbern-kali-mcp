@@ -54,6 +54,11 @@ RUN apt-get update && \
         curl \
         wget \
         jq \
+        # searchsploit shells out to `rev`; without it `searchsploit -p`
+        # and `-m` fail with "Could not find EDB-ID" for ids that exist,
+        # which broke exploit_details and made exploit_copy report success
+        # having copied nothing.
+        bsdextrautils \
         pipx \
         unzip \
         golang-go \
