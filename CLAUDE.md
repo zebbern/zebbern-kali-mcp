@@ -135,7 +135,9 @@ is visible except `version_match`.
 Pin the version instead: `uvx zebbern-kali-mcp@X.Y.Z` resolves that exact
 version and nothing else. It has to be bumped by hand each release, and that is
 the point -- forgetting leaves `health` reporting `version_match: false`, a
-failure that announces itself, where `--refresh` fails silently. **Nothing in the test suite catches this**: `pytest`, the live tests
+failure that announces itself, where `--refresh` fails silently.
+
+**Nothing in the test suite catches this**: `pytest`, the live tests
 and `probe_tools.py` all spawn `mcp_server.py` from the repo source, so they
 validate the source and never the installed artifact.
 
