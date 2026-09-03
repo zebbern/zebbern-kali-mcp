@@ -274,6 +274,23 @@ def backend_is_up() -> bool:
         return False
 
 
+# Cases that leave a real listener bound to a port. The teardown case below
+# them deliberately passes a missing id to exercise the 404 path, so nothing
+# was ever stopping these -- and the next run then found the port taken and
+# recorded REPORTED. The result alternated on whether the container had been
+# restarted, which is the one thing a baseline diff must not do.
+_LISTENER_STARTERS = frozenset({"reverse_shell_listener_start"})
+
+
+def _stop_started_listeners(session, session_ids):
+    """Close the listeners this probe opened, so the next run starts clean."""
+    for session_id in session_ids:
+        try:
+            session.call("reverse_shell_stop", {"session_id": session_id})
+        except Exception as exc:
+            print(f"cleanup: could not stop {session_id}: {exc}", flush=True)
+
+
 def load_baseline():
     """Expected status per tool, so a human only has to read what changed."""
     path = Path(__file__).with_name("probe_baseline.json")
@@ -290,8 +307,10 @@ def main():
     baseline = load_baseline()
     session = Session()
     rows = []
+    started_sessions = []
     for name, args in CASES:
         start = time.time()
+        reply = None
         try:
             reply = session.call(name, args)
             elapsed = time.time() - start
@@ -301,6 +320,11 @@ def main():
             status, detail = "BROKEN", f"{type(exc).__name__}: {exc}"
         rows.append((name, status, round(elapsed, 1), detail))
         print(f"{status:9} {elapsed:6.1f}s  {name:34} {detail[:100]}", flush=True)
+        if name in _LISTENER_STARTERS and isinstance(reply, dict):
+            session_id = reply.get("session_id")
+            if session_id:
+                started_sessions.append(session_id)
+    _stop_started_listeners(session, started_sessions)
     session.close()
 
     out = Path(__file__).with_name("probe_results.json")
