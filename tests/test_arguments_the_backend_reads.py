@@ -256,3 +256,83 @@ class TestTheListenerDoesNotOfferAnUpgradeItNeverPerforms:
         )
 
         assert "auto_upgrade" not in backend
+
+
+class TestTheSchemaDoesNotInviteACallTheBackendRefuses:
+    """The mirror of the cases above: not an argument the backend ignores, but
+    one it demands while the tool schema says it is optional.
+
+    Measured through the MCP interface against 1.0.16:
+
+        ad_ldap_enum(domain, username, password)
+            -> HTTP 400 - dc_ip and domain are required
+        ad_secretsdump(domain, username, password)
+            -> HTTP 400 - target or dc_ip is required
+
+    Both fail honestly -- the message names exactly what is missing, so nobody
+    is told a lie about a result. What is wrong is upstream of that: `dc_ip`
+    carried `"default": ""` in the published JSON schema, so the obvious
+    minimal call is the one that always 400s.
+
+    ldap_enum can say so in the signature, the way pivot_add_pivot's subnet
+    now does. secretsdump takes either of two, which a signature cannot
+    express, so it checks locally and returns the backend's own wording rather
+    than spending a round trip to be told the same thing.
+    """
+
+    def _tools(self):
+        from unittest.mock import MagicMock
+        import mcp_tools.ad_tools as ad
+
+        if str(REPO) not in sys.path:
+            sys.path.insert(0, str(REPO))
+
+        posted = {}
+        client = MagicMock()
+        client.safe_post = lambda endpoint, data: posted.update(
+            endpoint=endpoint, data=data
+        ) or {"success": True}
+
+        registered = {}
+        mcp = MagicMock()
+        mcp.tool = lambda: (lambda f: registered.setdefault(f.__name__, f) or f)
+        ad.register(mcp, client)
+        return registered, posted
+
+    def test_ldap_enum_does_not_offer_dc_ip_as_optional(self):
+        import inspect
+
+        registered, _ = self._tools()
+        sig = inspect.signature(registered["ad_ldap_enum"])
+
+        assert sig.parameters["dc_ip"].default is inspect.Parameter.empty, (
+            "the route 400s without it, so a default here invites that failure"
+        )
+
+    def test_ldap_enum_still_forwards_everything_it_did(self):
+        registered, posted = self._tools()
+
+        registered["ad_ldap_enum"]("corp.local", "alice", "pw", "10.0.0.1",
+                                   query="groups")
+
+        assert posted["data"]["dc_ip"] == "10.0.0.1"
+        assert posted["data"]["query"] == "groups"
+
+    def test_secretsdump_refuses_the_call_the_backend_would_refuse(self):
+        registered, posted = self._tools()
+
+        result = registered["ad_secretsdump"]("corp.local", "admin", "pw")
+
+        assert result["success"] is False
+        assert "target or dc_ip is required" in result["error"]
+        assert not posted, "no point spending a round trip to be told this"
+
+    def test_either_one_is_enough(self):
+        registered, posted = self._tools()
+
+        registered["ad_secretsdump"]("corp.local", "admin", "pw", dc_ip="10.0.0.1")
+        assert posted["data"]["dc_ip"] == "10.0.0.1"
+
+        posted.clear()
+        registered["ad_secretsdump"]("corp.local", "admin", "pw", target="10.0.0.9")
+        assert posted["data"]["target"] == "10.0.0.9"

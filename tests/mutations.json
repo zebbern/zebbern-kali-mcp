@@ -285,5 +285,19 @@
     "old": "            \"listener_type\": listener_type,",
     "new": "            \"listener_type\": listener_type,\n            \"auto_upgrade\": False,",
     "tests": "tests/test_arguments_the_backend_reads.py"
+  },
+  {
+    "name": "ldap_enum: offer dc_ip as optional again",
+    "file": "mcp_tools/ad_tools.py",
+    "old": "        domain: str, username: str, password: str, dc_ip: str,",
+    "new": "        domain: str, username: str, password: str, dc_ip: str = \"\",",
+    "tests": "tests/test_arguments_the_backend_reads.py"
+  },
+  {
+    "name": "secretsdump: spend the round trip to be refused",
+    "file": "mcp_tools/ad_tools.py",
+    "old": "        if not target and not dc_ip:",
+    "new": "        if False:",
+    "tests": "tests/test_arguments_the_backend_reads.py"
   }
 ]
