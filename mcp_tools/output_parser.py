@@ -27,8 +27,23 @@ def register(mcp: FastMCP, kali_client) -> None:
         Args:
             output: Raw text output from the tool
             tool_name: Tool identifier — 'nmap', 'nuclei', 'gobuster', or 'auto'
-            output_format: Format hint — 'xml', 'jsonl', 'text', or 'auto' (default: auto)
+            output_format: Format hint — 'xml', 'jsonl', 'text', or 'auto'
+                (default: auto). Anything else is rejected rather than
+                ignored: it used to be accepted silently and never read, so a
+                typo looked like it had been honoured.
         """
+        known_formats = {"auto", "xml", "jsonl", "text"}
+        if output_format not in known_formats:
+            return {
+                "success": False,
+                "error": (
+                    f"Unknown output_format {output_format!r}. Use one of "
+                    f"{', '.join(sorted(known_formats))}."
+                ),
+                "tool_name": tool_name,
+                "parsed": None,
+            }
+
         if not output or not output.strip():
             return {
                 "success": False,
@@ -63,6 +78,19 @@ def register(mcp: FastMCP, kali_client) -> None:
                 "error": f"Parsing failed for tool '{resolved_tool}': {exc}",
                 "tool_name": resolved_tool,
                 "parsed": None,
+            }
+
+        # The parsers report their own trouble inside `parsed` -- nmap's is
+        # "No valid nmap XML found in output" -- and this returned
+        # success: true alongside it, so a caller checking success believed it
+        # had a parse when what it had was an error message and an empty list.
+        parse_error = parsed.get("error") if isinstance(parsed, dict) else None
+        if parse_error:
+            return {
+                "success": False,
+                "error": parse_error,
+                "tool_name": resolved_tool,
+                "parsed": parsed,
             }
 
         return {
