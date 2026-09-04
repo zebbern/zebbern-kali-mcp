@@ -98,10 +98,12 @@ CASES = [
     # --- active directory (no DC present; expect clean reports) -------------
     ("ad_tools_status", {}),
     ("ad_smb_enum", {"target": "127.0.0.1"}),
-    ("ad_ldap_enum", {"domain": "probe.test", "username": "u", "password": "p"}),
+    ("ad_ldap_enum", {"domain": "probe.test", "username": "u", "password": "p",
+     "dc_ip": "127.0.0.1"}),
     ("ad_kerberoast", {"domain": "probe.test", "username": "u", "password": "p"}),
     ("ad_asreproast", {"domain": "probe.test"}),
-    ("ad_secretsdump", {"domain": "probe.test", "username": "u", "password": "p"}),
+    ("ad_secretsdump", {"domain": "probe.test", "username": "u", "password": "p",
+     "dc_ip": "127.0.0.1"}),
     ("ad_password_spray", {"domain": "probe.test", "password": "p"}),
     ("ad_bloodhound_collect", {"domain": "probe.test", "username": "u", "password": "p"}),
     ("ad_psexec", {"target": "127.0.0.1", "domain": "probe.test", "username": "u"}),
@@ -202,7 +204,15 @@ class Session:
                 "--timeout", str(PER_CALL_TIMEOUT),
             ],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            text=True, env=env, bufsize=1, cwd=str(ROOT),
+            # text=True alone decodes with locale.getpreferredencoding(), which
+            # is cp1252 on Windows -- so a tool whose output carried any byte
+            # outside it (measured: 0x90 in a nuclei finding) raised
+            # UnicodeDecodeError in readline() and the probe recorded the tool
+            # BROKEN. The tool was fine; the harness could not read the reply.
+            # Intermittent too, since it depends on what the scan happened to
+            # find, which is the worst way for a baseline diff to be wrong.
+            text=True, encoding="utf-8", errors="replace",
+            env=env, bufsize=1, cwd=str(ROOT),
         )
         self._id = 0
         self._send({"jsonrpc": "2.0", "id": self._next(), "method": "initialize",
