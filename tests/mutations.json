@@ -327,5 +327,19 @@
     "old": "            connected = \"Connected (\" in chisel_log",
     "new": "            connected = True",
     "tests": "tests/test_arguments_the_backend_reads.py"
+  },
+  {
+    "name": "probe: decode the child with the windows locale again",
+    "file": "tests/integration/probe_tools.py",
+    "old": "            text=True, encoding=\"utf-8\", errors=\"replace\",",
+    "new": "            text=True,",
+    "tests": "tests/test_probe_harness.py"
+  },
+  {
+    "name": "probe: drop dc_ip from the ldap case again",
+    "file": "tests/integration/probe_tools.py",
+    "old": "    (\"ad_ldap_enum\", {\"domain\": \"probe.test\", \"username\": \"u\", \"password\": \"p\",\n     \"dc_ip\": \"127.0.0.1\"}),",
+    "new": "    (\"ad_ldap_enum\", {\"domain\": \"probe.test\", \"username\": \"u\", \"password\": \"p\"}),",
+    "tests": "tests/test_probe_harness.py"
   }
 ]

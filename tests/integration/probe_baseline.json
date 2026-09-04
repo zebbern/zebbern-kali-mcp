@@ -9,7 +9,7 @@
     "status": "REPORTED"
   },
   "ad_ldap_enum": {
-    "status": "REPORTED"
+    "status": "OK"
   },
   "ad_password_spray": {
     "status": "REPORTED"
@@ -194,7 +194,7 @@
     "status": "OK"
   },
   "parse_tool_output": {
-    "status": "OK"
+    "status": "REPORTED"
   },
   "payload_generate": {
     "status": "OK"

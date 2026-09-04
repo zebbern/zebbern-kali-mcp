@@ -346,6 +346,20 @@ this is the first thing to suspect when a long scan disappears.
 outcome stability, not correctness: a tool whose output format drifts but still
 exits 0 passes the probe. "0 BROKEN" is not evidence that a tool still works.
 
+**A BROKEN can also be the harness, not the tool.** The probe spawned
+`mcp_server.py` with `text=True` and no `encoding=`, so the child's UTF-8 JSON
+was decoded with `locale.getpreferredencoding()` — cp1252 on Windows. Any reply
+carrying a byte outside it raised `UnicodeDecodeError` inside `readline()` and
+the tool was recorded BROKEN. Measured on `api_nuclei_scan` (`byte 0x90`), and
+**intermittent**, because it depended on what the scan happened to find — the
+worst way for a baseline diff to be wrong, since the baseline exists so a human
+only reads what changed. Read the detail on a new BROKEN before believing it.
+
+**Changing a wrapper's signature can turn a probe case BROKEN too.** Making
+`ad_ldap_enum`'s `dc_ip` required meant the probe's existing call was rejected
+in the MCP layer before reaching the backend, which reads identically to the
+tool failing. Update the case, then re-record.
+
 ## Background job output is teed to disk, and never pruned
 
 Every background job's full stdout+stderr is written to
@@ -410,7 +424,7 @@ accepted cost of never dropping output.
 ## Tests
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q            # ~917 passed, 1 skipped
+.venv/Scripts/python.exe -m pytest -q            # ~1354 passed, 2 skipped
 .venv/Scripts/python.exe -m pytest -m live -q    # 15, needs a backend on :5000
 python tests/integration/run_smoke.py --image <img> --expect-variant full --check-trim
 python tests/integration/probe_tools.py          # all 133 tools, needs a backend
@@ -437,11 +451,43 @@ The shapes that keep recurring, worth checking first in anything new:
 - **An argument the wrapper sends and nothing reads.** `pivot_add_pivot`'s
   `method`, the three SSH tunnels' `password`, `api_fuzz_endpoint`'s
   `parameters` (the route read `params`), `api_graphql_fuzz`'s `variables`
-  (absent entirely, so it sent zero requests and called the target clean).
+  (absent entirely, so it sent zero requests and called the target clean),
+  `pivot_ligolo_start`'s `interface` (the route read `tun_name`),
+  `reverse_shell_listener_start`'s `auto_upgrade` (no reader anywhere, and no
+  TTY-upgrade code to be a reader), and `pivot_chisel_client`'s `fingerprint`
+  -- the only one where the dropped argument *was* the security control: an
+  operator who pinned the server's host key got an unpinned tunnel.
+  This one is worth auditing mechanically rather than by eye. Walk every key
+  each wrapper serialises and check it against the code that receives it,
+  remembering that most routes pass `params` straight to a runner, so the
+  search has to reach `core/` and `tools/` and not stop at the blueprint.
+- **The mirror: the backend demands what the schema calls optional.**
+  `ad_ldap_enum(domain, username, password)` and
+  `ad_secretsdump(domain, username, password)` both answered a 400 naming
+  exactly what was missing -- honest replies, but `dc_ip` and `target` carried
+  `"default": ""` in the published JSON schema, so the obvious minimal call was
+  the one that always failed. Audit by finding every route that 400s on a
+  missing key and checking it against the wrappers that post there. A
+  signature cannot express "one of two", so `ad_secretsdump` checks locally and
+  returns the backend's own wording.
 - **`success: true` for work that did not happen.** `reverse_shell_command`
   against a dead shell, `exploit_copy` carrying "Could not find EDB-ID #" as
   its message, a chisel client already defunct, `payload_generate` with an
   empty file. Check the thing the tool exists to produce, not the exit code.
+- **A live process is not a working one, so a liveness check is not enough.**
+  The fix for the defunct chisel client was `proc.poll()` after 1.5s, and that
+  is exactly what a *failing* client evades: chisel retries a failed handshake
+  forever rather than exiting. A deliberately wrong `--fingerprint` answered
+  `success: true, fingerprint_pinned: true` with a tunnel id, while the log
+  looped on "Invalid fingerprint" — the one event pinning exists to catch,
+  reported as a working client. It now reads the log: a mismatch fails and
+  terminates the client (never transient, and never something to leave
+  retrying against whatever answered), any other connection error keeps the
+  process but reports `connected: false`. Check `connected`, not `success`;
+  it follows the same contract as `timed_out`.
+  Note the shape: **the fix that made pinning real is what made this
+  reachable**, and it was found by driving the fix on the image it shipped in
+  rather than by reviewing it.
 - **Verification that confirms the wrong invariant.** The upload checksum
   hashed what the caller sent and what landed, and down the utf-8 path those
   were the same base64 string -- so it certified a faithful transfer of the
@@ -461,6 +507,15 @@ Nothing automated catches this class: the contract tests assert the request
 the *client* builds and the client was usually right, and the probe compares
 outcome categories, where "non-zero exit" was already expected. A docstring
 is not evidence either -- several documented arguments no code read.
+
+The two *disagreement* shapes above are the exception, and worth re-running as
+audits after any change to the tool surface: they compare two artefacts that
+already exist rather than judging behaviour, so a script can do it. The
+endpoint-and-verb check is now permanent in
+`tests/test_wrapper_endpoints_exist.py` (239 call sites against 144 declared
+routes). The key-reachability and 400-vs-optional audits stay manual, because
+both are noisy: routes that hand `params` wholesale to a runner look like
+dropped keys, and a 400 naming what is missing is often the honest answer.
 
 So: call the tool, read the reply, and check it says what that tool should
 say. One call, one output. `success: true` is the least informative field in
