@@ -10,16 +10,23 @@ def register(mcp: FastMCP, kali_client) -> None:
     @mcp.tool()
     def reverse_shell_listener_start(
         port: int = 4444, session_id: str = "",
-        listener_type: str = "netcat", auto_upgrade: bool = False,
+        listener_type: str = "netcat",
     ) -> Dict[str, Any]:
         """
         Start a reverse shell listener on the specified port.
+
+        There used to be an `auto_upgrade` flag here, documented as attempting
+        a TTY upgrade on connection. Nothing in the backend read it and no
+        upgrade code exists, so it was a capability the schema advertised and
+        the tool did not have. To upgrade a shell once it lands, send the
+        spawn yourself with reverse_shell_command, e.g.
+        `python3 -c 'import pty; pty.spawn("/bin/bash")'`, and read the reply
+        to see whether it took.
 
         Args:
             port: Port to listen on (default: 4444)
             session_id: Optional session identifier (auto-generated as shell_{port} if empty)
             listener_type: Type of listener - 'netcat' or 'pwncat' (default: netcat)
-            auto_upgrade: Automatically attempt TTY upgrade on connection (default: False)
 
         Returns:
             Session ID and listener status
@@ -28,7 +35,6 @@ def register(mcp: FastMCP, kali_client) -> None:
             "port": port,
             "session_id": session_id or f"shell_{port}",
             "listener_type": listener_type,
-            "auto_upgrade": auto_upgrade,
         }
         return kali_client.safe_post("api/reverse-shell/listener/start", data)
 

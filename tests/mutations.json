@@ -243,5 +243,47 @@
     "old": "        if output_format not in known_formats:",
     "new": "        if False:",
     "tests": "tests/test_reporting_honesty.py"
+  },
+  {
+    "name": "chisel: drop the fingerprint flag again",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "            pin = str(fingerprint or \"\").strip()",
+    "new": "            pin = \"\"",
+    "tests": "tests/test_arguments_the_backend_reads.py"
+  },
+  {
+    "name": "chisel: put the fingerprint flag behind the endpoint",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "            cmd = [self.chisel_path, \"client\"]",
+    "new": "            cmd = [self.chisel_path, \"client\", endpoint]",
+    "tests": "tests/test_arguments_the_backend_reads.py"
+  },
+  {
+    "name": "chisel route: stop forwarding the fingerprint",
+    "file": "zebbern-kali/api/blueprints/pivot.py",
+    "old": "            fingerprint=params.get(\"fingerprint\", \"\")",
+    "new": "            fingerprint=\"\"",
+    "tests": "tests/test_arguments_the_backend_reads.py"
+  },
+  {
+    "name": "ligolo route: read only the key the wrapper does not send",
+    "file": "zebbern-kali/api/blueprints/pivot.py",
+    "old": "            tun_name=params.get(\"tun_name\") or params.get(\"interface\") or \"ligolo\"",
+    "new": "            tun_name=params.get(\"tun_name\", \"ligolo\")",
+    "tests": "tests/test_arguments_the_backend_reads.py"
+  },
+  {
+    "name": "listener: advertise auto_upgrade again",
+    "file": "mcp_tools/reverse_shell.py",
+    "old": "        listener_type: str = \"netcat\",",
+    "new": "        listener_type: str = \"netcat\", auto_upgrade: bool = False,",
+    "tests": "tests/test_arguments_the_backend_reads.py"
+  },
+  {
+    "name": "listener: post auto_upgrade again",
+    "file": "mcp_tools/reverse_shell.py",
+    "old": "            \"listener_type\": listener_type,",
+    "new": "            \"listener_type\": listener_type,\n            \"auto_upgrade\": False,",
+    "tests": "tests/test_arguments_the_backend_reads.py"
   }
 ]
