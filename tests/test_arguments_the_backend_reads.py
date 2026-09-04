@@ -336,3 +336,115 @@ class TestTheSchemaDoesNotInviteACallTheBackendRefuses:
         posted.clear()
         registered["ad_secretsdump"]("corp.local", "admin", "pw", target="10.0.0.9")
         assert posted["data"]["target"] == "10.0.0.9"
+
+
+class TestAChiselClientStillRetryingIsNotATunnel:
+    """Found by verifying the fix above on the shipped image, not by review.
+
+    A deliberately wrong --fingerprint against a real chisel server answered:
+
+        {"success": true, "fingerprint_pinned": true, "tunnel_id": ...}
+
+    while the log looped
+
+        client: ssh: handshake failed: Invalid fingerprint (ZYM4...)
+        client: Retrying in 100ms... (Attempt: 6/unlimited)
+
+    chisel retries a failed handshake forever rather than exiting, so the
+    liveness check added for the argv bug passes -- the process is genuinely
+    up. It just carries nothing. The one event host-key pinning exists to
+    catch was reported as a working client.
+
+    A mismatch is never transient, so that case fails and the client is
+    terminated rather than left retrying against whatever answered. Every
+    other connection error may still recover, so the process stays and the
+    reply says `connected: false` with the error -- the same shape as
+    timed_out on a command: success says the client started, connected says
+    whether it got anywhere.
+    """
+
+    def _connect(self, manager, monkeypatch, log_text, **kwargs):
+        seen = _capture_argv(monkeypatch)
+        monkeypatch.setattr(manager, "_save_state", lambda: None)
+        killed = []
+
+        class _P(_Proc):
+            def terminate(self):
+                killed.append(True)
+
+        monkeypatch.setattr(
+            np.subprocess, "Popen",
+            lambda cmd, **kw: seen.setdefault("cmd", list(cmd)) and None or _P(),
+        )
+
+        real_open = open
+
+        def fake_open(path, *a, **kw):
+            if str(path).endswith(".log") and (not a or "r" in str(a[0])):
+                import io
+                return io.StringIO(log_text)
+            return real_open(path, *a, **kw)
+
+        monkeypatch.setattr("builtins.open", fake_open)
+        result = manager.chisel_client_connect(
+            server="http://10.0.0.1:8080", tunnels="R:socks", **kwargs
+        )
+        return result, killed
+
+    CONNECTED = (
+        "2026/09/04 17:12:25 client: Connecting to ws://10.0.0.1:8080\n"
+        "2026/09/04 17:12:25 client: Connected (Latency 10.6ms)\n"
+    )
+    MISMATCH = (
+        "2026/09/04 17:12:36 client: Connecting to ws://10.0.0.1:8080\n"
+        "2026/09/04 17:12:36 client: ssh: handshake failed: Invalid fingerprint (ZYM4=)\n"
+        "2026/09/04 17:12:36 client: Connection error: ssh: handshake failed: "
+        "Invalid fingerprint (ZYM4=) (Attempt: 1/unlimited)\n"
+        "2026/09/04 17:12:36 client: Retrying in 100ms...\n"
+    )
+    REFUSED = (
+        "2026/09/04 17:12:36 client: Connecting to ws://10.0.0.1:8080\n"
+        "2026/09/04 17:12:36 client: Connection error: dial tcp: connection "
+        "refused (Attempt: 1/unlimited)\n"
+    )
+
+    def test_a_fingerprint_mismatch_is_not_success(self, manager, monkeypatch):
+        result, _ = self._connect(
+            manager, monkeypatch, self.MISMATCH, fingerprint="AAAA=",
+        )
+
+        assert result["success"] is False, (
+            "a client rejecting the server's key established no tunnel"
+        )
+        assert "fingerprint" in result["error"]
+
+    def test_a_mismatched_client_is_not_left_retrying(self, manager, monkeypatch):
+        """Against whatever it was that answered."""
+        _, killed = self._connect(
+            manager, monkeypatch, self.MISMATCH, fingerprint="AAAA=",
+        )
+
+        assert killed, "the client keeps hammering the wrong server otherwise"
+
+    def test_a_mismatch_registers_no_tunnel(self, manager, monkeypatch):
+        self._connect(manager, monkeypatch, self.MISMATCH, fingerprint="AAAA=")
+
+        assert manager.tunnels == {}
+
+    def test_a_connected_client_says_so(self, manager, monkeypatch):
+        result, killed = self._connect(manager, monkeypatch, self.CONNECTED)
+
+        assert result["success"] is True
+        assert result["connected"] is True
+        assert result["connection_error"] == ""
+        assert not killed
+
+    def test_a_recoverable_error_keeps_the_client_but_says_connected_false(
+        self, manager, monkeypatch
+    ):
+        """A server still booting is worth retrying; claiming a tunnel is not."""
+        result, killed = self._connect(manager, monkeypatch, self.REFUSED)
+
+        assert result["connected"] is False
+        assert "connection refused" in result["connection_error"]
+        assert not killed, "this one may still come good"

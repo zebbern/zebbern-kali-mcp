@@ -328,6 +328,44 @@ class NetworkPivotManager:
                     "log_file": log_file,
                 }
 
+            # Staying alive is not evidence of a tunnel. chisel retries a
+            # failed handshake forever rather than exiting, so the poll above
+            # passes while nothing is carried -- measured: a deliberately wrong
+            # --fingerprint answered success: true, fingerprint_pinned: true,
+            # with the log looping on "Invalid fingerprint". That is the one
+            # event pinning exists to catch, reported as a working client.
+            try:
+                with open(log_file) as handle:
+                    chisel_log = handle.read()
+            except OSError:
+                chisel_log = ""
+
+            connected = "Connected (" in chisel_log
+
+            if not connected and "Invalid fingerprint" in chisel_log:
+                # Never transient, and a mismatch is exactly when you do not
+                # want a client left retrying against whatever answered.
+                try:
+                    proc.terminate()
+                except OSError:
+                    pass
+                return {
+                    "success": False,
+                    "error": (
+                        "server fingerprint did not match the one pinned; "
+                        "no tunnel was established"
+                    ),
+                    "fingerprint_pinned": True,
+                    "chisel_output": chisel_log.strip()[-500:],
+                    "command": " ".join(cmd),
+                    "log_file": log_file,
+                }
+
+            connection_error = next(
+                (line for line in chisel_log.splitlines() if "Connection error" in line),
+                "",
+            )
+
             tunnel_id = self._generate_id("chisel_cli")
 
             tunnel = Tunnel(
@@ -356,6 +394,12 @@ class NetworkPivotManager:
                 # client trusts whatever answers, and the caller cannot tell
                 # from anything else in this reply.
                 "fingerprint_pinned": bool(pin),
+                # Check this, not success: the process is up either way, and a
+                # client still retrying carries nothing. It reads like
+                # timed_out on a command -- success says the client started,
+                # connected says whether it got anywhere.
+                "connected": connected,
+                "connection_error": connection_error,
                 "log_file": log_file,
                 "timestamp": datetime.now().isoformat()
             }
