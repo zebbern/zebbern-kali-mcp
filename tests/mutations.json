@@ -180,5 +180,33 @@
     "old": "    names = params.get(\"parameters\") or params.get(\"params\") or {}",
     "new": "    names = params.get(\"params\") or {}",
     "tests": "tests/test_route_argument_wiring.py"
+  },
+  {
+    "name": "spray: count guest mappings as credentials again",
+    "file": "zebbern-kali/core/ad_tools.py",
+    "old": "    return not (\"(guest)\" in lowered or \"[-]\" in lowered)",
+    "new": "    return True",
+    "tests": "tests/test_ad_tool_claims.py"
+  },
+  {
+    "name": "impacket: stop surfacing the [-] error lines",
+    "file": "zebbern-kali/core/ad_tools.py",
+    "old": "                if line.strip().startswith(\"[-]\")",
+    "new": "                if False",
+    "tests": "tests/test_ad_tool_claims.py"
+  },
+  {
+    "name": "wmiexec: send the command as -c again",
+    "file": "zebbern-kali/core/ad_tools.py",
+    "old": "                args.append(command)",
+    "new": "                args.extend([\"-c\", command])",
+    "tests": "tests/test_ad_tool_claims.py"
+  },
+  {
+    "name": "asreproast: drop the password parameter again",
+    "file": "mcp_tools/ad_tools.py",
+    "old": "        username: str = \"\", password: str = \"\", userlist: str = \"\",",
+    "new": "        username: str = \"\", userlist: str = \"\",",
+    "tests": "tests/test_ad_tool_claims.py"
   }
 ]
