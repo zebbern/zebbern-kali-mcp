@@ -299,5 +299,33 @@
     "old": "        if not target and not dc_ip:",
     "new": "        if False:",
     "tests": "tests/test_arguments_the_backend_reads.py"
+  },
+  {
+    "name": "route: rename a path out from under its wrapper",
+    "file": "zebbern-kali/api/blueprints/pivot.py",
+    "old": "@bp.route(\"/api/pivot/chisel/client\", methods=[\"POST\"])",
+    "new": "@bp.route(\"/api/pivot/chisel/client-v2\", methods=[\"POST\"])",
+    "tests": "tests/test_wrapper_endpoints_exist.py"
+  },
+  {
+    "name": "route: accept only the verb the wrapper does not send",
+    "file": "zebbern-kali/api/blueprints/pivot.py",
+    "old": "@bp.route(\"/api/pivot/ligolo/start\", methods=[\"POST\"])",
+    "new": "@bp.route(\"/api/pivot/ligolo/start\", methods=[\"GET\"])",
+    "tests": "tests/test_wrapper_endpoints_exist.py"
+  },
+  {
+    "name": "chisel: treat a fingerprint mismatch as a tunnel",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "            if not connected and \"Invalid fingerprint\" in chisel_log:",
+    "new": "            if False:",
+    "tests": "tests/test_arguments_the_backend_reads.py"
+  },
+  {
+    "name": "chisel: claim connected without reading the log",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "            connected = \"Connected (\" in chisel_log",
+    "new": "            connected = True",
+    "tests": "tests/test_arguments_the_backend_reads.py"
   }
 ]
