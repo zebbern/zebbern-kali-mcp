@@ -44,14 +44,22 @@ def register(mcp: FastMCP, kali_client) -> None:
         """
         Dump secrets (NTLM hashes, Kerberos keys) from a domain controller using secretsdump.py.
 
+        One of `target` or `dc_ip` is required; the backend uses `target` when
+        both are given and falls back to `dc_ip`. Both carried a default of ""
+        and the call with neither answers a 400, so it is refused here rather
+        than after a round trip.
+
         Args:
             domain: AD domain
             username: Domain admin username
             password: Domain admin password
-            target: Specific target (default: DC)
-            dc_ip: Domain Controller IP
+            target: Specific target. Defaults to dc_ip when empty.
+            dc_ip: Domain Controller IP. Used when target is empty.
             hashes: NTLM hash for pass-the-hash (LMHASH:NTHASH)
         """
+        if not target and not dc_ip:
+            return {"success": False, "error": "target or dc_ip is required"}
+
         data = {
             "domain": domain, "username": username, "password": password,
             "target": target, "dc_ip": dc_ip, "hashes": hashes,
@@ -152,8 +160,8 @@ def register(mcp: FastMCP, kali_client) -> None:
 
     @mcp.tool()
     def ad_ldap_enum(
-        domain: str, username: str, password: str,
-        dc_ip: str = "", query: str = "users",
+        domain: str, username: str, password: str, dc_ip: str,
+        query: str = "users",
         use_starttls: bool = False, tls_verify: bool = True,
     ) -> Dict[str, Any]:
         """
@@ -163,7 +171,10 @@ def register(mcp: FastMCP, kali_client) -> None:
             domain: AD domain
             username: Domain username
             password: Domain password
-            dc_ip: Domain Controller IP or hostname
+            dc_ip: Domain Controller IP or hostname. Required -- this carried
+                a default of "" while the route answers
+                "dc_ip and domain are required" with a 400, so the obvious
+                minimal call was the one that always failed.
             query: Query type (users, groups, computers, spns, admins, all)
             use_starttls: Upgrade the LDAP connection to TLS
             tls_verify: Verify the StartTLS server certificate

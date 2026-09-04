@@ -35,7 +35,10 @@ def chisel_client_connect():
             server=params["server"],
             port=params.get("port", 8080),
             tunnels=params.get("tunnels", None),
-            socks_port=params.get("socks_port", 1080)
+            socks_port=params.get("socks_port", 1080),
+            # The wrapper has always sent this and the route never passed it
+            # on, so host-key pinning was requested and never applied.
+            fingerprint=params.get("fingerprint", "")
         )
         return jsonify(result)
     except Exception as e:
@@ -157,7 +160,10 @@ def ligolo_proxy_start():
         params = request.json or {}
         result = pivot_manager.ligolo_proxy_start(
             port=params.get("port", 11601),
-            tun_name=params.get("tun_name", "ligolo")
+            # The wrapper sends "interface"; this read only "tun_name", so the
+            # TUN device was called ligolo whatever was asked for. Accept both
+            # so a direct HTTP caller keeps working.
+            tun_name=params.get("tun_name") or params.get("interface") or "ligolo"
         )
         return jsonify(result)
     except Exception as e:

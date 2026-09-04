@@ -238,16 +238,21 @@ class NetworkPivotManager:
     
     def chisel_client_connect(self, server: str, port: int = 8080,
                               tunnels: List[str] = None,
-                              socks_port: int = 1080) -> Dict[str, Any]:
+                              socks_port: int = 1080,
+                              fingerprint: str = "") -> Dict[str, Any]:
         """
         Connect as a Chisel client to a Chisel server.
-        
+
         Args:
             server: Chisel server address
             port: Server port
             tunnels: List of tunnel specs (e.g., ["R:8888:192.168.1.1:80"])
             socks_port: Local SOCKS port
-            
+            fingerprint: Server public-key fingerprint to pin. chisel calls
+                this "*strongly recommended*" and closes the connection on a
+                mismatch; the MCP wrapper has always sent one and nothing here
+                read it, so a pinned tunnel was silently an unpinned one.
+
         Returns:
             Client connection status
         """
@@ -263,7 +268,16 @@ class NetworkPivotManager:
             if ":" not in host_part.split("/", 1)[0]:
                 endpoint = f"{endpoint}:{port}"
 
-            cmd = [self.chisel_path, "client", endpoint]
+            cmd = [self.chisel_path, "client"]
+
+            # chisel parses its options ahead of the positional address, so the
+            # flag has to go in before the endpoint -- behind it, it is read as
+            # a tunnel spec and the client refuses to start.
+            pin = str(fingerprint or "").strip()
+            if pin:
+                cmd.extend(["--fingerprint", pin])
+
+            cmd.append(endpoint)
 
             # tunnels arrives from the route as a STRING, and extend() over a
             # string spreads it one character per argument -- chisel then
@@ -338,6 +352,10 @@ class NetworkPivotManager:
                 "pid": proc.pid,
                 "server": endpoint,
                 "tunnels": specs or ["R:socks"],
+                # Say which of the two this tunnel is. An unpinned chisel
+                # client trusts whatever answers, and the caller cannot tell
+                # from anything else in this reply.
+                "fingerprint_pinned": bool(pin),
                 "log_file": log_file,
                 "timestamp": datetime.now().isoformat()
             }
