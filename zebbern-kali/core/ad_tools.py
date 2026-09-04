@@ -880,7 +880,13 @@ class ADTools:
                 "success": True,
                 "target": target,
                 "shares": [],
-                "null_session": False
+                # Whether an anonymous session was ATTEMPTED. This used to be
+                # the only null_session field, set from the auth mode before
+                # smbclient ran, so a host with nothing listening on 445 came
+                # back with null_session: true -- which reads as "anonymous
+                # access is allowed", a security claim made without evidence.
+                "null_session_attempted": False,
+                "null_session": False,
             }
 
             # Build auth string
@@ -890,7 +896,7 @@ class ADTools:
                 auth = f"--pw-nt-hash -U '{username}%{hashes.split(':')[1]}'"
             else:
                 auth = "-N"  # Null session
-                results["null_session"] = True
+                results["null_session_attempted"] = True
 
             # List shares
             cmd = f"smbclient -L //{target} {auth}"
@@ -899,6 +905,21 @@ class ADTools:
                 result = subprocess.run(
                     cmd, shell=True, capture_output=True, text=True, timeout=30
                 )
+
+                # success was hardcoded True and the return code never read, so
+                # an unreachable host reported a clean enumeration of no shares
+                # rather than a failure to connect.
+                if result.returncode != 0:
+                    results["success"] = False
+                    results["error"] = (
+                        (result.stderr or result.stdout).strip()[:500]
+                        or f"smbclient exited {result.returncode}"
+                    )
+                    results["return_code"] = result.returncode
+                elif results["null_session_attempted"]:
+                    # smbclient connected anonymously and listed shares, so the
+                    # anonymous session is a fact rather than an intention.
+                    results["null_session"] = True
 
                 for line in result.stdout.split('\n'):
                     # Parse share lines
