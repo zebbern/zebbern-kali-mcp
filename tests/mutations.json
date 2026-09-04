@@ -1,0 +1,184 @@
+[
+  {
+    "name": "crtsh: take the SAN blob whole again",
+    "file": "zebbern-kali/tools/kali_tools.py",
+    "old": "            for name in entry.get('name_value', '').split('\\n'):",
+    "new": "            for name in [entry.get('name_value', '')]:",
+    "tests": "tests/test_crtsh_multi_san.py"
+  },
+  {
+    "name": "go tools: hardcode the bin directory again",
+    "file": "zebbern-kali/tools/kali_tools.py",
+    "old": "    waybackurls_path = _which_or_go(\"waybackurls\")",
+    "new": "    waybackurls_path = \"/home/kali/go/bin/waybackurls\"",
+    "tests": "tests/test_binary_resolution.py"
+  },
+  {
+    "name": "ffuf: stop silencing the progress bar",
+    "file": "zebbern-kali/core/api_security.py",
+    "old": "                    \"-s\",",
+    "new": "                    \"-timeout\", \"10\",",
+    "tests": "tests/test_ffuf_output_volume.py"
+  },
+  {
+    "name": "fuzz: ignore the baseline again",
+    "file": "zebbern-kali/core/api_security.py",
+    "old": "                                    if re.search(indicator, baseline_text):",
+    "new": "                                    if False:",
+    "tests": "tests/test_fuzz_detection.py"
+  },
+  {
+    "name": "fuzz: treat a bare 49 as confirmed SSTI",
+    "file": "zebbern-kali/core/api_security.py",
+    "old": "                                    weak = reflected or indicator == WEAK_SSTI_INDICATOR",
+    "new": "                                    weak = reflected",
+    "tests": "tests/test_fuzz_detection.py"
+  },
+  {
+    "name": "graphql: stop deriving variables from the query",
+    "file": "zebbern-kali/core/api_security.py",
+    "old": "            if not variables and query:\n                variables = declared_variables(query)",
+    "new": "            if False:\n                variables = declared_variables(query)",
+    "tests": "tests/test_graphql_fuzz_targets.py"
+  },
+  {
+    "name": "reverse shell: hardcode success again",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "                    \"success\": bool(end_marker_found and not session_closed),",
+    "new": "                    \"success\": True,",
+    "tests": "tests/test_reverse_shell_command_outcome.py"
+  },
+  {
+    "name": "exploit: match an id by prefix",
+    "file": "zebbern-kali/core/exploit_suggester.py",
+    "old": "                if stem == edb_id and ext:",
+    "new": "                if stem.startswith(edb_id) and ext:",
+    "tests": "tests/test_exploit_lookup.py"
+  },
+  {
+    "name": "exploit: trust the copy without checking",
+    "file": "zebbern-kali/core/exploit_suggester.py",
+    "old": "            if not os.path.isfile(target):",
+    "new": "            if False:",
+    "tests": "tests/test_exploit_lookup.py"
+  },
+  {
+    "name": "payload host: serve by chdir again",
+    "file": "zebbern-kali/core/payload_generator.py",
+    "old": "            handler = functools.partial(\n                http.server.SimpleHTTPRequestHandler, directory=self.payloads_dir\n            )",
+    "new": "            handler = http.server.SimpleHTTPRequestHandler\n            os.chdir(self.payloads_dir)",
+    "tests": "tests/test_payload_hosting_and_output.py"
+  },
+  {
+    "name": "payload generate: accept an empty file",
+    "file": "zebbern-kali/core/payload_generator.py",
+    "old": "            if size == 0:",
+    "new": "            if False:",
+    "tests": "tests/test_payload_hosting_and_output.py"
+  },
+  {
+    "name": "chisel: append the port unconditionally",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "            if \":\" not in host_part.split(\"/\", 1)[0]:",
+    "new": "            if True:",
+    "tests": "tests/test_pivot_tunnel_wiring.py"
+  },
+  {
+    "name": "chisel: extend() over the raw spec string",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "            if isinstance(tunnels, str):",
+    "new": "            if False:",
+    "tests": "tests/test_pivot_tunnel_wiring.py"
+  },
+  {
+    "name": "chisel: skip the liveness check",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "            if proc.poll() is not None:",
+    "new": "            if False:",
+    "tests": "tests/test_pivot_tunnel_wiring.py"
+  },
+  {
+    "name": "ssh tunnels: drop sshpass again",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "        prefix = [\"sshpass\", \"-p\", password] if (password and not key_file) else []",
+    "new": "        prefix = []",
+    "tests": "tests/test_pivot_tunnel_wiring.py"
+  },
+  {
+    "name": "pivot: drop the method field again",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "    method: str = \"ssh\"",
+    "new": "    unused_method: str = \"ssh\"",
+    "tests": "tests/test_pivot_record_fields.py"
+  },
+  {
+    "name": "smb enum: ignore smbclient's return code",
+    "file": "zebbern-kali/core/ad_tools.py",
+    "old": "                if result.returncode != 0:\n                    results[\"success\"] = False",
+    "new": "                if False:\n                    results[\"success\"] = False",
+    "tests": "tests/test_smb_enum_claims.py"
+  },
+  {
+    "name": "smb enum: claim a null session from the attempt",
+    "file": "zebbern-kali/core/ad_tools.py",
+    "old": "                elif results[\"null_session_attempted\"]:",
+    "new": "                elif True:",
+    "tests": "tests/test_smb_enum_claims.py"
+  },
+  {
+    "name": "callback: put nslookup's options after the host",
+    "file": "zebbern-kali/core/callback_catcher.py",
+    "old": "                \"nslookup\": f\"nslookup -port={dns_port} {tag}.test {listener_ip}\",",
+    "new": "                \"nslookup\": f\"nslookup {tag}.test {listener_ip} -port={dns_port}\",",
+    "tests": "tests/test_callback_payload_commands.py"
+  },
+  {
+    "name": "callback: drop host's port flag",
+    "file": "zebbern-kali/core/callback_catcher.py",
+    "old": "                \"host\": f\"host -p {dns_port} {tag}.test {listener_ip}\",",
+    "new": "                \"host\": f\"host {tag}.test {listener_ip}\",",
+    "tests": "tests/test_callback_payload_commands.py"
+  },
+  {
+    "name": "upload: default encoding back to utf-8",
+    "file": "mcp_tools/reverse_shell.py",
+    "old": "        method: str = \"base64\", encoding: str = \"base64\",",
+    "new": "        method: str = \"base64\", encoding: str = \"utf-8\",",
+    "tests": "tests/test_upload_encoding_default.py"
+  },
+  {
+    "name": "callback_wait: default back onto the harness abort",
+    "file": "mcp_tools/callback_catcher.py",
+    "old": "        timeout_seconds: int = 45,",
+    "new": "        timeout_seconds: int = 60,",
+    "tests": "tests/test_callback_payload_commands.py"
+  },
+  {
+    "name": "pivot: make subnet optional again",
+    "file": "mcp_tools/network_pivot.py",
+    "old": "        name: str, pivot_host: str, subnet: str,",
+    "new": "        name: str, pivot_host: str, subnet: str = \"\",",
+    "tests": "tests/test_pivot_record_fields.py"
+  },
+  {
+    "name": "compose: pin a fixed cpu cap again",
+    "file": "docker-compose.yml",
+    "old": "          memory: 10g",
+    "new": "          memory: 10g\n          cpus: \"8.0\"",
+    "tests": "tests/test_compose_portability.py"
+  },
+  {
+    "name": "ssh_audit: send the flag ssh-audit removed",
+    "file": "zebbern-kali/api/blueprints/tools.py",
+    "old": "    if scan_type == \"ssh1\":",
+    "new": "    if scan_type == \"__never__\":",
+    "tests": "tests/test_route_argument_wiring.py"
+  },
+  {
+    "name": "fuzz route: read the key the wrapper does not send",
+    "file": "zebbern-kali/api/blueprints/api_security.py",
+    "old": "    names = params.get(\"parameters\") or params.get(\"params\") or {}",
+    "new": "    names = params.get(\"params\") or {}",
+    "tests": "tests/test_route_argument_wiring.py"
+  }
+]
