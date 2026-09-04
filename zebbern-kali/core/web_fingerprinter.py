@@ -246,6 +246,14 @@ class WebFingerprinter:
                 if h in headers:
                     detected["headers_of_interest"][h] = headers[h]
             
+            # server is only set above when the signature matched one of
+            # apache/nginx/iis/tomcat, so anything else -- openresty, caddy,
+            # lighttpd, a CDN -- left it null while the Server header sat in
+            # headers_of_interest saying exactly what it was. Reporting null
+            # next to the answer is worse than not having the field.
+            if not detected.get("server") and "server" in headers:
+                detected["server"] = headers["server"]
+            
             # Deep scan - check for common paths
             if deep_scan:
                 common_paths = [
@@ -356,8 +364,13 @@ class WebFingerprinter:
                                 wafs_detected.append(waf)
                                 break
             
-            # Try wafw00f if available
+            # Try wafw00f if available. A bare None used to mean any of "not
+            # installed", "timed out" and "ran and exited non-zero", and the
+            # image has no wafw00f -- so the only real WAF detector never ran
+            # and nothing said so. Combined with waf_present, that read as
+            # "there is no WAF here" on a header heuristic alone.
             wafw00f_result = None
+            wafw00f_status = "ok"
             try:
                 result = subprocess.run(
                     ["wafw00f", "-a", url],
@@ -367,16 +380,36 @@ class WebFingerprinter:
                 )
                 if result.returncode == 0:
                     wafw00f_result = result.stdout
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                pass
+                else:
+                    wafw00f_status = f"exit {result.returncode}"
+            except FileNotFoundError:
+                wafw00f_status = "not_installed"
+            except subprocess.TimeoutExpired:
+                wafw00f_status = "timed_out"
             
-            return {
+            header_hit = len(wafs_detected) > 0
+            methods = ["header_signatures"]
+            if wafw00f_result is not None:
+                methods.append("wafw00f")
+            
+            reply = {
                 "success": True,
                 "url": url,
                 "wafs_detected": list(set(wafs_detected)),
-                "waf_present": len(wafs_detected) > 0,
-                "wafw00f": wafw00f_result
+                # Only ever a statement about what was looked for. Absence of a
+                # header signature is not absence of a WAF.
+                "waf_present": header_hit,
+                "detection_methods": methods,
+                "wafw00f": wafw00f_result,
+                "wafw00f_status": wafw00f_status,
             }
+            if not header_hit and wafw00f_result is None:
+                reply["note"] = (
+                    f"Only header signatures were checked (wafw00f: "
+                    f"{wafw00f_status}), so waf_present: false means no "
+                    "signature was seen -- not that the target has no WAF."
+                )
+            return reply
             
         except Exception as e:
             logger.error(f"WAF detection failed: {e}")

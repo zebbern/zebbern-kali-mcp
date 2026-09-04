@@ -208,5 +208,40 @@
     "old": "        username: str = \"\", password: str = \"\", userlist: str = \"\",",
     "new": "        username: str = \"\", userlist: str = \"\",",
     "tests": "tests/test_ad_tool_claims.py"
+  },
+  {
+    "name": "waf: swallow a missing wafw00f again",
+    "file": "zebbern-kali/core/web_fingerprinter.py",
+    "old": "            except FileNotFoundError:\n                wafw00f_status = \"not_installed\"",
+    "new": "            except FileNotFoundError:\n                wafw00f_status = \"ok\"",
+    "tests": "tests/test_reporting_honesty.py"
+  },
+  {
+    "name": "waf: drop the note qualifying a negative",
+    "file": "zebbern-kali/core/web_fingerprinter.py",
+    "old": "            if not header_hit and wafw00f_result is None:",
+    "new": "            if False:",
+    "tests": "tests/test_reporting_honesty.py"
+  },
+  {
+    "name": "fingerprint: stop falling back to the Server header",
+    "file": "zebbern-kali/core/web_fingerprinter.py",
+    "old": "            if not detected.get(\"server\") and \"server\" in headers:",
+    "new": "            if False:",
+    "tests": "tests/test_reporting_honesty.py"
+  },
+  {
+    "name": "parse: report success alongside a parse error again",
+    "file": "mcp_tools/output_parser.py",
+    "old": "        if parse_error:",
+    "new": "        if False:",
+    "tests": "tests/test_reporting_honesty.py"
+  },
+  {
+    "name": "parse: accept any output_format again",
+    "file": "mcp_tools/output_parser.py",
+    "old": "        if output_format not in known_formats:",
+    "new": "        if False:",
+    "tests": "tests/test_reporting_honesty.py"
   }
 ]
