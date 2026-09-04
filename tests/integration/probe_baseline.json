@@ -1,407 +1,410 @@
 {
- "ad_asreproast": {
-  "status": "REPORTED"
- },
- "ad_bloodhound_collect": {
-  "status": "REPORTED"
- },
- "ad_kerberoast": {
-  "status": "REPORTED"
- },
- "ad_ldap_enum": {
-  "status": "REPORTED"
- },
- "ad_password_spray": {
-  "status": "REPORTED"
- },
- "ad_psexec": {
-  "status": "REPORTED"
- },
- "ad_secretsdump": {
-  "status": "REPORTED"
- },
- "ad_smb_enum": {
-  "status": "OK"
- },
- "ad_tools_status": {
-  "status": "OK"
- },
- "ad_wmiexec": {
-  "status": "REPORTED"
- },
- "api_auth_bypass_test": {
-  "status": "OK"
- },
- "api_ffuf_fuzz": {
-  "status": "OK"
- },
- "api_fuzz_endpoint": {
-  "status": "OK"
- },
- "api_graphql_fuzz": {
-  "status": "REPORTED"
- },
- "api_graphql_introspect": {
-  "status": "REPORTED"
- },
- "api_jwt_analyze": {
-  "status": "OK"
- },
- "api_jwt_crack": {
-  "status": "OK"
- },
- "api_kiterunner_scan": {
-  "status": "REPORTED"
- },
- "api_newman_run": {
-  "status": "REPORTED"
- },
- "api_nuclei_scan": {
-  "status": "OK"
- },
- "api_rate_limit_test": {
-  "status": "OK"
- },
- "callback_check": {
-  "status": "OK"
- },
- "callback_clear": {
-  "status": "OK"
- },
- "callback_generate": {
-  "status": "OK"
- },
- "callback_latest": {
-  "status": "REPORTED"
- },
- "callback_list": {
-  "status": "OK"
- },
- "callback_start": {
-  "status": "OK"
- },
- "callback_status": {
-  "status": "OK"
- },
- "callback_stop": {
-  "status": "OK"
- },
- "callback_wait": {
-  "status": "REPORTED"
- },
- "ctf_connect": {
-  "status": "REPORTED"
- },
- "ctf_download_file": {
-  "status": "REPORTED"
- },
- "ctf_get_challenge": {
-  "status": "REPORTED"
- },
- "ctf_list_challenges": {
-  "status": "REPORTED"
- },
- "ctf_scoreboard": {
-  "status": "REPORTED"
- },
- "ctf_status": {
-  "status": "OK"
- },
- "ctf_submit_flag": {
-  "status": "REPORTED"
- },
- "cve_package_audit": {
-  "best_effort": true,
-  "status": "REPORTED"
- },
- "cve_search": {
-  "best_effort": true,
-  "status": "REPORTED"
- },
- "exec_stream": {
-  "status": "OK"
- },
- "exploit_copy": {
-  "status": "OK"
- },
- "exploit_details": {
-  "status": "REPORTED"
- },
- "exploit_search": {
-  "status": "OK"
- },
- "exploit_suggest_for_service": {
-  "status": "OK"
- },
- "exploit_suggest_from_nmap": {
-  "status": "OK"
- },
- "fingerprint_headers": {
-  "status": "OK"
- },
- "fingerprint_url": {
-  "status": "OK"
- },
- "fingerprint_waf": {
-  "status": "OK"
- },
- "health": {
-  "status": "REPORTED"
- },
- "hosts_add": {
-  "status": "OK"
- },
- "hosts_clear": {
-  "status": "OK"
- },
- "hosts_list": {
-  "status": "OK"
- },
- "hosts_remove": {
-  "status": "OK"
- },
- "job_cancel": {
-  "status": "REPORTED"
- },
- "job_list": {
-  "status": "OK"
- },
- "job_output": {
-  "status": "REPORTED"
- },
- "job_status": {
-  "status": "REPORTED"
- },
- "kali_download": {
-  "status": "OK"
- },
- "kali_upload": {
-  "status": "OK"
- },
- "msf_session_create": {
-  "status": "OK"
- },
- "msf_session_destroy": {
-  "status": "REPORTED"
- },
- "msf_session_destroy_all": {
-  "status": "OK"
- },
- "msf_session_execute": {
-  "status": "REPORTED"
- },
- "msf_session_list": {
-  "status": "OK"
- },
- "parse_tool_output": {
-  "status": "OK"
- },
- "payload_generate": {
-  "status": "OK"
- },
- "payload_host_start": {
-  "status": "OK"
- },
- "payload_host_stop": {
-  "status": "OK"
- },
- "payload_list": {
-  "status": "OK"
- },
- "payload_one_liner": {
-  "status": "OK"
- },
- "payload_templates": {
-  "status": "OK"
- },
- "pivot_add_pivot": {
-  "status": "REPORTED"
- },
- "pivot_chisel_client": {
-  "status": "OK"
- },
- "pivot_chisel_server": {
-  "status": "OK"
- },
- "pivot_generate_proxychains": {
-  "status": "OK"
- },
- "pivot_ligolo_start": {
-  "status": "REPORTED"
- },
- "pivot_list_pivots": {
-  "status": "OK"
- },
- "pivot_list_tunnels": {
-  "status": "OK"
- },
- "pivot_socat_forward": {
-  "status": "OK"
- },
- "pivot_ssh_dynamic": {
-  "status": "REPORTED"
- },
- "pivot_ssh_local": {
-  "status": "REPORTED"
- },
- "pivot_ssh_remote": {
-  "status": "REPORTED"
- },
- "pivot_stop_all_tunnels": {
-  "status": "OK"
- },
- "pivot_stop_tunnel": {
-  "status": "REPORTED"
- },
- "read_output": {
-  "status": "REPORTED"
- },
- "reverse_shell_command": {
-  "status": "REPORTED"
- },
- "reverse_shell_download_content": {
-  "status": "REPORTED"
- },
- "reverse_shell_generate_payload": {
-  "status": "OK"
- },
- "reverse_shell_listener_start": {
-  "status": "OK"
- },
- "reverse_shell_send_payload": {
-  "status": "REPORTED"
- },
- "reverse_shell_status": {
-  "status": "OK"
- },
- "reverse_shell_stop": {
-  "status": "REPORTED"
- },
- "reverse_shell_upload_content": {
-  "status": "REPORTED"
- },
- "send_input": {
-  "status": "REPORTED"
- },
- "ssh_estimate_transfer": {
-  "status": "OK"
- },
- "ssh_session_command": {
-  "status": "REPORTED"
- },
- "ssh_session_download_content": {
-  "status": "REPORTED"
- },
- "ssh_session_start": {
-  "status": "REPORTED"
- },
- "ssh_session_status": {
-  "status": "REPORTED"
- },
- "ssh_session_stop": {
-  "status": "REPORTED"
- },
- "ssh_session_upload_content": {
-  "status": "REPORTED"
- },
- "ssh_sessions": {
-  "status": "OK"
- },
- "system_network_info": {
-  "status": "OK"
- },
- "target_download_file": {
-  "status": "REPORTED"
- },
- "target_upload_file": {
-  "status": "REPORTED"
- },
- "tools_amass": {
-  "best_effort": true,
-  "status": "OK"
- },
- "tools_arjun": {
-  "status": "OK"
- },
- "tools_assetfinder": {
-  "best_effort": true,
-  "status": "OK"
- },
- "tools_byp4xx": {
-  "status": "OK"
- },
- "tools_crtsh": {
-  "best_effort": true,
-  "status": "OK"
- },
- "tools_enum4linux": {
-  "status": "OK"
- },
- "tools_fierce": {
-  "best_effort": true,
-  "status": "OK"
- },
- "tools_gobuster": {
-  "status": "OK"
- },
- "tools_gowitness": {
-  "status": "OK"
- },
- "tools_httpx": {
-  "status": "OK"
- },
- "tools_hydra": {
-  "status": "OK"
- },
- "tools_john": {
-  "status": "OK"
- },
- "tools_katana": {
-  "status": "OK"
- },
- "tools_masscan": {
-  "status": "OK"
- },
- "tools_nikto": {
-  "status": "OK"
- },
- "tools_nmap": {
-  "status": "OK"
- },
- "tools_sqlmap": {
-  "status": "OK"
- },
- "tools_ssh_audit": {
-  "status": "OK"
- },
- "tools_sslscan": {
-  "status": "OK"
- },
- "tools_subfinder": {
-  "best_effort": true,
-  "status": "OK"
- },
- "tools_subzy": {
-  "best_effort": true,
-  "status": "OK"
- },
- "tools_waybackurls": {
-  "best_effort": true,
-  "status": "OK"
- },
- "tools_wpscan": {
-  "status": "OK"
- },
- "vpn_connect": {
-  "status": "REPORTED"
- },
- "vpn_disconnect": {
-  "status": "REPORTED"
- },
- "vpn_status": {
-  "status": "OK"
- },
- "zebbern_exec": {
-  "status": "OK"
- }
+  "ad_asreproast": {
+    "status": "REPORTED"
+  },
+  "ad_bloodhound_collect": {
+    "status": "REPORTED"
+  },
+  "ad_kerberoast": {
+    "status": "REPORTED"
+  },
+  "ad_ldap_enum": {
+    "status": "REPORTED"
+  },
+  "ad_password_spray": {
+    "status": "REPORTED"
+  },
+  "ad_psexec": {
+    "status": "REPORTED"
+  },
+  "ad_secretsdump": {
+    "status": "REPORTED"
+  },
+  "ad_smb_enum": {
+    "status": "REPORTED"
+  },
+  "ad_tools_status": {
+    "status": "OK"
+  },
+  "ad_wmiexec": {
+    "status": "REPORTED"
+  },
+  "api_auth_bypass_test": {
+    "status": "OK"
+  },
+  "api_ffuf_fuzz": {
+    "status": "OK"
+  },
+  "api_fuzz_endpoint": {
+    "status": "OK"
+  },
+  "api_graphql_fuzz": {
+    "status": "REPORTED"
+  },
+  "api_graphql_introspect": {
+    "status": "REPORTED"
+  },
+  "api_jwt_analyze": {
+    "status": "OK"
+  },
+  "api_jwt_crack": {
+    "status": "OK"
+  },
+  "api_kiterunner_scan": {
+    "status": "REPORTED"
+  },
+  "api_newman_run": {
+    "status": "REPORTED"
+  },
+  "api_nuclei_scan": {
+    "status": "OK"
+  },
+  "api_rate_limit_test": {
+    "status": "OK"
+  },
+  "callback_check": {
+    "status": "OK"
+  },
+  "callback_clear": {
+    "status": "OK"
+  },
+  "callback_generate": {
+    "status": "OK"
+  },
+  "callback_latest": {
+    "status": "REPORTED"
+  },
+  "callback_list": {
+    "status": "OK"
+  },
+  "callback_start": {
+    "status": "OK"
+  },
+  "callback_status": {
+    "status": "OK"
+  },
+  "callback_stop": {
+    "status": "OK"
+  },
+  "callback_wait": {
+    "status": "REPORTED"
+  },
+  "ctf_connect": {
+    "status": "REPORTED"
+  },
+  "ctf_download_file": {
+    "status": "REPORTED"
+  },
+  "ctf_get_challenge": {
+    "status": "REPORTED"
+  },
+  "ctf_list_challenges": {
+    "status": "REPORTED"
+  },
+  "ctf_scoreboard": {
+    "status": "REPORTED"
+  },
+  "ctf_status": {
+    "status": "OK"
+  },
+  "ctf_submit_flag": {
+    "status": "REPORTED"
+  },
+  "cve_package_audit": {
+    "status": "REPORTED",
+    "best_effort": true
+  },
+  "cve_search": {
+    "status": "REPORTED",
+    "best_effort": true
+  },
+  "exec_stream": {
+    "status": "OK"
+  },
+  "exploit_copy": {
+    "status": "OK"
+  },
+  "exploit_details": {
+    "status": "OK"
+  },
+  "exploit_search": {
+    "status": "OK"
+  },
+  "exploit_suggest_for_service": {
+    "status": "OK"
+  },
+  "exploit_suggest_from_nmap": {
+    "status": "OK"
+  },
+  "fingerprint_headers": {
+    "status": "OK"
+  },
+  "fingerprint_url": {
+    "status": "OK"
+  },
+  "fingerprint_waf": {
+    "status": "OK"
+  },
+  "health": {
+    "status": "REPORTED"
+  },
+  "hosts_add": {
+    "status": "OK"
+  },
+  "hosts_clear": {
+    "status": "OK"
+  },
+  "hosts_list": {
+    "status": "OK"
+  },
+  "hosts_remove": {
+    "status": "OK"
+  },
+  "job_cancel": {
+    "status": "REPORTED"
+  },
+  "job_list": {
+    "status": "OK"
+  },
+  "job_output": {
+    "status": "REPORTED"
+  },
+  "job_status": {
+    "status": "REPORTED"
+  },
+  "kali_download": {
+    "status": "OK"
+  },
+  "kali_upload": {
+    "status": "OK"
+  },
+  "msf_session_create": {
+    "status": "OK"
+  },
+  "msf_session_destroy": {
+    "status": "REPORTED"
+  },
+  "msf_session_destroy_all": {
+    "status": "OK"
+  },
+  "msf_session_execute": {
+    "status": "REPORTED"
+  },
+  "msf_session_list": {
+    "status": "OK"
+  },
+  "parse_tool_output": {
+    "status": "OK"
+  },
+  "payload_generate": {
+    "status": "OK"
+  },
+  "payload_host_start": {
+    "status": "OK"
+  },
+  "payload_host_stop": {
+    "status": "OK"
+  },
+  "payload_list": {
+    "status": "OK"
+  },
+  "payload_one_liner": {
+    "status": "OK"
+  },
+  "payload_templates": {
+    "status": "OK"
+  },
+  "pivot_add_pivot": {
+    "status": "OK"
+  },
+  "pivot_chisel_client": {
+    "status": "OK"
+  },
+  "pivot_chisel_server": {
+    "status": "OK"
+  },
+  "pivot_generate_proxychains": {
+    "status": "OK"
+  },
+  "pivot_ligolo_start": {
+    "status": "REPORTED"
+  },
+  "pivot_list_pivots": {
+    "status": "OK"
+  },
+  "pivot_list_tunnels": {
+    "status": "OK"
+  },
+  "pivot_remove": {
+    "status": "REPORTED"
+  },
+  "pivot_socat_forward": {
+    "status": "OK"
+  },
+  "pivot_ssh_dynamic": {
+    "status": "REPORTED"
+  },
+  "pivot_ssh_local": {
+    "status": "REPORTED"
+  },
+  "pivot_ssh_remote": {
+    "status": "REPORTED"
+  },
+  "pivot_stop_all_tunnels": {
+    "status": "OK"
+  },
+  "pivot_stop_tunnel": {
+    "status": "REPORTED"
+  },
+  "read_output": {
+    "status": "REPORTED"
+  },
+  "reverse_shell_command": {
+    "status": "REPORTED"
+  },
+  "reverse_shell_download_content": {
+    "status": "REPORTED"
+  },
+  "reverse_shell_generate_payload": {
+    "status": "OK"
+  },
+  "reverse_shell_listener_start": {
+    "status": "OK"
+  },
+  "reverse_shell_send_payload": {
+    "status": "REPORTED"
+  },
+  "reverse_shell_status": {
+    "status": "OK"
+  },
+  "reverse_shell_stop": {
+    "status": "REPORTED"
+  },
+  "reverse_shell_upload_content": {
+    "status": "REPORTED"
+  },
+  "send_input": {
+    "status": "REPORTED"
+  },
+  "ssh_estimate_transfer": {
+    "status": "OK"
+  },
+  "ssh_session_command": {
+    "status": "REPORTED"
+  },
+  "ssh_session_download_content": {
+    "status": "REPORTED"
+  },
+  "ssh_session_start": {
+    "status": "REPORTED"
+  },
+  "ssh_session_status": {
+    "status": "REPORTED"
+  },
+  "ssh_session_stop": {
+    "status": "REPORTED"
+  },
+  "ssh_session_upload_content": {
+    "status": "REPORTED"
+  },
+  "ssh_sessions": {
+    "status": "OK"
+  },
+  "system_network_info": {
+    "status": "OK"
+  },
+  "target_download_file": {
+    "status": "REPORTED"
+  },
+  "target_upload_file": {
+    "status": "REPORTED"
+  },
+  "tools_amass": {
+    "status": "OK",
+    "best_effort": true
+  },
+  "tools_arjun": {
+    "status": "OK"
+  },
+  "tools_assetfinder": {
+    "status": "OK",
+    "best_effort": true
+  },
+  "tools_byp4xx": {
+    "status": "OK"
+  },
+  "tools_crtsh": {
+    "status": "OK",
+    "best_effort": true
+  },
+  "tools_enum4linux": {
+    "status": "OK"
+  },
+  "tools_fierce": {
+    "status": "OK",
+    "best_effort": true
+  },
+  "tools_gobuster": {
+    "status": "OK"
+  },
+  "tools_gowitness": {
+    "status": "OK"
+  },
+  "tools_httpx": {
+    "status": "OK"
+  },
+  "tools_hydra": {
+    "status": "OK"
+  },
+  "tools_john": {
+    "status": "OK"
+  },
+  "tools_katana": {
+    "status": "OK"
+  },
+  "tools_masscan": {
+    "status": "OK"
+  },
+  "tools_nikto": {
+    "status": "OK"
+  },
+  "tools_nmap": {
+    "status": "OK"
+  },
+  "tools_sqlmap": {
+    "status": "OK"
+  },
+  "tools_ssh_audit": {
+    "status": "OK"
+  },
+  "tools_sslscan": {
+    "status": "OK"
+  },
+  "tools_subfinder": {
+    "status": "OK",
+    "best_effort": true
+  },
+  "tools_subzy": {
+    "status": "OK",
+    "best_effort": true
+  },
+  "tools_waybackurls": {
+    "status": "OK",
+    "best_effort": true
+  },
+  "tools_wpscan": {
+    "status": "OK"
+  },
+  "vpn_connect": {
+    "status": "REPORTED"
+  },
+  "vpn_disconnect": {
+    "status": "REPORTED"
+  },
+  "vpn_status": {
+    "status": "OK"
+  },
+  "zebbern_exec": {
+    "status": "OK"
+  }
 }
