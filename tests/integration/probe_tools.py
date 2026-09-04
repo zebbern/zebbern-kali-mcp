@@ -139,7 +139,14 @@ CASES = [
     # --- pivots (start, inspect, then tear down) ----------------------------
     ("pivot_list_tunnels", {}),
     ("pivot_list_pivots", {}),
-    ("pivot_add_pivot", {"name": "probe", "pivot_host": "127.0.0.1"}),
+    # subnet is required: the wrapper used to default it to "" and the route
+    # answered 400 on every such call, so omitting it here is now a schema
+    # error rather than a tool result.
+    ("pivot_add_pivot", {"name": "probe", "pivot_host": "127.0.0.1",
+                        "subnet": "10.255.255.0/24"}),
+    # Removing a pivot the probe cannot know the id of, so this exercises
+    # the not-found path rather than deleting the one just added.
+    ("pivot_remove", {"pivot_id": "pivot-missing"}),
     ("pivot_generate_proxychains", {}),
     ("pivot_socat_forward", {"listen_port": 19001, "target_host": "127.0.0.1", "target_port": 8888}),
     ("pivot_ssh_local", {"ssh_host": "127.0.0.1", "local_port": 19002, "remote_host": "127.0.0.1", "remote_port": 80}),
