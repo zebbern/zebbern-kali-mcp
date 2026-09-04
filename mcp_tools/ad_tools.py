@@ -82,20 +82,27 @@ def register(mcp: FastMCP, kali_client) -> None:
     @mcp.tool()
     def ad_asreproast(
         domain: str, dc_ip: str = "",
-        username: str = "", userlist: str = "",
+        username: str = "", password: str = "", userlist: str = "",
     ) -> Dict[str, Any]:
         """
         Perform AS-REP Roasting to get hashes for accounts with pre-auth disabled.
 
+        Works unauthenticated against a userlist, which is the usual case. To
+        enumerate the domain's own accounts instead, supply BOTH username and
+        password -- the backend only authenticates when it has the pair, so a
+        username on its own is silently ignored and the roast runs anonymously.
+
         Args:
             domain: AD domain
             dc_ip: Domain Controller IP
-            username: Specific username to test
-            userlist: Path to username list file on Kali
+            username: Username to authenticate as. Needs `password` too.
+            password: Password for `username`. Without it the run is anonymous.
+            userlist: Path to username list file on Kali, for the
+                unauthenticated case.
         """
         data = {
             "domain": domain, "dc_ip": dc_ip,
-            "username": username, "userlist": userlist,
+            "username": username, "password": password, "userlist": userlist,
         }
         return kali_client.safe_post("api/ad/asreproast", data)
 

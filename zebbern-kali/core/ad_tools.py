@@ -39,6 +39,21 @@ SPRAY_TIMEOUT_FLOOR = 300
 SPRAY_TIMEOUT_CEILING = 86400  # 24h, matching the longest TOOL_TIMEOUTS entry
 
 
+def _is_real_hit(line: str) -> bool:
+    """Whether a netexec line is a credential rather than a guest mapping.
+
+    netexec marks a guest-mapped login [+] like any other success, and this
+    used to take every [+] as valid. Against a host with "map to guest =
+    Bad User" -- which accepts any username and password -- a three-name
+    spray came back reporting three valid domain credentials, every line
+    ending in "(Guest)". Inventing credentials is the worst answer this
+    tool can give, so the marker decides.
+    """
+    if "[+]" not in line and "Pwn3d" not in line:
+        return False
+    lowered = line.lower()
+    return not ("(guest)" in lowered or "[-]" in lowered)
+
 class ADTools:
     """Active Directory penetration testing toolkit"""
 
@@ -140,10 +155,25 @@ class ADTools:
                 cmd, capture_output=True, text=True, timeout=timeout
             )
 
+            # impacket scripts exit 0 when they could not connect at all,
+            # printing the reason to stdout as "[-] ...". Measured:
+            #   GetUserSPNs  exit=0  [-] [Errno Connection error (...:389)]
+            #   secretsdump  exit=0  [-] RemoteOperations failed: DCERPC ...
+            # so returncode alone let an unreachable DC come back as a
+            # successful run that found nothing. Surface the lines and let
+            # each caller decide, since some are warnings alongside real
+            # output rather than failures.
+            stdout = result.stdout or ""
+            tool_errors = [
+                line.strip() for line in stdout.splitlines()
+                if line.strip().startswith("[-]")
+            ]
+
             return {
                 "success": result.returncode == 0,
-                "stdout": result.stdout,
+                "stdout": stdout,
                 "stderr": result.stderr,
+                "tool_errors": tool_errors,
                 "command": render_command(cmd)
             }
         except subprocess.TimeoutExpired:
@@ -300,6 +330,25 @@ class ADTools:
                 with open(output_file, 'w') as f:
                     f.write(output)
 
+                # Same as kerberoast: impacket exits 0 having failed to
+                # connect, so an empty dump plus an error line means nothing
+                # was dumped -- not that the target holds no secrets.
+                tool_errors = result.get("tool_errors") or []
+                nothing_found = not (sam_hashes or ntds_hashes
+                                     or cached_creds or lsa_secrets)
+                if nothing_found and tool_errors:
+                    return {
+                        "success": False,
+                        "target": target,
+                        "error": (
+                            "secretsdump reported an error and recovered nothing, "
+                            "so no dump took place: " + "; ".join(tool_errors[:3])
+                        ),
+                        "tool_errors": tool_errors,
+                        "ntds_total": 0,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+
                 return {
                     "success": True,
                     "target": target,
@@ -372,6 +421,25 @@ class ADTools:
                                 "user": parts[0] if parts else "",
                                 "spn": parts[1] if len(parts) > 1 else ""
                             })
+
+                # Nothing found AND impacket complained means it never
+                # reached the DC. Reporting that as a clean roast of a domain
+                # with no kerberoastable accounts is a finding invented out of
+                # a connection error.
+                tool_errors = result.get("tool_errors") or []
+                if not spns and not hashes and tool_errors:
+                    return {
+                        "success": False,
+                        "domain": domain,
+                        "error": (
+                            "GetUserSPNs reported an error and returned no SPNs, "
+                            "so nothing was enumerated: " + "; ".join(tool_errors[:3])
+                        ),
+                        "tool_errors": tool_errors,
+                        "spns_found": 0,
+                        "hashes_obtained": 0,
+                        "timestamp": datetime.now().isoformat(),
+                    }
 
                 return {
                     "success": True,
@@ -529,9 +597,12 @@ class ADTools:
             if hashes:
                 args.extend(["-hashes", hashes])
 
-            # For single command execution
+            # impacket takes the command as a POSITIONAL argument. This
+            # sent it as -c, which wmiexec.py rejects outright:
+            #   error: ambiguous option: -c could match -codec, -com-version
+            # so ad_wmiexec could never execute anything at all.
             if command and command not in ["cmd.exe", "powershell.exe"]:
-                args.extend(["-c", command])
+                args.append(command)
 
             result = self._run_impacket(method, args, timeout=120)
 
@@ -746,7 +817,7 @@ class ADTools:
 
                     # Parse output for successful logins
                     for line in safe_output.split('\n'):
-                        if "[+]" in line or "Pwn3d" in line:
+                        if _is_real_hit(line):
                             valid_creds.append({
                                 "line": line.strip(),
                                 "success": True
@@ -771,7 +842,7 @@ class ADTools:
                     if isinstance(partial, bytes):
                         partial = partial.decode("utf-8", errors="replace")
                     for line in partial.split('\n'):
-                        if "[+]" in line or "Pwn3d" in line:
+                        if _is_real_hit(line):
                             valid_creds.append({"line": line.strip(), "success": True})
                     logger.warning(
                         f"Password spray timed out after {spray_timeout}s; not "
@@ -880,7 +951,13 @@ class ADTools:
                 "success": True,
                 "target": target,
                 "shares": [],
-                "null_session": False
+                # Whether an anonymous session was ATTEMPTED. This used to be
+                # the only null_session field, set from the auth mode before
+                # smbclient ran, so a host with nothing listening on 445 came
+                # back with null_session: true -- which reads as "anonymous
+                # access is allowed", a security claim made without evidence.
+                "null_session_attempted": False,
+                "null_session": False,
             }
 
             # Build auth string
@@ -890,7 +967,7 @@ class ADTools:
                 auth = f"--pw-nt-hash -U '{username}%{hashes.split(':')[1]}'"
             else:
                 auth = "-N"  # Null session
-                results["null_session"] = True
+                results["null_session_attempted"] = True
 
             # List shares
             cmd = f"smbclient -L //{target} {auth}"
@@ -899,6 +976,21 @@ class ADTools:
                 result = subprocess.run(
                     cmd, shell=True, capture_output=True, text=True, timeout=30
                 )
+
+                # success was hardcoded True and the return code never read, so
+                # an unreachable host reported a clean enumeration of no shares
+                # rather than a failure to connect.
+                if result.returncode != 0:
+                    results["success"] = False
+                    results["error"] = (
+                        (result.stderr or result.stdout).strip()[:500]
+                        or f"smbclient exited {result.returncode}"
+                    )
+                    results["return_code"] = result.returncode
+                elif results["null_session_attempted"]:
+                    # smbclient connected anonymously and listed shares, so the
+                    # anonymous session is a fact rather than an intention.
+                    results["null_session"] = True
 
                 for line in result.stdout.split('\n'):
                     # Parse share lines

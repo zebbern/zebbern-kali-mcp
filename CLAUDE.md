@@ -466,9 +466,49 @@ So: call the tool, read the reply, and check it says what that tool should
 say. One call, one output. `success: true` is the least informative field in
 it.
 
-`ad_*`, `ctf_*` and `vpn_*` (20 tools) are **UNEXECUTED**, not passing: there
-is no AD domain, CTF platform or VPN peer here. Recording them green would be
-the probe failure above, in person.
+## Check that a guard fails when you break the thing
+
+A test written alongside a fix passes whether or not it tests the fix. Prove
+it fails when the fix is reverted:
+
+```bash
+.venv/Scripts/python.exe scripts/mutation_check.py --spec tests/mutations.json \
+    --python .venv/Scripts/python.exe
+```
+
+Do not do this by hand with `str.replace`. It was done that way three times in
+one session and silently matched nothing every time -- a CRLF file against an
+LF needle, an escaped backslash mangled by a heredoc, a comment containing the
+same words as the code. The tests passed, and "mutation-checked red" went into
+a commit message for a guard that had never been exercised.
+
+The script refuses to call that a pass: it requires the target text to occur
+exactly the expected number of times, the file to change on disk, the result
+to still parse, the tests to fail, and the file to be restored byte-for-byte.
+A mutation that cannot be applied is the loudest outcome, because that is the
+case that used to look like success.
+
+It has already earned this. Run across the guards written in one sweep, 22 of
+26 verified and four did not: three anchors that silently matched nothing, and
+one guard that genuinely did not catch its mutation -- `exploit_copy`'s
+post-copy file check, which the by-hand run had appeared to cover because it
+mutated two things at once and the other one carried the test.
+
+Add a mutation to `tests/mutations.json` whenever you add a guard.
+
+**Check whether a family is really untestable before writing it off.** `ctf_*`
+was recorded as unexecutable next to `ad_*` and `vpn_*` and is nothing of the
+sort -- it is an HTTP client for the CTFd v1 API, so a mock CTFd exercises all
+seven tools including both submit_flag outcomes and a byte-identical file
+download. They came back clean. Re-checking the rest on the strength of that
+found the `ad_smb_enum` bug below, so the cost of the wrong assumption was a
+real defect left in place.
+
+Genuinely unexecutable here: the `ad_*` attack tools, which need a live domain
+controller, and `vpn_connect`, which needs a peer. Their status and
+failure paths are still testable, and that is where `ad_smb_enum` was caught
+returning `success: true, null_session: true` against a host running no SMB --
+a security claim asserted from the auth mode chosen rather than any result.
 `probe_tools.py` is the only thing that exercises the whole 133-tool surface.
 It calls each tool once and compares the outcome against
 `tests/integration/probe_baseline.json`, so a run prints only what changed.
