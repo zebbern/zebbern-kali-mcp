@@ -3,12 +3,114 @@
 import importlib.metadata
 import json
 import logging
+import re
 from typing import Dict, Any
 
 import requests
 from mcp.server.fastmcp import FastMCP
 
+from ._autopromote import run_promotable
+
 logger = logging.getLogger(__name__)
+
+# A negative return_code is a signal number, not an exit status. Only these
+# three are worth naming; anything else falls through unannotated rather than
+# guessing.
+_SIGNAL_EXITS = {-15: "SIGTERM", -9: "SIGKILL", -2: "SIGINT"}
+
+# Commands that choose their victims INDIRECTLY -- by pattern, by process name,
+# or by who holds a resource -- and so can reach the shell running them. Maps a
+# binary to the flag that turns on indirect selection, or None when it always
+# selects that way.
+#
+# `kill` is deliberately absent: it names PIDs, so it cannot self-match, and
+# attaching the hint to `kill -TERM 4567` blamed a self-match that never
+# happened on what is usually an outside kill. `pgrep` is absent too -- it kills
+# nothing on its own, and `pgrep -f x | xargs kill` carries no token this can
+# key on without guessing.
+_PATTERN_KILLERS = {
+    "pkill": ("f", "full"),     # -f matches the full argv, which holds this command
+    "fuser": ("k", "kill"),     # -k kills whoever holds the named file/port
+    "killall": None,            # always by process name, and ours is sh/bash
+}
+
+# Shell separators, so a flag in one segment cannot be credited to a binary in
+# another (`pkill nginx && echo -f` is not a `pkill -f`).
+_SEGMENT_SPLIT = re.compile(r"[;\n|&()]+")
+
+
+def _selects_processes_by_pattern(command: str) -> bool:
+    """True when *command* picks processes indirectly, so its own shell is a
+    candidate victim.
+
+    Token equality on the binary's basename, never a substring: `grep killer`,
+    `./skillall` and `nmap --script ssl-kill` are not kill commands, and the
+    substring test this replaced annotated all of them.
+    """
+    if not isinstance(command, str):
+        return False
+    for segment in _SEGMENT_SPLIT.split(command):
+        tokens = segment.split()
+        for index, token in enumerate(tokens):
+            flags = _PATTERN_KILLERS.get(token.rsplit("/", 1)[-1], False)
+            if flags is False:
+                continue  # not one of them (None is a real entry: always matches)
+            if flags is None:
+                return True
+            short, long_name = flags
+            for later in tokens[index + 1:]:
+                if later == f"--{long_name}":
+                    return True
+                # Bundled short flags (-fi), but only a clean flag token: a
+                # quote fragment out of `pkill 'foo -f bar'` is not a flag.
+                if re.fullmatch(rf"-[A-Za-z]*{short}[A-Za-z]*", later):
+                    return True
+    return False
+
+
+def _note_signal_exit(command: str, result: Any) -> None:
+    """Explain a signal exit that produced nothing. Additive, never rewriting.
+
+    A shell killed by a signal comes back as a negative ``return_code`` with
+    empty stdout/stderr and ``success: False`` -- field-for-field identical to a
+    command that ran and printed nothing. Naming the signal is the always-true
+    half and is unconditional.
+
+    What killed it is NOT observed here, so the note does not claim it. An
+    outside kill (``job_cancel``, the OOM killer, a stopped backend) looks
+    exactly the same, and the self-match clause is offered as a possibility only
+    for the commands that can actually self-match -- see ``_PATTERN_KILLERS``.
+
+    Nothing is dropped or rewritten -- stdout/stderr/return_code/success are
+    untouched and ``setdefault`` keeps the truncation note (mutually exclusive
+    anyway: that one requires output, this one requires none).
+    """
+    if not isinstance(result, dict):
+        return
+    if result.get("finished") is False:
+        return  # a still-running handoff has no exit yet
+    if result.get("timed_out"):
+        return  # the budget expired; -1 is that sentinel, not a signal
+    if result.get("stdout") or result.get("stderr"):
+        return  # there is output, so the exit is not the whole story
+    name = _SIGNAL_EXITS.get(result.get("return_code"))
+    if not name:
+        return
+    message = (
+        f"Process exited on signal {-result['return_code']} ({name}) and produced "
+        "no output. Nothing here observed what sent it: an outside kill looks the "
+        "same (job_cancel, the OOM killer, a stopped backend)."
+    )
+    if _selects_processes_by_pattern(command):
+        message += (
+            " One possibility to rule out, not a diagnosis: this command selects "
+            "processes indirectly rather than by PID, so the shell running it is "
+            "a candidate -- `pkill -f` matches that shell's own argv, which "
+            "contains the command text, `killall` matches its name (sh/bash), and "
+            "`fuser -k` kills whoever holds the named file or port. If that is "
+            "what happened, narrow the pattern or exclude this shell's own PID."
+        )
+    result.setdefault("note", message)
 
 
 def _client_version() -> str:
@@ -25,25 +127,55 @@ def register(mcp: FastMCP, kali_client) -> None:
     @mcp.tool()
     def zebbern_exec(command: str, timeout: int = 3600, cwd: str = "", background: bool = False) -> Dict[str, Any]:
         """
-        Execute ANY command on the Kali server without restrictions.
-        Full root access, no timeout limits (default 1 hour).
+        Execute ANY command on the Kali server with full root access.
+
+        This ALWAYS starts a background job first and then waits inline for it for
+        ~50s. That is not a limit on the command, it is what makes a long one
+        recoverable: the MCP harness abandons a tool call at roughly 60s, and
+        before this the abandoned foreground command kept running with nobody
+        listening and nothing on disk. Now every call is teed in full to the job
+        log, so an abort costs a poll, never the output.
 
         Args:
-            command: The command to execute (can be any shell command, pipes, chains, etc.)
-            timeout: Timeout in seconds (default: 3600 = 1 hour)
-            cwd: Optional working directory for the command
-            background: If True, return immediately with a trackable job_id
+            command: The command to execute (any shell command, pipes, chains, etc.)
+            timeout: Backstop seconds after which the JOB is terminated
+                (default: 3600 = 1 hour). It bounds the job, not this call, and
+                it is the operator's value -- the api/exec background branch does
+                not resolve it against the TOOL_TIMEOUTS table, so a
+                `hydra ...` run here is bounded by this argument, not hydra's tier.
+            cwd: Optional working directory for the command. This is a per-process
+                cwd (Popen(cwd=...)), so it affects this command only. Left empty
+                the command inherits the backend's cwd, which is /root -- note
+                that Python there puts /root on sys.path and a stray /root/*.py
+                can shadow a stdlib module.
+            background: If True, skip the inline wait and return the job_id
+                immediately. Use it for anything you will drive yourself with
+                send_input / read_output, and for a run you do not want to wait on
+                at all.
 
         Returns:
-            Command output with stdout, stderr, return_code, execution_time.
-            When background=True, returns job_id, pid, and initial status instead.
+            Finished inside the wait: {success, finished: true, status, job_id,
+            stdout, stderr, events, return_code, timed_out, partial_results,
+            output_truncated, output_path}. Still running: {success: true,
+            finished: false, status: "running", job_id, partial_output,
+            output_path} -- drive it with job_status / job_output / job_cancel.
+            Check `finished` and `timed_out`, never `success`. A `note` is added
+            when a signal killed the command and it printed nothing: it names the
+            signal, which is observed, and does not claim what sent it.
         """
         data: Dict[str, Any] = {"command": command, "timeout": timeout}
         if cwd:
             data["cwd"] = cwd
-        if background:
-            data["background"] = True
-        return kali_client.safe_post("api/exec", data)
+        # heavy=False: this must not become a heavy_tool_post caller holding one of
+        # five semaphore slots. run_promotable sets background in the body itself
+        # and takes heavy/background explicitly, so zebbern_exec is deliberately
+        # absent from PROMOTED_TOOLS (that map is the fourteen tools_* wrappers).
+        result = run_promotable(
+            kali_client, "api/exec", data,
+            heavy=False, background=background,
+        )
+        _note_signal_exit(command, result)
+        return result
 
     @mcp.tool()
     def exec_stream(command: str, timeout: int = 3600) -> Dict[str, Any]:
@@ -258,7 +390,18 @@ def register(mcp: FastMCP, kali_client) -> None:
         Args:
             job_id: Identifier returned by zebbern_exec(background=True).
             timeout: Seconds to block waiting for new output (default: 0).
-            lines: Maximum recent lines to return (default: 100).
+                Bounded by the backend's JOB_OUTPUT_MAX_WAIT (default 30s),
+                which exists because the MCP harness abandons a tool call at
+                roughly 60s. A larger value is clamped, not rejected, and the
+                reply states what it actually did: `wait_timeout` is the wait
+                used, `wait_capped` says it was reduced, `max_output_wait` is
+                the bound. A backend older than that change answers 400
+                "timeout cannot exceed N seconds" instead -- the clamp ships in
+                the Docker image, this docstring on the wheel, and the two do
+                not land together.
+            lines: Maximum recent lines to return (default: 100). The window is
+                bounded, but nothing is lost: every byte is also teed to the
+                job's log, whose path comes back as `output_path`.
         """
         return kali_client.safe_get(
             f"api/jobs/{job_id}/output",
@@ -268,6 +411,14 @@ def register(mcp: FastMCP, kali_client) -> None:
     @mcp.tool()
     def job_cancel(job_id: str) -> Dict[str, Any]:
         """Cancel a running background job and its child process group.
+
+        Idempotent: cancelling a job that already finished is not an error. It
+        returns success with `canceled: false` and `already_terminal: true`,
+        and the job's own `status` tells you how it ended. Check `canceled`,
+        not `success` -- `canceled: true` means this call issued the kill, so
+        poll job_status for the terminal state rather than assuming it is
+        already reaped. A backend older than that change answers 409 "Job is
+        already succeeded" for the same call (image track; see job_output).
 
         Args:
             job_id: Identifier returned by zebbern_exec(background=True).
@@ -328,8 +479,14 @@ def register(mcp: FastMCP, kali_client) -> None:
         Args:
             session_id: The session identifier to read from.
             timeout: Maximum seconds the backend should wait for new output
-                     before returning (default: 5). Use a higher value for
-                     slow commands (e.g. nmap, compilation).
+                     before returning (default: 5). Bounded by the backend's
+                     JOB_OUTPUT_MAX_WAIT (default 30s), which keeps one poll
+                     under the ~60s MCP tool-call abort. A larger value is
+                     clamped rather than rejected, and the reply reports
+                     `wait_timeout` (what it waited for), `wait_capped` and
+                     `max_output_wait`; an older backend answers 400 instead.
+                     Waiting longer is not how you follow a slow scan -- poll
+                     repeatedly, or read the full log at `output_path`.
             lines: Maximum number of output lines to return (default: 100).
                    Older lines are trimmed first when the buffer exceeds this.
 

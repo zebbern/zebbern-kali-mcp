@@ -3,6 +3,10 @@ set -eo pipefail
 
 echo "[entrypoint] Kali MCP Server initializing..."
 
+# Give `docker cp` somewhere to land a VPN config when no host directory
+# is bind-mounted at /vpn. A no-op when compose has already mounted it.
+mkdir -p /vpn 2>/dev/null || true
+
 # --- Network Routes (Issue #1) ---
 # HTB_ROUTES: comma-separated CIDR ranges to route via the default gateway
 # Example: HTB_ROUTES=10.129.0.0/16,10.10.0.0/16

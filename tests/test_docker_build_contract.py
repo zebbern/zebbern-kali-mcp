@@ -911,3 +911,89 @@ def _workflow_push_paths(text: str) -> list[str]:
 def test_publication_workflow_owns_checkout_helper_changes():
     """Changes to copied Docker helper sources must trigger the publication workflow."""
     assert "docker/**" in _workflow_push_paths(_read(WORKFLOW))
+
+
+def test_image_preinstalls_aws_cloud_tooling():
+    """The cloud surface has to be in the image, not installed by hand on arrival.
+
+    `aws` and `import boto3` were both absent from the published image, so the
+    first cloud assessment began with an apt/pip detour inside the container --
+    work that is lost on every `docker compose up -d --force-recreate`, which
+    is routine here.
+
+    apt, deliberately, and not a venv: the backend and every Python tool run on
+    the system interpreter (`pip3 install --break-system-packages`), so a venv
+    would hide boto3 from exactly the interpreter `zebbern_exec python3` uses.
+    """
+    text = _read(DOCKERFILE)
+
+    assert "awscli" in text, "the image ships no aws CLI"
+    assert "python3-boto3" in text, "the image ships no boto3"
+
+    for block in _run_blocks(text):
+        if "python3-boto3" not in block and "awscli" not in block:
+            continue
+        assert "venv" not in block, (
+            "boto3/awscli must stay on the system interpreter; a venv hides them "
+            "from the backend and from zebbern_exec"
+        )
+
+
+def test_image_preinstalls_snmp_git_dumper_and_man_spider():
+    """Three primitives the tool surface does not cover, so the image must.
+
+    None of the three has a wrapper, and deliberately so -- they are binaries
+    reached through `zebbern_exec`, which auto-promotes a long run to a
+    background job.  That also means nothing but this file notices when one
+    falls out of the image, and the apt/pip detour to put it back is lost on
+    every `docker compose up -d --force-recreate`, which is routine here.
+
+    `snmp` is net-snmp's clients (`snmpwalk`, `snmpget`, `snmpbulkwalk`).  There
+    is no SNMP primitive anywhere in the 135-tool surface, so without them a
+    community string cannot be read at all.  `snmp-mibs-downloader` stays out:
+    it is non-free, and the package name is close enough to be added by
+    reflex, so the exclusion is asserted rather than remembered.
+
+    `git-dumper` reconstructs a repository from an exposed `.git` directory.
+    `core/web_fingerprinter.py` only HEAD-probes `/.git/` for existence -- it
+    reports the finding and nothing acts on it.
+
+    `man-spider` (the command is `manspider`) crawls SMB share file *content*
+    by keyword, regex or extension.  `ad_smb_enum` lists shares and tests
+    read/write access and never reads a byte of what is in them.
+
+    Both Python tools are pinned to an exact PyPI version for the same reason
+    every other input here is pinned: a rebuild must not silently consume
+    different code.  `snmp` is pinned by the base-image digest.
+
+    apt and pip3 on the system interpreter, deliberately, and not a venv --
+    same reason as the aws/boto3 contract above.
+    """
+    text = _read(DOCKERFILE)
+    blocks = _run_blocks(text)
+    installed = {
+        token for block in blocks for command in _shell_commands(block) for token in command
+    }
+
+    assert "snmp" in installed, (
+        "the image ships no SNMP client; a name that merely starts with snmp "
+        "(snmpd, snmptrapd) is a different package and carries no snmpwalk"
+    )
+    assert "snmp-mibs-downloader" not in installed, (
+        "snmp-mibs-downloader is non-free and must not enter the image"
+    )
+
+    assert "pipx install git-dumper==1.0.9" in text, (
+        "git-dumper must be installed at its pinned version"
+    )
+    assert "man-spider==2.0.0" in text, (
+        "man-spider must be installed at its pinned version"
+    )
+
+    for block in blocks:
+        if "man-spider==2.0.0" not in block:
+            continue
+        assert "--break-system-packages" in block and "--no-cache-dir" in block, (
+            "man-spider must stay on the system interpreter like every other "
+            "pip3 tool here; a venv hides it from zebbern_exec"
+        )

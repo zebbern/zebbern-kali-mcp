@@ -139,6 +139,9 @@ RUN apt-get update && \
         expect \
         netexec \
         ntpsec-ntpdate \
+        awscli \
+        python3-boto3 \
+        snmp \
     && rm -rf /var/lib/apt/lists/* \
     && (gunzip -f /usr/share/wordlists/rockyou.txt.gz 2>/dev/null || true)
 
@@ -305,7 +308,8 @@ RUN checkout-source https://github.com/lobuhi/byp4xx.git "$BYP4XX_REF" /opt/byp4
 # ---------- Layer 5: pipx tools ----------
 RUN pipx ensurepath && \
     pipx install ssh-audit && \
-    pipx install waymore
+    pipx install waymore && \
+    pipx install git-dumper==1.0.9
 
 # ---------- Fix: Remove pip EXTERNALLY-MANAGED restriction ----------
 RUN rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED && \
@@ -370,7 +374,8 @@ RUN pip3 install --break-system-packages --no-cache-dir \
         commix \
         clairvoyance \
         xnLinkFinder \
-        jsbeautifier
+        jsbeautifier \
+        man-spider==2.0.0
 
 # ---------- Layer 7a2: ghauri (Git source — not on PyPI) ----------
 ARG GHAURI_REF=18e367781caca5f9783a242f34aa90164edc902a

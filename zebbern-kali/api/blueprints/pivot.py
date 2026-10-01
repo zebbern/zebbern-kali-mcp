@@ -15,7 +15,13 @@ def chisel_server_start():
         result = pivot_manager.chisel_server_start(
             port=params.get("port", 8080),
             reverse=params.get("reverse", True),
-            socks5=params.get("socks5", True)
+            socks5=params.get("socks5", True),
+            # The address the target dials and the reverse-SOCKS port it asks
+            # for. Without these the manager advertised the container's docker
+            # bridge IP and the chisel default port 1080, which the VPN's own
+            # microsocks already holds.
+            advertised_host=params.get("advertised_host", ""),
+            socks_port=params.get("socks_port", 1080),
         )
         return jsonify(result)
     except Exception as e:

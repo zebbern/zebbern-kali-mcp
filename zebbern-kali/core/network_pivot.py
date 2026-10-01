@@ -25,6 +25,70 @@ from dataclasses import dataclass, asdict
 
 logger = logging.getLogger(__name__)
 
+# Tunnel types whose `local_port` is a port this box itself listens on, so
+# "is it working" has a local answer. A chisel client in reverse-SOCKS mode and
+# an ssh remote forward open their listener on the *other* end, so probing
+# locally would report False for a perfectly healthy tunnel -- those get
+# `listening: None` instead of a misleading flag.
+#
+# The split below is about what a *connect* to that port does. For a control or
+# SOCKS endpoint the connect terminates at the tunnel's own process, so dialling
+# it costs nothing. A pure forwarder is different: socat is started with
+# `fork,reuseaddr`, so accepting forks a child that dials
+# `target_host:target_port`, and `ssh -L` opens a channel to the forwarded host
+# the moment it accepts. Reading status must not put traffic on a target, so
+# forwarders are answered by asking the kernel whether the listening socket
+# exists instead of connecting through it.
+CONNECT_SAFE_LISTENER_TYPES = {
+    "chisel_server",
+    "ssh_dynamic",
+    "ligolo_proxy",
+}
+
+FORWARDER_LISTENER_TYPES = {
+    "socat",
+    "ssh_local",
+}
+
+LOCAL_LISTENER_TYPES = CONNECT_SAFE_LISTENER_TYPES | FORWARDER_LISTENER_TYPES
+
+# Asked in order; the first one that answers wins. `ss` ships with iproute2 and
+# is in the image; `netstat` is a fallback for a host that has net-tools and no
+# iproute2. Both are read-only listings -- neither touches the sockets listed.
+LISTENER_QUERY_COMMANDS = (
+    ("ss", "-ltn"),
+    ("netstat", "-ltn"),
+)
+
+_LISTEN_STATES = ("LISTEN", "LISTENING")
+
+# `127.0.0.1:8080`, `[::]:8080`, `*:8080` -- but not `0.0.0.0:*`, and not the
+# `Local Address:Port` of a header line.
+_ADDRESS_PORT = re.compile(r":(\d{1,5})$")
+
+_UNQUERIED = object()
+
+
+def _listening_ports_in(table: str) -> set:
+    """Ports with a LISTEN socket, read out of an `ss`/`netstat` listing.
+
+    Only lines carrying a listen state are considered, so an established
+    connection to or from the same port number cannot be mistaken for a
+    listener. On a listen line the peer column has no numeric port
+    (`0.0.0.0:*`, `[::]:*`, or Windows' `0.0.0.0:0`), which is why scanning
+    every column of such a line is safe.
+    """
+    ports = set()
+    for line in table.splitlines():
+        columns = line.split()
+        if not any(column.upper() in _LISTEN_STATES for column in columns):
+            continue
+        for column in columns:
+            match = _ADDRESS_PORT.search(column)
+            if match:
+                ports.add(int(match.group(1)))
+    return ports
+
 
 @dataclass
 class Tunnel:
@@ -156,17 +220,26 @@ class NetworkPivotManager:
     
     # ==================== Chisel ====================
     
-    def chisel_server_start(self, port: int = 8080, 
+    def chisel_server_start(self, port: int = 8080,
                             reverse: bool = True,
-                            socks5: bool = True) -> Dict[str, Any]:
+                            socks5: bool = True,
+                            advertised_host: str = "",
+                            socks_port: int = 1080) -> Dict[str, Any]:
         """
         Start a Chisel server for reverse tunneling.
-        
+
         Args:
             port: Server listen port
             reverse: Allow reverse port forwarding
             socks5: Enable SOCKS5 proxy
-            
+            advertised_host: Address the TARGET will dial. Blank auto-picks the
+                VPN tunnel address, falling back to this box's default-route
+                source address -- inside the container that is the docker
+                bridge IP, which no target can reach.
+            socks_port: Requested reverse-SOCKS port. Bumped past anything the
+                VPN SOCKS proxy or another tunnel already holds; the chosen
+                one comes back as `reverse_socks_port`.
+
         Returns:
             Server status and connection info
         """
@@ -218,17 +291,55 @@ class NetworkPivotManager:
             self.processes[tunnel_id] = proc
             self._save_state()
             
-            # Get local IP for client connection string
-            local_ip = self._get_local_ip()
-            
+            # The address the TARGET has to dial, which is not necessarily any
+            # address this box routes the internet over.
+            host, host_source = self._advertised_host(advertised_host)
+
+            # A bare "R:socks" means remote port 1080, which is exactly the
+            # port vpn_connect's microsocks holds -- the server then refuses
+            # the reverse listener and the client retries forever.
+            reverse_socks_port, skipped_ports = self._free_reverse_socks_port(socks_port)
+
+            socks_command = f"chisel client {host}:{port} R:{reverse_socks_port}:socks"
+            forward_command = (
+                f"chisel client {host}:{port} "
+                "R:<LOCAL_PORT>:<TARGET_IP>:<TARGET_PORT>"
+            )
+
+            host_note = ""
+            if host_source == "default_route":
+                host_note = (
+                    f"{host} is this box's default-route source address. Inside "
+                    "the container that is the docker bridge and the target "
+                    "cannot reach it. Pass advertised_host=<your tun0/lab IP>, "
+                    "or bring up the lab VPN so it can be picked up "
+                    "automatically."
+                )
+
+            socks_note = ""
+            if skipped_ports:
+                skipped = ", ".join(str(p) for p in skipped_ports)
+                socks_note = (
+                    f"Reverse SOCKS port moved to {reverse_socks_port}: "
+                    f"{skipped} already held (the VPN SOCKS proxy binds 1080, "
+                    "and another tunnel may hold the rest)."
+                )
+
             return {
                 "success": True,
                 "tunnel_id": tunnel_id,
                 "pid": proc.pid,
                 "port": port,
                 "log_file": log_file,
-                "connect_command": f"chisel client {local_ip}:{port} R:socks" if socks5 else f"chisel client {local_ip}:{port} R:LOCAL_PORT:TARGET_IP:TARGET_PORT",
-                "socks5_proxy": f"socks5://127.0.0.1:1080" if socks5 else None,
+                "connect_command": socks_command if socks5 else forward_command,
+                "connect_command_socks": socks_command if socks5 else None,
+                "connect_command_forward": forward_command,
+                "advertised_host": host,
+                "advertised_host_source": host_source,
+                "advertised_host_note": host_note,
+                "reverse_socks_port": reverse_socks_port,
+                "socks_port_note": socks_note,
+                "socks5_proxy": f"socks5://127.0.0.1:{reverse_socks_port}" if socks5 else None,
                 "timestamp": datetime.now().isoformat()
             }
             
@@ -943,11 +1054,57 @@ class NetworkPivotManager:
         
         if active_only:
             tunnels = [t for t in tunnels if t.status == "active"]
-        
+
+        # A surviving pid is the weaker half of the answer: a chisel server
+        # whose control socket is gone keeps its pid and reads as "active".
+        # `listening` is advisory in exactly the way `connected` and `timed_out`
+        # are -- it never flips `status` or `success`, so callers have to read
+        # it rather than trusting the record.
+        #
+        # Forwarders are answered from the socket table rather than by dialling
+        # through them (see FORWARDER_LISTENER_TYPES). The listing is fetched at
+        # most once per call, however many forwarders are in the table.
+        #
+        # `listening_method` says how the answer was reached, because None has
+        # two meanings an operator has to tell apart: "this tunnel's listener is
+        # on the far end, so there is nothing here to ask about" and "the
+        # listener is here and nothing on this box could tell me about it".
+        # Neither is ever reported as a confident False.
+        entries = []
+        listening_ports = _UNQUERIED
+        for t in tunnels:
+            entry = t.to_dict()
+            listening = None
+            method = None
+
+            if t.tunnel_type in LOCAL_LISTENER_TYPES and t.local_port:
+                if t.status != "active":
+                    # The pid is gone, so it is not listening; nothing to probe.
+                    listening, method = False, "pid"
+                elif t.tunnel_type in FORWARDER_LISTENER_TYPES:
+                    if listening_ports is _UNQUERIED:
+                        listening_ports = self._listening_ports()
+                    try:
+                        wanted = int(t.local_port)
+                    except (TypeError, ValueError):
+                        wanted = None
+                    if listening_ports is None or wanted is None:
+                        listening, method = None, "unavailable"
+                    else:
+                        listening = wanted in listening_ports
+                        method = "socket_table"
+                else:
+                    listening = self._probe_listener(t.local_port)
+                    method = "connect"
+
+            entry["listening"] = listening
+            entry["listening_method"] = method
+            entries.append(entry)
+
         return {
             "success": True,
-            "tunnels": [t.to_dict() for t in tunnels],
-            "count": len(tunnels),
+            "tunnels": entries,
+            "count": len(entries),
             "timestamp": datetime.now().isoformat()
         }
     
@@ -1241,7 +1398,137 @@ tcp_connect_time_out 8000
             return ip
         except:
             return "127.0.0.1"
-    
+
+    def _vpn_tun_ip(self) -> str:
+        """Address of the first active VPN tunnel, or "" if there is none.
+
+        `_get_local_ip` answers "which address do I reach the internet from",
+        which is the docker bridge inside the container. An .ovpn that does not
+        redirect the default gateway leaves tun0 up and the default route
+        unchanged, so "prefer the default route" is not the same question --
+        the VPN interface has to be consulted explicitly.
+        """
+        try:
+            from core.vpn_manager import get_vpn_status
+            status = get_vpn_status() or {}
+            for conn in status.get("connections") or []:
+                if not conn.get("active"):
+                    continue
+                ip = str(conn.get("ip") or "").strip()
+                if not ip or ip in ("unknown", "pending"):
+                    continue
+                return ip.split("/", 1)[0]
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("VPN address lookup failed: %s", exc)
+        return ""
+
+    def _advertised_host(self, explicit: str = "") -> tuple:
+        """Pick the address a target should dial, and say where it came from.
+
+        Precedence is operator > VPN tunnel > default route, and the source is
+        returned alongside so the caller can say out loud that the last one is
+        a guess rather than presenting it as a reachable address.
+        """
+        chosen = str(explicit or "").strip()
+        if chosen:
+            return chosen, "explicit"
+
+        vpn_ip = self._vpn_tun_ip()
+        if vpn_ip:
+            return vpn_ip, "vpn"
+
+        return self._get_local_ip(), "default_route"
+
+    def _free_reverse_socks_port(self, start: int = 1080) -> tuple:
+        """First free reverse-SOCKS port at or above `start`, plus the skips.
+
+        Advisory only: chisel opens the reverse port when the client connects,
+        so this cannot pre-bind it and the check is a TOCTOU by construction.
+        It still catches the one collision that happens every session -- the
+        VPN's own microsocks on 1080 -- which is otherwise only visible as the
+        client looping on "Server cannot listen on R:127.0.0.1:1080=>socks".
+        """
+        taken = set()
+        try:
+            from core.vpn_manager import get_socks_proxy_status
+            socks_status = get_socks_proxy_status() or {}
+            if socks_status.get("running") and socks_status.get("port"):
+                taken.add(int(socks_status["port"]))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("SOCKS proxy status lookup failed: %s", exc)
+
+        skipped = []
+        try:
+            port = int(start)
+        except (TypeError, ValueError):
+            port = 1080
+
+        for _ in range(64):
+            if port in taken or self._is_port_in_use(port):
+                skipped.append(port)
+                port += 1
+                continue
+            return port, skipped
+
+        return port, skipped
+
+    def _probe_listener(self, port) -> bool:
+        """True when something accepts a TCP connection on 127.0.0.1:port.
+
+        A live pid is not a working listener -- the same rule the chisel client
+        learned when a failing client retried forever instead of exiting.
+
+        Only for `CONNECT_SAFE_LISTENER_TYPES`. On a pure forwarder (socat,
+        `ssh -L`) the accept is what dials the downstream target, so calling
+        this would make a status read generate a TCP connection to that target;
+        use `_listening_ports` for those.
+        """
+        try:
+            sock = socket.create_connection(("127.0.0.1", int(port)), timeout=0.3)
+        except (OSError, TypeError, ValueError):
+            return False
+        try:
+            return True
+        finally:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+    def _socket_table_output(self, command) -> Optional[str]:
+        """Run one socket-table listing, or None if it could not be run."""
+        if shutil.which(command[0]) is None:
+            return None
+        try:
+            result = subprocess.run(
+                list(command), capture_output=True, text=True, timeout=5
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+        return result.stdout
+
+    def _listening_ports(self) -> Optional[set]:
+        """Every port with a LISTEN socket on this box, or None if unknown.
+
+        Asked of the kernel's socket table rather than by connecting, because
+        the callers are forwarders: a connect to a socat or `ssh -L` port is
+        what dials the downstream target, and asking a tunnel for its status
+        must not put a TCP connection on a target.
+
+        None, never an empty set, when no listing tool answered. "Nothing is
+        listening" and "nothing here could tell me" are different answers, and
+        reporting the first for the second would be a false alarm in the one
+        tool an operator consults when they already distrust the tunnel.
+        """
+        for command in LISTENER_QUERY_COMMANDS:
+            table = self._socket_table_output(command)
+            if table is None:
+                continue
+            return _listening_ports_in(table)
+        return None
+
     def _find_ssh_tunnel_pid(
         self,
         port: Optional[int] = None,

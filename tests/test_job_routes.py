@@ -167,7 +167,42 @@ def test_cancel_route_stops_a_running_job(app_and_manager):
 
     assert response.status_code == 200
     assert response.get_json()["success"] is True
+    assert response.get_json()["canceled"] is True
     assert completed["status"] == "canceled"
+
+
+def test_cancel_route_is_idempotent_on_a_finished_job(app_and_manager):
+    """The 409 reached the operator as a failed cancel of a live job.
+
+    The route is a pass-through (200 if result["success"] else 409), so the
+    manager's idempotence is what flips the status code -- no route change.
+    """
+    app, manager = app_and_manager
+    job = manager.start(
+        [sys.executable, "-u", "-c", "print('route-over')"],
+        shell=False,
+        timeout=5,
+    )
+    client = app.test_client()
+    wait_for_route_terminal(client, job["job_id"])
+
+    response = client.post(f"/api/jobs/{job['job_id']}/cancel")
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["success"] is True
+    assert payload["canceled"] is False
+    assert payload["already_terminal"] is True
+    assert payload["status"] == "succeeded"
+
+
+def test_cancel_route_still_404s_for_an_unknown_job(app_and_manager):
+    app, _manager = app_and_manager
+
+    response = app.test_client().post("/api/jobs/missing/cancel")
+
+    assert response.status_code == 404
+    assert response.get_json()["success"] is False
 
 
 def test_output_route_rejects_non_finite_wait(app_and_manager):
@@ -184,6 +219,42 @@ def test_output_route_rejects_non_finite_wait(app_and_manager):
 
     assert response.status_code == 400
     assert "finite" in response.get_json()["error"]
+
+
+def test_output_route_clamps_a_large_wait_instead_of_rejecting_it(app_and_manager):
+    """A too-large wait used to cost the operator the whole poll.
+
+    The route is a pass-through that turns the manager's ValueError into a 400,
+    so clamping in the manager is what makes this 200 -- and the reply has to
+    say it clamped, or the shorter wait would be a silent substitution.
+    """
+    app, manager = app_and_manager
+    job = manager.start(
+        [sys.executable, "-u", "-c", "print('polled'); import time; time.sleep(30)"],
+        shell=False,
+        timeout=60,
+    )
+
+    response = app.test_client().get(
+        f"/api/jobs/{job['job_id']}/output?timeout=120&lines=10"
+    )
+
+    payload = response.get_json()
+    assert response.status_code == 200
+    assert payload["wait_capped"] is True
+    assert payload["wait_timeout"] == 30
+    assert payload["max_output_wait"] == 30
+
+
+def test_output_route_reports_an_unknown_job_over_an_over_max_wait(app_and_manager):
+    """Validation fires before the lookup, so this used to answer 400 about the
+    timeout for a job that does not exist. Clamping lets the lookup answer."""
+    app, _manager = app_and_manager
+
+    response = app.test_client().get("/api/jobs/missing/output?timeout=120")
+
+    assert response.status_code == 404
+    assert response.get_json()["success"] is False
 
 
 def test_exec_response_reports_the_command_verbatim(app_and_manager):

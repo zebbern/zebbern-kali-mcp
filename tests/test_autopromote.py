@@ -234,3 +234,34 @@ def test_the_job_start_always_asks_for_a_background_job():
 
     assert posted["background"] is True
     assert posted["target"] == "x", "the caller's own arguments must survive"
+
+
+def test_the_first_poll_interval_is_short(monkeypatch):
+    """A job that finishes immediately must not pay a full poll interval for it.
+
+    zebbern_exec now promotes on every call, including `whoami`, so a flat 2s
+    poll would put a two-second floor under every quick round-trip an operator
+    makes. The sleep starts at 0.25s and doubles to the configured poll, so a
+    long scan keeps the same steady-state cadence and a quick one is detected
+    sub-second. Driven at poll=3.0 so a flat poll is unmistakable in the clock.
+    """
+    monkeypatch.setenv("ZKM_INLINE_WAIT_SECONDS", "20")
+    monkeypatch.setenv("ZKM_INLINE_POLL_SECONDS", "3.0")
+    client = FakeClient(
+        start_reply={"job_id": "jb"},
+        statuses=[{"status": "running"},
+                  {"status": "succeeded", "return_code": 0, "timed_out": False}],
+        output={"stdout": ["root"], "stderr": []},
+    )
+
+    start = time.monotonic()
+    result = run_promotable(client, "api/exec", {"command": "whoami"},
+                            heavy=False, background=False)
+    elapsed = time.monotonic() - start
+
+    assert result["finished"] is True
+    assert result["return_code"] == 0
+    assert elapsed < 1.5, (
+        f"waited {elapsed:.2f}s for a job that was done on the second poll, so "
+        "the first interval is the full configured poll"
+    )

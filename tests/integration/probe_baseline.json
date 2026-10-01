@@ -271,6 +271,12 @@
   "reverse_shell_listener_start": {
     "status": "OK"
   },
+  "reverse_shell_read_output": {
+    "status": "REPORTED"
+  },
+  "reverse_shell_send_input": {
+    "status": "REPORTED"
+  },
   "reverse_shell_send_payload": {
     "status": "REPORTED"
   },

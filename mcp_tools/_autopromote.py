@@ -22,6 +22,11 @@ _TERMINAL_STATES = frozenset({"succeeded", "failed", "canceled", "timed_out"})
 
 _DEFAULT_INLINE_WAIT = 50.0
 _DEFAULT_POLL = 2.0
+# The first sleep is short and then doubles up to the configured poll. A quick
+# command (whoami, cat) would otherwise pay a full poll interval -- ~2s by
+# default -- for finishing immediately, and zebbern_exec promotes on every
+# call. Steady state for a long scan is unchanged.
+_INITIAL_POLL = 0.25
 _FINISHED_WINDOW_LINES = 100000   # effectively "the whole ring" (ring caps at 2000)
 _HANDOFF_WINDOW_LINES = 200       # a bounded progress peek; full log is at output_path
 
@@ -75,6 +80,7 @@ def run_promotable(kali_client, endpoint: str, data: Dict[str, Any], *,
 
 def _await_job(kali_client, job_id, deadline, budget):
     poll = _poll_seconds()
+    interval = min(poll, _INITIAL_POLL)
     status = None
     while True:
         remaining = deadline - time.monotonic()
@@ -90,7 +96,8 @@ def _await_job(kali_client, job_id, deadline, budget):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        time.sleep(min(poll, remaining))
+        time.sleep(min(interval, remaining))
+        interval = min(poll, interval * 2)
     return _handoff_result(kali_client, job_id, status, budget)
 
 

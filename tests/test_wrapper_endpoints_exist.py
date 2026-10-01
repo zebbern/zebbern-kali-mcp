@@ -8,7 +8,11 @@ read to the caller as a broken server rather than a broken client.
 
 This was clean when written (144 declared routes, no mismatch), so it is a
 regression guard rather than a fix: it exists because renaming a route is a
-one-line change in a file no wrapper test opens.
+one-line change in a file no wrapper test opens. It is also the cross-track
+check: wrappers ship on the wheel and routes ship in the image, so a wrapper
+added without its route turns this red rather than 404ing in the field. It now
+covers 240 call sites against 146 declared routes -- the two reverse-shell raw
+I/O routes and their wrappers landed together for exactly that reason.
 
 Parsed rather than imported: api.blueprints' __init__ chain reaches termios,
 which does not exist on Windows.

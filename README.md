@@ -1,78 +1,53 @@
 # Zebbern Kali MCP Server
 
-A Docker-based **Model Context Protocol (MCP)** server that gives AI agents (GitHub Copilot, Claude, etc.) direct access to a full Kali Linux penetration testing toolkit. The AI agent calls MCP tools, which forward requests to a Flask API running inside a Kali container — every tool executes in an isolated, pre-configured environment.
+Give an AI agent a full Kali Linux toolkit without installing one. The MCP client
+runs on your machine as a small Python package; every tool executes inside a Kali
+container that the client reaches over HTTP. Nmap, sqlmap, nuclei, impacket,
+Metasploit, pivoting, VPN and callback capture are all exposed as MCP tools.
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-blue)](https://www.python.org)
-[![MCP Tools](https://img.shields.io/badge/MCP%20modules-17-green)]()
-[![Base Image](https://img.shields.io/badge/base-kalilinux%2Fkali--rolling-black)](https://hub.docker.com/r/kalilinux/kali-rolling)
+[![MCP tools](https://img.shields.io/badge/MCP%20tools-135-green)]()
+[![Base image](https://img.shields.io/badge/base-kalilinux%2Fkali--rolling-black)](https://hub.docker.com/r/kalilinux/kali-rolling)
+
+[Quick start](#quick-start) · [Essentials](#essentials) (jobs, files, VPN,
+targets) · [Configuration](#configuration) ·
+[Troubleshooting](#troubleshooting) · [Tool modules](#mcp-tool-modules) ·
+[Image contents](#what-is-in-the-image) · [Security](#security) ·
+[Development](#development)
 
 ---
 
-## Architecture
+## Quick start
 
-The project is a **two-part client → server system**:
-
-```
-┌──────────────────────────────────┐          HTTP           ┌──────────────────────────────────────┐
-│          Windows / Host          │        (port 5000)      │         Docker Container             │
-│                                  │                         │         (kalilinux/kali-rolling)     │
-│  AI Agent (Copilot / Claude)     │                         │                                      │
-│          │                       │                         │  Flask API Server                    │
-│          ▼                       │                         │    ├── api/blueprints/*.py  (routes) │
-│  MCP Client  (mcp_tools/*.py)    │ ──── POST /tools/* ───► │    └── core/*.py           (logic)  │
-│    └── KaliToolsClient           │                         │              │                       │
-│        (HTTP requests)           │                         │              ▼                       │
-│                                  │                         │  Kali tools (nmap, sqlmap, …)        │
-└──────────────────────────────────┘                         └──────────────────────────────────────┘
-```
-
-| Component | Location | Runs on | Role |
-|-----------|----------|---------|------|
-| **MCP Client** | `mcp_tools/` | Host (Windows/Linux/macOS) | Exposes tool definitions to AI agents via the MCP protocol. Each tool call is translated into an HTTP request to the Flask server. |
-| **Flask Server** | `zebbern-kali/` | Inside Docker container | Receives HTTP requests, dispatches them through Flask blueprints (`api/blueprints/`) to core logic (`core/`), and executes the actual Kali tools. |
-| **Entrypoint** | `entrypoint.sh` | Inside Docker container | Initializes networking (routes, `/etc/hosts`, TUN interfaces, IP forwarding) before launching the Flask server. |
-
-**Request flow:** AI Agent → MCP tool function → `KaliToolsClient` HTTP request → Flask blueprint → Core logic → tool execution on Kali → JSON response back.
-
----
-
-## Quick Start
-
-### Source checkout + uvx
-
-**1. Start the Kali backend:**
+### 1. Start the Kali backend
 
 ```bash
-# Clone the source and build the local image.
+docker run -d --name zebbern-kali --restart unless-stopped \
+  -p 127.0.0.1:5000:5000 \
+  --cap-add=NET_ADMIN --cap-add=NET_RAW --device=/dev/net/tun \
+  ghcr.io/zebbern/zebbern-kali-mcp:latest
+```
+
+`NET_ADMIN`, `NET_RAW` and `/dev/net/tun` are what OpenVPN and WireGuard need;
+without them `vpn_connect` fails whatever the config says. Add any of these flags
+for full parity with the Compose file:
+
+- `-p 127.0.0.1:1080:1080` — published SOCKS proxy
+- `--sysctl net.ipv4.ip_forward=1` — pivoting and routing
+- `--shm-size=1g` — headless Chrome; without it `gowitness` writes no screenshot
+- `-v zebbern-kali-tmp:/app/tmp` — keep background-job logs across recreates
+- `-v "$(pwd)/vpn:/vpn:ro"` — VPN configs from the host
+
+From a source checkout, Compose does all of the above:
+
+```bash
 git clone https://github.com/zebbern/zebbern-kali-mcp.git
 cd zebbern-kali-mcp
-docker compose up -d --build
+docker compose up -d           # add --build to build the image locally
 ```
 
-Or build and run directly:
-
-```bash
-docker build -t zebbern-kali-mcp .
-docker run -d --name zebbern-kali \
-  --cap-add NET_RAW --cap-add NET_ADMIN \
-  --device /dev/net/tun:/dev/net/tun \
-  --sysctl net.ipv4.ip_forward=1 \
-  -p 127.0.0.1:5000:5000 \
-  -p 127.0.0.1:1080:1080 \
-  -v zebbern-kali-tmp:/app/tmp \
-  -v "$(pwd)/vpn:/vpn:ro" \
-  zebbern-kali-mcp
-```
-
-> **Host networking:** Native Docker Engine on Linux and the current Windows Docker Desktop 4.84 setup are qualified host-network platforms. Run:
-> ```bash
-> docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
-> ```
->
-> On Docker Desktop 4.34 or later, enable host networking in **Settings > Resources > Network** and restart Docker Desktop before running the overlay. The current Windows Docker Desktop 4.84 setup is qualified with that opt-in. Desktop support is limited to TCP and UDP (layer 4), does not work with Enhanced Container Isolation, supports Linux containers only, and cannot bind a specific host-interface IP. Native Linux Docker Engine retains direct host-network semantics.
-
-**2. Add to VS Code** (`.vscode/mcp.json` or global MCP config):
+### 2. Point your MCP client at it
 
 ```json
 {
@@ -85,479 +60,513 @@ docker run -d --name zebbern-kali \
 }
 ```
 
-Restart VS Code — done. `uvx` auto-downloads the MCP client from PyPI.
+`uvx` downloads the client from PyPI on first run; nothing to install by hand.
+VS Code reads `.vscode/mcp.json` (or your global MCP config) with the `servers`
+key above, Claude Desktop and `~/.claude.json` use `mcpServers` with the same
+object, and CLI flags go in `args`, e.g. `["zebbern-kali-mcp", "--profile", "web"]`.
 
-> Docker is the supported install path. See the setup sections below for env vars, VPN/SOCKS proxy, image variants, and networking details.
+Pin the version — `["zebbern-kali-mcp@<version>"]` — to make upgrades explicit.
+Unpinned, `uvx` reuses whatever environment it already cached for that command, so
+a restart does not necessarily pick up a newer wheel; see
+[Troubleshooting](#troubleshooting).
 
----
+Restart the client. That is the whole install.
 
-## MCP Tool Modules
+### 3. Ask
 
-17 MCP client modules in `mcp_tools/`, each with a corresponding Flask blueprint in `zebbern-kali/api/blueprints/` and core logic in `zebbern-kali/core/`:
+> "Scan 10.10.10.5 with nmap" · "Run nuclei against example.com" · "Connect to the
+> HTB VPN and start recon" · "Enumerate AD with bloodhound against
+> dc01.corp.local" · "Start a callback listener on port 8080"
 
-| # | Module | Description |
-|---|--------|-------------|
-| 1 | `kali_tools` | Nmap, Nikto, Gobuster, Dirb, WPScan, SQLMap, Hydra, John, enum4linux, Subfinder, httpx, Arjun, Fierce, ssh-audit, FFuf, Nuclei, and more |
-| 2 | `ad_tools` | Active Directory attacks — netexec, BloodHound, impacket, certipy, bloodyAD, Kerberoasting, Pass-the-Hash, LDAP |
-| 3 | `command_exec` | Arbitrary command execution on the Kali container |
-| 4 | `ssh_manager` | SSH session lifecycle — connect, execute, tunnel, disconnect |
-| 5 | `reverse_shell` | Reverse shell listeners and session management |
-| 6 | `metasploit` | Metasploit Framework integration — modules, sessions, exploits |
-| 7 | `network_pivot` | Chisel, Ligolo-ng, SSH tunnels, ProxyChains, SOCKS proxy |
-| 8 | `vpn` | WireGuard & OpenVPN management with auto SOCKS5 proxy |
-| 9 | `api_security` | GraphQL introspection, JWT analysis, FFUF fuzzing |
-| 10 | `web_fingerprinter` | Technology detection and web fingerprinting |
-| 11 | `exploit_suggester` | Exploit suggestion based on scan results |
-| 12 | `payload_generator` | Payload generation for various platforms |
-| 13 | `file_operations` | File upload/download between host and container |
-| 14 | `callback_catcher` | Built-in HTTP + DNS callback listener for isolated networks |
-| 15 | `ctf_platform` | CTFd & rCTF API — challenges, flags, scoreboard |
-| 16 | `hosts_management` | `/etc/hosts` management inside the container |
-| 17 | `output_parser` | Structured parsing of tool output for AI consumption |
-
-The default `auto` profile starts with the complete `full` tool set. With a valid capability schema version 1 response, it omits only public tools explicitly reported as unavailable. Unknown, malformed, older, or unreachable capability data fails open and keeps the complete tool set. Discovery is a startup snapshot; restart the MCP client to refresh it.
-
-`auto` omits any tool the manifest reports as unavailable, so the backend owns that list rather than the client keeping a parallel copy of it. Core tools are never omitted: command execution, file operations, host management and output parsing stay registered even if a manifest marks them unavailable. That floor exists because the two failure directions are not symmetric — a tool that is present but broken fails once and the agent adapts, while a tool wrongly hidden is invisible for the life of the process, since discovery is a startup snapshot. On a lean image this omits the persistent Metasploit session tools and the two `msfvenom` payload tools. Use a focused profile only when a smaller tool list helps the agent choose tools more reliably:
-
-| Profile | Focus |
-|---------|-------|
-| `core` | Command execution, files, hosts, and output parsing |
-| `recon` | Core plus scanners, fingerprinting, and exploit suggestions |
-| `web` | Core plus web/API testing and callback capture |
-| `ad` | Core plus AD, pivoting, SSH, shells, payloads, and VPN |
-| `ctf` | Core plus scanners, CTF platforms, payloads, shells, VPN, and callbacks |
-| `trim` | All modules except `callback_catcher` and `output_parser`; 123 tools |
-| `full` | All 17 modules; complete operator override |
-
-The explicit profiles are `core`, `recon`, `web`, `ad`, `ctf`, `trim`, and `full`. Select one with `--profile web` or `MCP_TOOL_PROFILE=web`. Use `--profile full` to register every current MCP tool regardless of discovery results. An invalid profile fails during startup.
-
-### Excluding modules from any profile
-
-`--exclude-module` (or `MCP_EXCLUDE_MODULES`) subtracts named modules from whichever profile is selected, so you can tune the surface without waiting for a new profile. Use it when another MCP server in your setup already covers a capability — a hosted webhook/interactsh service makes `callback_catcher` redundant, and an agent that parses stdout itself does not need `output_parser`.
-
-```bash
-zebbern-kali-mcp --profile web --exclude-module callback_catcher      # 57 tools
-zebbern-kali-mcp --profile full --exclude-module callback_catcher,output_parser  # 123, same as trim
-MCP_EXCLUDE_MODULES=callback_catcher zebbern-kali-mcp --profile ctf    # 75 tools
-```
-
-Names are case-insensitive and whitespace-tolerant; an unknown module name fails at startup with the full list of valid names. Exclusion composes with `auto`, applying after capability discovery.
-
-`trim` is the full tool set minus the two modules that duplicate capabilities most MCP hosts already provide: `callback_catcher` (9 tools, overlapping hosted webhook/interactsh services) and `output_parser` (1 tool, duplicating the agent's own stdout parsing). It registers 123 of the 133 tools. Prefer `full` when the host has no webhook capability of its own, or when the engagement runs on an isolated network with no egress — the built-in callback listener is the only one that works there.
+Call `health` to confirm the client reached the backend.
 
 ---
 
-## Installed Tools
+## Essentials
 
-The image installs the tools below. Core tool failures stop the build. Explicitly optional extras may be skipped with a warning; check `/ready` and the relevant tool-status endpoint for runtime availability.
+Four things that are not obvious from the tool list.
 
-### Network Scanning
-| Tool | Description |
-|------|-------------|
-| **nmap** | Port scanning, service/version detection, NSE scripts |
-| **masscan** | High-speed port scanner |
-| **sslscan** | SSL/TLS configuration analysis |
+### Long-running tools hand back a `job_id`
 
-### Web Application Scanning
-| Tool | Description |
-|------|-------------|
-| **nikto** | Web server vulnerability scanner |
-| **gobuster** | Directory/file/DNS brute-forcing |
-| **dirb** | Web content scanner |
-| **wpscan** | WordPress vulnerability scanner |
-| **sqlmap** | Automated SQL injection |
-| **ffuf** | Fast web fuzzer |
-| **nuclei** | Template-based vulnerability scanner |
-| **katana** | Web crawler (v1.1.0 pre-built binary) |
-| **amass** | Attack surface mapping |
-| **commix** | Command injection exploitation |
-| **ghauri** | Advanced SQL injection detection |
+An MCP host abandons a synchronous tool call after roughly a minute, so anything
+slower runs as a background job on the backend. Seventeen tools do that for you:
+the fourteen heavy scanners (`tools_nmap`,
+`tools_nikto`, `tools_gobuster`, `tools_wpscan`, `tools_sqlmap`, `tools_hydra`,
+`tools_masscan`, `tools_katana`, `tools_amass`, `tools_arjun`, `tools_fierce`,
+`tools_enum4linux`, `tools_gowitness`, `tools_john`) plus `api_nuclei_scan`,
+`api_ffuf_fuzz` and `zebbern_exec`. The job starts first, the client waits inline
+for `ZKM_INLINE_WAIT_SECONDS` (default 50), and you get back either the finished
+result or a `job_id`. A wait that is too short costs a poll, never the scan. Any
+other subprocess-backed tool takes `background=true` explicitly.
 
-### Subdomain & DNS Enumeration
-| Tool | Description |
-|------|-------------|
-| **subfinder** | Passive subdomain discovery |
-| **httpx** | HTTP probing and technology detection |
-| **assetfinder** | Subdomain discovery via various sources |
-| **waybackurls** | Fetch URLs from the Wayback Machine |
-| **amass** | DNS enumeration and network mapping |
-| **massdns** | High-performance DNS resolver |
-| **fierce** | DNS reconnaissance |
-| **mapcidr** | CIDR range manipulation |
-| **subzy** | Subdomain takeover checking |
+| Call | Purpose |
+|------|---------|
+| `job_status(job_id)` | state, exit code, timing |
+| `job_output(job_id)` | output so far (long-polls briefly) |
+| `send_input(job_id, text)` | write to the process's stdin |
+| `job_cancel(job_id)` | kill the job's process group |
+| `job_list()` | every job the backend still tracks, newest first — use it when the `job_id` is gone |
 
-### Brute Force & Password Cracking
-| Tool | Description |
-|------|-------------|
-| **hydra** | Network login brute-forcer |
-| **john** | John the Ripper password cracker |
-| **hashcat** | GPU-accelerated hash cracking |
+Output is never capped. The response window is bounded, but every byte of stdout
+and stderr is also teed to `$JOB_OUTPUT_DIR/<job_id>.log` (`/app/tmp/jobs` in the
+image), so `output_truncated` does not mean lost output. `output_logged: false`
+does: the log directory was not writable and only the bounded window exists.
+Those logs are never rotated or pruned — clean up with `rm /app/tmp/jobs/*.log`
+or by recreating the container.
 
-### Active Directory
-| Tool | Description |
-|------|-------------|
-| **netexec** | Primary SMB/LDAP/WinRM tool (replaces crackmapexec) |
-| **impacket** (0.13.0) | Python AD attack toolkit — ~50 scripts symlinked as `impacket-*` in PATH (secretsdump, psexec, wmiexec, etc.) |
-| **bloodhound.py** | AD relationship graphing — data collector |
-| **bloodyAD** | AD privilege escalation framework |
-| **certipy-ad** | AD Certificate Services (ADCS) exploitation |
-| **responder** | LLMNR/NBT-NS/MDNS poisoner |
-| **evil-winrm** | WinRM shell with upload/download |
-| **krbrelayx** | Kerberos relay and delegation abuse |
-| **gMSADumper** | Group Managed Service Account password dumper |
-| **PetitPotam** | NTLM relay coercion via EFS RPC |
-| **coercer** | Coerce Windows authentication |
-| **dementor** | SpoolService abuse for relay attacks |
-| **winrmexec** | WinRM command execution |
-| **pywhisker** | Shadow Credentials attack tool |
-| **ldapdomaindump** | LDAP domain information dumper |
+Check `timed_out`, not `success`, to know whether a command finished: a truncated
+scan reports `success: true` **and** `timed_out: true` on purpose, because its
+partial output is worth keeping.
 
-### Exploitation
-| Tool | Description |
-|------|-------------|
-| **metasploit-framework** | Full Metasploit Framework |
-| **commix** | Command injection exploitation |
-| **ghauri** | Advanced SQL injection |
-| **dalfox** | XSS scanning and exploitation |
-| **byp4xx** | 403 Forbidden bypass techniques |
-| **exploitdb** | Exploit database (searchsploit) |
+`exec_stream` streams output but registers no job, so it cannot be cancelled — on
+disconnect the subprocess runs to its full timeout, untracked. Use
+`zebbern_exec(background=true)` for anything you may need to abort. Job state,
+listeners and sessions live in memory, so a backend restart drops them and the
+`*_status` tools then answer empty rather than erroring.
 
-### JavaScript Analysis
-| Tool | Description |
-|------|-------------|
-| **getJS** | Extract JavaScript files from pages |
-| **jsluice** | Extract URLs, paths, and secrets from JS |
-| **xnLinkFinder** | Link and parameter discovery from JS |
-| **SecretFinder** | Find API keys and secrets in JS files |
-| **TruffleHog** | Secret scanning across repos and files |
-| **js-beautify** | JavaScript deobfuscation/beautification |
-| **webcrack** | Webpack bundle unpacking (npm) |
-| **ParamSpider** | Parameter discovery from web archives |
+### Getting files in and out
 
-### API Testing
-| Tool | Description |
-|------|-------------|
-| **jwt-tool** | JWT token analysis and exploitation |
-| **graphw00f** | GraphQL engine fingerprinting |
-| **clairvoyance** | GraphQL schema introspection |
+`kali_upload(content, remote_path)` writes a file into the container — a config,
+wordlist, script or target list, anything whose quoting or newlines a shell
+command line would mangle. `content` is **always** base64, so base64-encode the
+UTF-8 bytes of plain text first; `kali_download(remote_path)` reads a file back
+out as base64.
 
-### Proxy & Interception
-| Tool | Description |
-|------|-------------|
-| **mitmproxy** | Scriptable HTTP/HTTPS proxy (mitmdump) |
-| **OWASP ZAP** | Automated web app security scanner (zaproxy) |
-| **Caido** | Optional modern web proxy (CLI); readiness key: `caido-cli` |
+`target_upload_file` / `target_download_file` move files to and from a remote
+target instead, and `ssh_session_*` / `reverse_shell_*` transfer over an existing
+session.
 
-### Forensics & CTF
-| Tool | Description |
-|------|-------------|
-| **binwalk** | Firmware analysis and file extraction |
-| **steghide** | Steganography tool |
-| **stegseek** | Fast steghide cracker (wordlist-based) |
-| **zsteg** | PNG/BMP steganography detector (Ruby) |
-| **exiftool** | Metadata reader/writer |
-| **foremost** | File carving/recovery |
-| **volatility3** | Memory forensics framework (Python) |
-| **sleuthkit** | Disk forensics — `mmls`, `fls`, `icat`, `blkcat` |
-| **gdb** | GNU Debugger |
-| **radare2** | Reverse engineering framework (disassembly, debugging, patching) |
-| **imagemagick** | Image manipulation and analysis |
-| **tesseract-ocr** | Optical character recognition |
+### VPN configs
 
-### Binary Analysis (Python)
-| Tool | Description |
-|------|-------------|
-| **angr** | Binary analysis framework |
-| **pwntools** | CTF exploitation library |
+Put `.conf` (WireGuard) or `.ovpn` (OpenVPN) files in the host directory mounted
+read-only at `/vpn` (`VPN_DIR`, default `./vpn`), then call
+`vpn_connect(config_path="/vpn/client.ovpn")`. The type is auto-detected from the
+file contents; override with `vpn_type="wireguard"` or `vpn_type="openvpn"`.
 
-### Crypto & Math (Python)
-| Tool | Description |
-|------|-------------|
-| **pycryptodome** | Cryptographic primitives |
-| **gmpy2** | High-precision math |
-| **z3-solver** | SMT constraint solver |
-| **sympy** | Symbolic mathematics |
-| **SageMath** | Not bundled in the current Kali rolling image |
-| **RsaCtfTool** | RSA attack automation (`/opt/RsaCtfTool/`) |
-| **cado-nfs** | Integer factorization for large keys (`/opt/cado-nfs/`) |
+No mount is required: the entrypoint creates `/vpn` on every boot, so
+`docker cp client.ovpn zebbern-kali:/vpn/client.ovpn` works on a container
+started without one.
 
-### Networking
-| Tool | Description |
-|------|-------------|
-| **scapy** | Packet crafting and sniffing (Python) |
-| **tcpdump** | Packet capture |
-| **socat** | Multipurpose relay / socket tool |
-| **netcat** | TCP/UDP networking utility |
-| **proxychains4** | Proxy routing for arbitrary tools |
-| **openvpn** | VPN client |
-| **wireguard-tools** | WireGuard VPN |
+### Reaching your targets
 
-### Pivoting
-| Tool | Description |
-|------|-------------|
-| **chisel** | TCP/UDP tunnel over HTTP (Go binary + Windows .exe in `/opt/windows-tools/`) |
-| **ligolo-ng** (v0.7.5) | Tunneling — proxy + agents for Linux & Windows (in `/opt/ligolo-ng/`) |
-| **socat** | Port forwarding and relay |
-
-### Privilege Escalation
-| Tool | Description | Location |
-|------|-------------|----------|
-| **LinPEAS** | Linux privilege escalation audit script | `/opt/privesc-tools/linpeas.sh` |
-| **WinPEAS** | Windows privilege escalation audit (x64, x86, .bat) | `/opt/privesc-tools/` |
-| **Mimikatz** | Windows credential extraction | `/opt/windows-tools/mimikatz/` |
-| **RunasCs.exe** | Windows runas with explicit credentials | `/opt/windows-tools/RunasCs.exe` |
-
-### Tunneling & Remote Access
-| Tool | Description |
-|------|-------------|
-| **cloudflared** | Optional Cloudflare Tunnel client; readiness key: `cloudflared` |
-| **ngrok** | Instant public URLs for local services |
-
-### Media & Containers
-| Tool | Description |
-|------|-------------|
-| **ffmpeg** | Audio/video processing and conversion |
-| **sox** | Sound processing and analysis (+ all format plugins) |
-| **podman** | Rootless container engine (needs `--privileged` at runtime) |
-| **numpy** | Numerical computing (Python) |
-| **scipy** | Scientific computing (Python) |
-
-### Callback Catcher
-A **custom built-in HTTP + DNS callback listener** for isolated networks where external services like webhook.site can't reach your targets. Managed via the `callback_catcher` MCP module.
-
-The default listeners use TCP `8888` and UDP `5353`. A target can reach them directly through a VPN interface inside the container or with Linux host networking. In bridge mode, publish the selected callback ports on an address reachable by the target, for example `8888:8888/tcp` and `5353:5353/udp`; these ports are not published by default.
-
-### Browser Automation
-| Tool | Description |
-|------|-------------|
-| **Playwright** (Chromium) | Headless browser for SPA testing, screenshots, JS-rendered pages |
-
-### Wordlists
-Pre-installed: **rockyou.txt** (decompressed), **SecLists**, and symlinked wordlists at `/usr/share/wordlists/dirb/` for tool compatibility.
-
----
-
-## Python Dependencies
-
-From `requirements.txt` — installed inside the container:
-
-```
-Flask, Werkzeug            # API server
-requests                   # HTTP client
-paramiko                   # SSH
-mcp                        # MCP protocol (client)
-playwright                 # Browser automation
-pwntools                   # Binary exploitation
-sympy, gmpy2               # Math
-pycryptodome, z3-solver    # Crypto & SMT solving
-angr                       # Binary analysis
-scapy                      # Packet crafting
-Pillow                     # Image processing (stego)
-beautifulsoup4             # HTML parsing
-impacket==0.13.0           # AD attacks (pinned)
-ldapdomaindump, pywinrm    # AD support
-pexpect                    # Terminal automation
-python-dotenv              # Environment config
-```
-
-Additional pip packages installed during build: `bloodyAD`, `certipy-ad`, `bloodhound`, `pywhisker`, `coercer`, `fierce`, `arjun`, `dementor`, `commix`, `ghauri`, `jwt-tool`, `graphw00f`, `clairvoyance`, `xnLinkFinder`, `paramspider`, `mitmproxy`, `waymore`, `ssh-audit`, `volatility3`, `numpy`, `scipy`.
+Inside the container `127.0.0.1` is the **container's own loopback** — scanning it
+finds an empty container, which looks exactly like a broken MCP server. The host,
+and anything published on it, is `host.docker.internal`. Services on another
+Compose network that are not host-published need the Kali container attached to
+that network.
 
 ---
 
 ## Configuration
 
-### Environment Variables
+### Environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `KALI_API_URL` | `http://127.0.0.1:5000` | MCP client: URL of the Kali Flask server |
+| `MCP_TOOL_PROFILE` | `auto` | `auto`, `core`, `recon`, `web`, `ad`, `ctf`, `trim`, `full` |
+| `MCP_EXCLUDE_MODULES` | *(empty)* | Modules to drop from the selected profile, e.g. `callback_catcher,output_parser` |
+| `ZKM_INLINE_WAIT_SECONDS` | `50` | How long an auto-promoting tool waits inline before returning a `job_id` |
 | `API_PORT` | `5000` | Flask server port |
-| `API_BIND_ADDRESS` | `127.0.0.1` | Host address used by the Compose API port publication |
+| `API_BIND_ADDRESS` | `127.0.0.1` | Host address for the Compose API port publication |
 | `API_LISTEN_HOST` | `0.0.0.0` | API listener inside bridge mode; host-network mode defaults to `127.0.0.1` |
+| `KALI_API_TOKEN` | — | Optional shared API token; enforced on `/api/*` only when set |
 | `DEBUG_MODE` | `0` | Enable debug logging |
-| `KALI_API_TOKEN` | — | Optional shared API token; required on `/api/*` only when configured |
-| `REQUIRED_TOOLS` | — | Comma-separated binaries that must exist for `/ready` to return ready |
-| `JOB_MAX_COUNT` | `256` | Maximum retained background jobs |
-| `JOB_OUTPUT_MAX_LINES` | `2000` | Maximum retained output events per job |
-| `JOB_OUTPUT_MAX_CHARS` | `2097152` | Maximum retained output characters per job |
-| `JOB_OUTPUT_MAX_LINE_CHARS` | `4096` | Maximum retained characters per output event |
-| `JOB_INPUT_MAX_BYTES` | `65536` | Maximum input bytes accepted per job request |
-| `JOB_INPUT_QUEUE_SIZE` | `16` | Maximum queued input requests per job |
-| `JOB_OUTPUT_MAX_WAIT` | `30` | Maximum long-poll wait for job output |
-| `CTF_MAX_DOWNLOAD_BYTES` | `104857600` | Maximum CTF file download size; calls can request a lower limit |
-| `HTB_ROUTES` | — | Comma-separated CIDRs to route (e.g. `10.129.0.0/16,10.10.0.0/16`) |
+| `REQUIRED_TOOLS` | — | Comma-separated binaries that must exist for `/ready` to report ready |
+| `HTB_ROUTES` | — | Comma-separated CIDRs to route, e.g. `10.129.0.0/16,10.10.0.0/16` |
 | `EXTRA_HOSTS` | — | Comma-separated `hostname:ip` pairs added to `/etc/hosts` |
-| `VPN_DIR` | `./vpn` | Host directory mounted at `/vpn` (read-only) for VPN configs |
-| `SOCKS_BIND_ADDRESS` | `127.0.0.1` | Host address used by the Compose SOCKS port publication |
+| `VPN_DIR` | `./vpn` | Host directory mounted read-only at `/vpn`. Optional — `/vpn` is created at boot regardless, so `docker cp` works without a mount |
+| `SOCKS_BIND_ADDRESS` | `127.0.0.1` | Host address for the Compose SOCKS port publication |
 | `SOCKS_PORT` | `1080` | Published host SOCKS port |
 | `SOCKS_LISTEN_HOST` | `0.0.0.0` | SOCKS listener inside bridge mode; host-network mode defaults to `127.0.0.1` |
-| `KALI_API_URL` | `http://127.0.0.1:5000` | MCP client: URL of the Kali Flask server |
-| `MCP_TOOL_PROFILE` | `auto` | MCP profile: `auto` (capability-aware default), `core`, `recon`, `web`, `ad`, `ctf`, `trim`, or `full` |
-| `MCP_EXCLUDE_MODULES` | *(empty)* | Comma-separated tool modules to drop from the selected profile, e.g. `callback_catcher,output_parser` |
-| `INCLUDE_METASPLOIT` | `true` | Build argument: `true` creates the full default; `false` creates lean |
-| `INCLUDE_CADO_NFS` | `true` | Build argument: capability default; `false` is a faster development build without only CADO-NFS |
+| `JOB_OUTPUT_DIR` | `/app/tmp/jobs` in the image | Where full job logs are teed; falls back to the OS temp dir from source |
+| `JOB_MAX_COUNT` | `256` | Maximum retained background jobs |
+| `JOB_OUTPUT_MAX_LINES` / `_MAX_CHARS` / `_MAX_LINE_CHARS` | `2000` / `2097152` / `4096` | Bounds on the retained response window per job: output events, characters, characters per event |
+| `JOB_INPUT_MAX_BYTES` / `JOB_INPUT_QUEUE_SIZE` | `65536` / `16` | Maximum input bytes per job request, and queued input requests per job |
+| `JOB_OUTPUT_MAX_WAIT` | `30` | Maximum long-poll wait for job output |
+| `CTF_MAX_DOWNLOAD_BYTES` | `104857600` | Maximum CTF file download size; a call may request less |
+| `INCLUDE_METASPLOIT` | `true` | Build argument: `false` builds the lean variant |
+| `INCLUDE_CADO_NFS` | `true` | Build argument: `false` builds without CADO-NFS only |
 
-### Docker Compose
+Client flags mirror the first few: `--server`, `--profile`, `--api-token`,
+`--exclude-module`, `--timeout`, `--debug`.
+
+`--timeout` (default `90000`, i.e. 25h) is the HTTP read timeout for a synchronous
+call: a backstop for a wedged backend, not a scan budget. It must always outlive
+the backend's own per-tool budget (the longest is 86400s, for hydra and john). Set
+it lower and the client gives up before the backend can answer — the partial
+output of a timed-out scan is destroyed and the scan keeps running server-side,
+orphaned. The connect timeout stays 10s regardless.
+
+### Tool profiles
+
+The default `auto` profile starts from the complete tool set and, given a valid
+capability manifest (schema version 1), omits only the public tools the backend
+reports as unavailable — so the backend owns that list instead of the client
+keeping a parallel copy. On a lean image that is 7 of the 135 tools: the five
+`msf_session_*` tools plus `payload_generate` and `payload_templates`.
+
+Discovery fails open: unknown, malformed, older or unreachable capability data
+keeps the complete set, and a manifest that would hide more than half the surface
+is ignored as a likely backend regression. Core tools — command execution, file
+operations, host management, output parsing — are never omitted even if a manifest
+marks them unavailable. The failure directions are not symmetric: a tool that is
+present but broken fails once and the agent adapts, while a wrongly hidden tool is
+invisible for the life of the process, because discovery is a startup snapshot.
+Restart the client to refresh it.
+
+Pick a narrower profile, with `--profile web` or `MCP_TOOL_PROFILE=web`, only when
+a shorter list helps the agent choose tools more reliably:
+
+| Profile | Contents |
+|---------|----------|
+| `core` | Command execution, files, hosts, output parsing |
+| `recon` | Core plus scanners, fingerprinting, exploit suggestions |
+| `web` | Core plus web/API testing and callback capture (67 tools) |
+| `ad` | Core plus AD, pivoting, SSH, shells, payloads, VPN |
+| `ctf` | Core plus scanners, CTF platforms, payloads, shells, VPN, callbacks |
+| `trim` | All modules except `callback_catcher` and `output_parser` (125 tools) |
+| `full` | All 17 modules, 135 tools; operator override that ignores discovery |
+
+An invalid profile name fails at startup. `trim` drops the two modules that
+duplicate what most MCP hosts already provide: `callback_catcher` (9 tools,
+overlapping hosted webhook/interactsh services) and `output_parser` (1 tool,
+duplicating the agent's own stdout parsing). Prefer `full` when the host has no
+webhook capability of its own, or when the engagement runs on an isolated network
+with no egress — the built-in listener is the only one that works there.
+
+`--exclude-module` / `MCP_EXCLUDE_MODULES` subtracts modules from whichever
+profile is selected, so you can tune the surface without a new profile:
 
 ```bash
-# Standard (bridge networking, port-mapped)
-docker compose up -d
-
-# Host networking (qualified on native Linux Docker Engine and Windows Docker Desktop 4.84)
-docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
-
-# Lean qualified variant; both qualified variants include CADO-NFS
-INCLUDE_METASPLOIT=false INCLUDE_CADO_NFS=true docker compose build
-
-# Faster development build without only CADO-NFS
-INCLUDE_CADO_NFS=false docker compose build
+zebbern-kali-mcp --profile web --exclude-module callback_catcher               # 58 tools
+zebbern-kali-mcp --profile full --exclude-module callback_catcher,output_parser # 125, same as trim
 ```
 
-The Compose build defaults are `INCLUDE_METASPLOIT=true` and `INCLUDE_CADO_NFS=true`. Both qualified full and lean variants include CADO-NFS. When `INCLUDE_CADO_NFS=true`, source retrieval, build, or executable verification failure stops the image build. Setting it to `false` intentionally removes only CADO-NFS.
+Names are case-insensitive and whitespace-tolerant; an unknown name fails at
+startup listing every valid one. Exclusion composes with `auto`, applying after
+capability discovery.
 
-The Kali base image, Go modules, Git sources, and moving standalone downloads are pinned. Kali rolling APT packages and Python transitive dependency resolution are not bit-identical snapshots.
+### Compose, image variants and networking
 
-The compose file grants `NET_RAW` + `NET_ADMIN` capabilities and provides `/dev/net/tun` for VPN and Ligolo support. In bridge mode, API and SOCKS publications bind to loopback. In host-network mode, both services listen on loopback. Native Linux Docker Engine and the current Windows Docker Desktop 4.84 setup are qualified. Docker Desktop requires version 4.34 or later, an explicit host-networking opt-in and restart, and Linux containers; it supports TCP and UDP only, cannot use Enhanced Container Isolation, and cannot bind a specific host-interface IP. Native Linux Docker Engine retains direct host-network semantics. Set the corresponding bind or listen variable when another host must connect.
+```bash
+docker compose up -d                                                    # bridge networking, port-mapped
+docker compose -f docker-compose.yml -f docker-compose.host.yml up -d   # host networking
+INCLUDE_METASPLOIT=false docker compose build                           # lean variant
+INCLUDE_CADO_NFS=false docker compose build                             # faster dev build, CADO-NFS only removed
+```
 
-For a remote API, set the same `KALI_API_TOKEN` value in the backend and MCP client environments. You can also pass `--api-token` to the MCP client. Direct REST clients send this value in the `X-API-Key` header. Health endpoints remain unauthenticated for Docker and orchestrator checks.
+Build defaults are `INCLUDE_METASPLOIT=true` and `INCLUDE_CADO_NFS=true`; both
+qualified variants (full and lean) include CADO-NFS. With `INCLUDE_CADO_NFS=true`,
+a failure to fetch, build or verify the CADO-NFS executable stops the image build.
+
+Compose grants `NET_RAW` and `NET_ADMIN`, provides `/dev/net/tun`, and publishes
+the API and SOCKS ports on loopback; in host-network mode both services listen on
+loopback. Set the matching bind or listen variable when another host must connect.
+
+Host networking is qualified on native Linux Docker Engine, which keeps direct
+host-network semantics, and on the current Windows Docker Desktop 4.84 setup.
+Docker Desktop needs version 4.34 or later, host networking enabled in
+**Settings > Resources > Network**, and a restart before the overlay works; there
+it supports TCP and UDP only (layer 4), does not work with Enhanced Container
+Isolation, supports Linux containers only, and cannot bind a specific
+host-interface IP.
+
+The Kali base image, Go modules, Git sources and standalone downloads are pinned.
+Kali rolling APT packages and Python transitive dependency resolution are not
+bit-identical snapshots. `linux/amd64` is the only qualified architecture.
+
+For a remote backend, set the same `KALI_API_TOKEN` in the backend and the client
+environments, or pass `--api-token`; direct REST clients send it in the
+`X-API-Key` header. Health endpoints stay unauthenticated so Docker and
+orchestrator checks keep working.
+
+---
+
+## Troubleshooting
+
+**"cannot reach the Kali API server"** — the backend is not running or
+`KALI_API_URL` points elsewhere. The error text includes the full `docker run`
+line from [Quick start](#quick-start).
+
+**A tool is missing, or a documented argument is ignored** — suspect a stale
+client before a bug. Call `health`: it returns the backend's `version` plus the
+client's own `client_version`, `version_match`, and a `version_note` when they
+disagree. An unpinned `uvx zebbern-kali-mcp` reuses whatever environment uv
+already cached for that command, so restarting the MCP server can re-run an older
+wheel, and `--refresh` updates the cache without necessarily changing what runs —
+pin `uvx zebbern-kali-mcp@<version>` instead. If `version_match` stays false after
+a correct pin, an older server process is probably still holding the connection,
+because hosts start new servers without stopping the old ones. The version in the
+argv is the version running:
+
+```powershell
+Get-CimInstance Win32_Process | ? { $_.CommandLine -like '*zebbern*' } |
+  Select ProcessId, CreationDate, CommandLine
+```
+
+**`vpn_connect` fails whatever the config says** — the container is missing
+`--cap-add=NET_ADMIN`, `--cap-add=NET_RAW` or `--device=/dev/net/tun`.
+
+**A scan of `127.0.0.1` finds nothing** — that is the container's loopback. Use
+`host.docker.internal`.
+
+**A long scan or a listener disappeared** — jobs, reverse-shell listeners, SSH
+sessions and MSF sessions live in memory. A backend restart (including
+`docker compose up -d --force-recreate`) drops them, and `job_list()` then
+answers `{"jobs": [], "count": 0}`, which means "this backend has run nothing",
+not "nothing is running". Pivot tunnels are the exception: they persist to
+`state.json` and reload as `status="stopped"`.
+
+**`gowitness` reports success but writes no screenshot** — headless Chrome needs
+more shared memory than Docker's 64MB default. Run with `--shm-size=1g`
+(Compose already does).
+
+**The local image is stale** — `:latest` moves on every backend change. Pull and
+recreate, then compare the local digest against the remote one:
+
+```bash
+docker compose pull && docker compose up -d --force-recreate
+docker buildx imagetools inspect ghcr.io/zebbern/zebbern-kali-mcp:latest
+docker image inspect ghcr.io/zebbern/zebbern-kali-mcp:latest --format '{{index .RepoDigests 0}}'
+```
+
+---
+
+## MCP tool modules
+
+135 tools across 17 client modules in `mcp_tools/`, each backed by a Flask
+blueprint in `zebbern-kali/api/blueprints/` and core logic in `zebbern-kali/core/`.
+
+| Module | What it covers |
+|--------|----------------|
+| `kali_tools` | Nmap, Nikto, Gobuster, Dirb, WPScan, SQLMap, Hydra, John, enum4linux, Subfinder, httpx, Arjun, Fierce, ssh-audit, gowitness, and more |
+| `ad_tools` | Active Directory — netexec, BloodHound, impacket, certipy, bloodyAD, Kerberoasting, Pass-the-Hash, LDAP |
+| `command_exec` | Arbitrary command execution, streaming execution, background jobs, `health` |
+| `ssh_manager` | SSH session lifecycle — connect, execute, transfer, disconnect |
+| `reverse_shell` | Reverse shell listeners, payloads and session management |
+| `metasploit` | Metasploit Framework — persistent console sessions, module execution |
+| `network_pivot` | Chisel, Ligolo-ng, SSH tunnels, socat, ProxyChains, SOCKS proxy |
+| `vpn` | WireGuard and OpenVPN with automatic SOCKS5 proxy |
+| `api_security` | GraphQL introspection and fuzzing, JWT analysis and cracking, nuclei, ffuf, rate-limit and auth-bypass tests |
+| `web_fingerprinter` | Technology, header and WAF fingerprinting |
+| `exploit_suggester` | searchsploit lookups and exploit suggestions from scan results |
+| `payload_generator` | msfvenom payloads, one-liners, templates, payload hosting |
+| `file_operations` | `kali_upload` / `kali_download` for the container, plus target transfers |
+| `callback_catcher` | Built-in HTTP + DNS callback listener for isolated networks |
+| `ctf_platform` | CTFd / rCTF API — challenges, flags, scoreboard, downloads |
+| `hosts_management` | `/etc/hosts` inside the container |
+| `output_parser` | Structured parsing of tool output for AI consumption |
+
+`zebbern_exec` and `exec_stream` accept any shell command, `ssh`, `scp`, `rsync`,
+`netcat` and `telnet` included — the contract accepts them, it does not promise
+every binary is bundled in every image variant. The dedicated SSH, pivot and
+payload managers are conveniences, not restrictions. Nothing is masked in
+command output or logs.
+
+### How it works
+
+```
+HOST (Windows/Linux/macOS)                 DOCKER (kalilinux/kali-rolling)
+AI agent → MCP tool (mcp_tools/*)   HTTP   Flask API → api/blueprints/* → core/*
+         → KaliToolsClient  ──── POST /api/* :5000 ────→  nmap, sqlmap, msf, …
+                            ←──── JSON response ───────
+```
+
+`entrypoint.sh` sets up routes, `/etc/hosts`, `/vpn`, TUN and IP forwarding before
+the Flask server starts. The client stays a lightweight PyPI package
+(`uvx zebbern-kali-mcp`), so the heavy tooling lives only in Docker and never on
+your host.
+
+---
+
+## What is in the image
+
+Core tool failures stop the build. Tools marked optional fall back to a warning;
+check `/ready` and the relevant tool-status endpoint for runtime availability.
+
+**Scanning** — nmap (service/version detection, NSE), masscan, sslscan,
+ssh-audit, nikto, gobuster, dirb, wpscan, sqlmap, ffuf, nuclei, katana (v1.1.0
+pre-built binary), amass, gowitness, arjun (parameter discovery), net-snmp
+clients (snmpwalk, snmpget, snmpbulkwalk — the only SNMP primitive here, and no
+wrapper covers it).
+
+**Subdomains, DNS and URLs** — subfinder, httpx, assetfinder, waybackurls,
+waymore, amass, massdns, fierce, mapcidr, subzy (takeover checks).
+
+**Passwords** — hydra, john, hashcat (GPU-accelerated).
+
+**Active Directory** — netexec (primary SMB/LDAP/WinRM tool; crackmapexec is
+deprecated), impacket 0.13.0 (pinned for stable behaviour across rebuilds; ~50
+scripts symlinked as `impacket-*`), bloodhound.py, bloodyAD, certipy-ad (ADCS),
+responder, evil-winrm, krbrelayx, gMSADumper, PetitPotam, coercer, dementor,
+winrmexec, pywhisker, ldapdomaindump, man-spider 2.0.0 (`manspider` — crawls
+share file content by keyword, regex or extension, where `ad_smb_enum` only
+lists shares and tests access; it prints nothing to stdout, logging to
+`~/.manspider/logs/`, so pass `-l /app/tmp/manspider-loot` to keep loot on the
+`kali-tmp` volume rather than the container layer).
+
+**Exploitation** — metasploit-framework, commix, ghauri, dalfox, byp4xx (403
+bypass), git-dumper 1.0.9 (reconstructs a repository from an exposed `.git`
+directory, which `fingerprint_url` only reports the existence of),
+exploitdb/searchsploit.
+
+**JavaScript analysis** — getJS, jsluice, xnLinkFinder, SecretFinder, TruffleHog,
+js-beautify, webcrack (npm), ParamSpider.
+
+**API testing and proxies** — `jwt_tool` (`/opt/jwt_tool/`), graphw00f (GraphQL
+engine fingerprinting), clairvoyance (schema introspection), mitmproxy
+(`mitmdump`), OWASP ZAP (`zaproxy`), Caido CLI (optional; readiness key
+`caido-cli`).
+
+**Forensics and CTF** — binwalk, steghide, stegseek, zsteg, exiftool, foremost,
+volatility3, sleuthkit (`mmls`, `fls`, `icat`, `blkcat`), gdb, radare2,
+imagemagick, tesseract-ocr.
+
+**Binary, crypto and math (Python)** — angr, pwntools, pycryptodome, gmpy2,
+z3-solver, sympy, numpy, scipy, RsaCtfTool (`/opt/RsaCtfTool/`), cado-nfs
+(`/opt/cado-nfs/`, factorization of large keys). SageMath is not bundled in the
+current Kali rolling image.
+
+**Networking and pivoting** — scapy, tcpdump, socat, netcat, proxychains4,
+openvpn, wireguard-tools, chisel (Go binary plus a Windows `.exe` in
+`/opt/windows-tools/`), ligolo-ng v0.7.5 (proxy plus Linux and Windows agents in
+`/opt/ligolo-ng/`), cloudflared (optional; readiness key `cloudflared`), ngrok.
+
+**Privilege escalation** — LinPEAS (`/opt/privesc-tools/linpeas.sh`), WinPEAS
+(x64, x86, `.bat`, in `/opt/privesc-tools/`), Mimikatz
+(`/opt/windows-tools/mimikatz/`), RunasCs.exe (`/opt/windows-tools/`).
+
+**Cloud, media and containers** — awscli, boto3 (importable from the system
+interpreter: `zebbern_exec python3 -c 'import boto3'`), ffmpeg, sox (all format
+plugins), podman (needs `--privileged` at runtime), Playwright with Chromium for
+SPA testing, screenshots and JS-rendered pages.
+
+**Wordlists** — rockyou.txt (decompressed), SecLists, and compatibility symlinks
+at `/usr/share/wordlists/dirb/`.
+
+Python dependencies for the container are in `requirements.txt`; the Dockerfile
+installs the rest via pip and APT. The image sets `NO_COLOR=1`, `TERM=dumb`,
+`FORCE_COLOR=0`, `CI=true` and `PWNLIB_NOTERM=1` so tools emit clean, parseable
+text instead of banners, colours, progress bars and interactive prompts.
+
+### Callback catcher
+
+A built-in HTTP + DNS listener for isolated networks where webhook.site or
+interactsh cannot reach your targets, managed through the `callback_catcher`
+module. Defaults are TCP `8888` and UDP `5353`. A target can reach them directly
+through a VPN interface inside the container or with Linux host networking. In
+bridge mode, publish the callback ports on an address the target can reach (for
+example `8888:8888/tcp` and `5353:5353/udp`) — they are not published by default.
+
+---
+
+## Security
+
+> **This server intentionally provides unrestricted command execution and
+> powerful penetration-testing tools.**
+
+The default binds the API and SOCKS ports to `127.0.0.1`. Remote use is
+supported: choose an explicit bind address, set `KALI_API_TOKEN`, and put TLS or
+a trusted private network in front when traffic crosses an untrusted one. The
+container runs as `root` because several networking and assessment features
+require it. Use this only on systems you are authorised to test.
+
+---
+
+## Project layout
+
+```
+zebbern-kali-mcp/
+├── mcp_server.py           # MCP client entrypoint (FastMCP); ships in the wheel
+├── mcp_tools/              # MCP CLIENT, runs on the host — _client.py is the HTTP
+│                           #   transport, _autopromote.py the job promotion, then
+│                           #   one module per tool category (17)
+├── zebbern-kali/           # FLASK SERVER, runs in Docker — kali_server.py,
+│                           #   api/routes.py, api/blueprints/ (one per module),
+│                           #   core/ (command executor, job manager, tool logic)
+├── Dockerfile              # Multi-layer Kali image build
+├── docker-compose.yml      # Bridge-mode deployment (+ docker-compose.host.yml)
+├── entrypoint.sh           # Container init: routes, hosts, /vpn, TUN, forwarding
+├── requirements.txt        # Container Python dependencies
+├── pyproject.toml          # PyPI package config for the MCP client
+├── tests/                  # unit, live and integration suites
+├── vpn/                    # mount point for VPN configs
+└── CLAUDE.md               # maintainer and operational notes
+```
+
+---
+
+## Development
+
+```bash
+python -m pytest -q                     # 1506 passed, 6 skipped
+python -m pytest -m live -q             # 15 passed, 3 skipped; needs a backend on :5000
+python scripts/mutation_check.py --spec tests/mutations.json   # 103/103 guards verified red
+python tests/integration/probe_tools.py # calls all 135 tools; needs a backend
+```
+
+`pytest -m live` exercises real execution rather than a mocked client: background
+job state across separate MCP processes, `/etc/hosts` round-trips, nmap and
+fingerprinting against a lab target, verbatim command output. Each case opens its
+own MCP stdio session, so any state surviving between calls is provably
+server-side. It skips itself when no backend answers, which keeps CI green without
+Docker — so a green `pytest -q` alone proves nothing about tool execution.
+Override `KALI_API_URL`, `ZKM_LAB_HOST` and `ZKM_LAB_PORT` to point it elsewhere;
+from inside the container the host lab is `host.docker.internal`.
+
+`probe_tools.py` calls every tool once and diffs the outcome against
+`tests/integration/probe_baseline.json`, so a run prints only what changed. It is
+deliberately manual: real scanners, real listeners, and the public internet for a
+handful of OSINT tools the baseline marks best-effort. A raw BROKEN count is not a
+pass criterion — a tool truthfully reporting that no VPN is configured looks the
+same as one that regressed, and only the baseline tells them apart. Re-record it
+when a tool's expected outcome legitimately changes.
+
+### Live qualification fixtures
+
+```bash
+python tests/integration/run_smoke.py --image zebbern-kali-mcp:goal-full --network-mode bridge --expect-variant full
+python tests/integration/run_smoke.py --image zebbern-kali-mcp:goal-full --network-mode host  --expect-variant full
+python tests/integration/run_ad_lab.py --image zebbern-kali-mcp:goal-lean
+```
+
+Add `--check-trim` to `run_smoke.py` to also assert the live `trim` profile
+against the running image: it must expose 125 tools and omit exactly the nine
+`callback_*` tools plus `parse_tool_output`, with nothing else added or lost. It
+is opt-in because it costs one extra MCP session, and it is independent of the
+image variant, since `trim` is static and ignores capability discovery.
+
+The AD fixture is local, disposable and publishes no host ports. It proves local
+DNS, authenticated LDAP discovery and the public MCP/API enumeration path, and
+nothing else about Active Directory operations.
 
 ### Updating pinned build inputs
 
 1. Resolve an authoritative upstream version or commit.
 2. Update one Docker argument and its checksum when present.
-3. Run Docker contract tests and `docker build --check .`.
+3. Run the Docker contract tests and `docker build --check .`.
 4. Build full and lean with CADO-NFS enabled.
-5. Run image, bridge, AD, native Linux host-network, and current Windows Docker Desktop host-network smoke.
-6. Compare tool names, image IDs/sizes, and common layers before accepting the update.
+5. Run the image, bridge, AD, native-Linux host-network and Windows Docker
+   Desktop host-network smoke fixtures.
+6. Compare tool names, image IDs and sizes, and common layers before accepting.
 
-### Live qualification fixtures
+### Releasing
 
-Run the qualified fixtures against the specified locally built images:
-
-```bash
-python tests/integration/run_smoke.py --image zebbern-kali-mcp:goal-full --network-mode bridge --expect-variant full
-python tests/integration/run_ad_lab.py --image zebbern-kali-mcp:goal-lean
-python tests/integration/run_smoke.py --image zebbern-kali-mcp:goal-full --network-mode host --expect-variant full
-```
-
-Add `--check-trim` to any `run_smoke.py` invocation to additionally assert the live `trim` profile against the running image: it must expose 123 tools and omit exactly the nine `callback_*` tools plus `parse_tool_output`, with no other additions or losses. The check is opt-in because it costs one extra MCP session per run. It is independent of the image variant, since `trim` is a static profile that ignores capability discovery.
-
-```bash
-python tests/integration/run_smoke.py --image zebbern-kali-mcp:goal-full --network-mode bridge --expect-variant full --check-trim
-```
-
-`pytest -m live` runs the live tool suite against an already-running backend, exercising real execution rather than a mocked client: background job state across separate MCP processes, `/etc/hosts` round-trips, nmap and fingerprinting against a lab target, and verbatim command output. Each case opens its own MCP stdio session, so any state that survives between calls is provably server-side. The suite skips itself when no backend answers, which keeps CI green without Docker. Override `KALI_API_URL`, `ZKM_LAB_HOST`, and `ZKM_LAB_PORT` to point it elsewhere; from inside the container the host lab is reachable at `host.docker.internal`, not `127.0.0.1`.
-
-The AD fixture is local, disposable, and has no host-published ports. It proves only local DNS, authenticated LDAP discovery, and the public MCP/API enumeration path. It does not qualify other Active Directory operations. Host networking is qualified on native Linux Docker Engine and the current Windows Docker Desktop 4.84 setup after the explicit opt-in and restart. Desktop remains limited to TCP and UDP layer 4, Linux containers, no Enhanced Container Isolation, and no binding to a specific host-interface IP. `linux/amd64` is the only qualified image architecture.
-
----
-
-## Design Decisions
-
-| Decision | Rationale |
-|----------|-----------|
-| **Fail-fast core build** | Core tool failures stop the image build. Explicitly optional extras use warning fallbacks and remain visible through readiness or tool-status checks. |
-| **netexec over crackmapexec** | crackmapexec is deprecated. netexec is installed from the Kali repos as the primary SMB/LDAP/WinRM tool. |
-| **Custom callback catcher** | For isolated CTF/pentest networks where webhook.site or interactsh can't reach your targets. Built-in HTTP + DNS listener. |
-| **AI-agent optimized output** | `NO_COLOR=1`, `TERM=dumb`, `FORCE_COLOR=0`, `CI=true`, `PWNLIB_NOTERM=1` — suppresses banners, colors, progress bars, and interactive prompts so AI agents get clean, parseable text. |
-| **impacket pinned to 0.13.0** | Ensures stable AD tool behavior across rebuilds. |
-| **Separate client/server** | MCP client is a lightweight PyPI package (`uvx zebbern-kali-mcp`); the heavy tools live in Docker. Users never install pentest tools on their host. |
-
----
-
-## Project Structure
-
-```
-zebbern-kali-mcp/
-├── Dockerfile                  # Multi-layer Kali image build
-├── docker-compose.yml          # Standard bridge-mode deployment
-├── docker-compose.host.yml     # Host networking overlay
-├── entrypoint.sh               # Container init (routes, hosts, TUN, IP forwarding)
-├── requirements.txt            # Python dependencies for the container
-├── pyproject.toml              # PyPI package config for the MCP client
-├── mcp_server.py               # MCP client entrypoint (FastMCP server)
-│
-├── mcp_tools/                  # MCP CLIENT (runs on host)
-│   ├── _client.py              #   KaliToolsClient — HTTP transport
-│   ├── kali_tools.py           #   Nmap, Nikto, Gobuster, SQLMap, etc.
-│   ├── ad_tools.py             #   Active Directory tools
-│   ├── callback_catcher.py     #   HTTP/DNS callback listener
-│   └── ... (17 modules)        #   One module per tool category
-│
-├── zebbern-kali/               # FLASK SERVER (runs in Docker)
-│   ├── kali_server.py          #   Flask app entry point
-│   ├── api/
-│   │   ├── routes.py           #   Blueprint registration
-│   │   └── blueprints/         #   17 Flask blueprints (one per module)
-│   │       ├── tools.py        #     Scanning tools routes
-│   │       ├── ad.py           #     AD tool routes
-│   │       ├── callback.py     #     Callback catcher routes
-│   │       └── ...
-│   ├── core/                   #   Business logic
-│   │   ├── config.py           #     Configuration & constants
-│   │   ├── command_executor.py #     Subprocess execution
-│   │   ├── ad_tools.py         #     AD tool logic
-│   │   └── ...
-│   └── tools/
-│       └── kali_tools.py       #   Tool wrappers
-│
-├── vpn/                        # Mount point for VPN configs
-└── README.md                   # Project overview and setup guide
-```
-
----
-
-## Usage
-
-Once installed, ask your AI assistant to use the Kali tools:
-
-> "Scan 10.10.10.5 with nmap"
-> "Run nuclei against example.com"
-> "Connect to the HTB VPN and start recon"
-> "Enumerate AD with bloodhound against dc01.corp.local"
-> "Start a callback listener on port 8080"
-
-The assistant calls MCP tools, which make HTTP requests to the Flask API inside Docker — no manual commands needed.
-
-`zebbern_exec` and streaming command execution (`exec_stream`) accept shell commands including `ssh`, `scp`, `rsync`, `netcat`, and `telnet`. This contract accepts the commands; it does not assert that every command is bundled in every image variant. Dedicated SSH, pivot, and payload managers are structured conveniences, not mandatory restrictions. Set the command timeout for the operation. The backend keeps background-job input and output bounded, redacts common credential forms from command diagnostics, and cancels a job's process group on cancellation or timeout.
-
-Long-running or interactive commands can use the background job workflow:
-
-1. Call `zebbern_exec(..., background=true)` and keep the returned `job_id`.
-2. Poll `job_output(job_id)` or check `job_status(job_id)`.
-3. Use `send_input(job_id, text)` for interactive stdin.
-4. Call `job_cancel(job_id)` when the work is no longer needed.
-5. Call `job_list()` if the `job_id` is gone — it returns every job the backend
-   still tracks, newest first.
-
-Every subprocess-backed `tools_*` wrapper takes the same flag —
-`tools_nmap(target=..., background=true)`, `tools_hydra(..., background=true)`
-and so on — and returns a `job_id` driven by the same four tools. Set it for
-anything that may run longer than about a minute: an MCP client abandons a
-synchronous tool call around then, and the scan keeps running with no handle
-left to read or stop it.
-
-Job state and bounded output are kept in memory. Restarting the backend clears them.
-
----
-
-## Documentation
-
-This README is the primary source of truth for setup, usage, and tool reference. The separate MkDocs site and legacy VM install docs were removed.
-
----
-
-## Security Warning
-
-> **This server intentionally provides unrestricted command execution and powerful penetration-testing tools.**
-
-The local default binds the API and SOCKS ports to `127.0.0.1`. Remote use is supported: choose an explicit bind address, configure `KALI_API_TOKEN`, and place TLS or a trusted private network in front when traffic crosses an untrusted network. The container runs as `root` because several networking and assessment features require it. Use the tool only on systems you are authorized to test.
+Two release tracks: the wheel ships `mcp_server.py` and `mcp_tools/*`, while
+everything under `zebbern-kali/` ships in the Docker image, so a backend change is
+not delivered by a PyPI release. The version lives in `pyproject.toml` **and**
+`zebbern-kali/core/config.py` and must be bumped in both (a test fails if only one
+moves). `CLAUDE.md` has the full procedure.
 
 ---
 
 ## Contributing
 
-Contributions welcome! Please open a pull request with a clear summary of changes and any relevant test notes.
+Pull requests welcome — include a clear summary of the change and any relevant
+test notes.
 
 ---
 
-Built on the [Model Context Protocol](https://github.com/modelcontextprotocol) · Created by [Zebbern](https://github.com/zebbern)
+Built on the [Model Context Protocol](https://github.com/modelcontextprotocol) ·
+Created by [Zebbern](https://github.com/zebbern)

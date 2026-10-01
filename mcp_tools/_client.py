@@ -86,11 +86,23 @@ def _request_failure(
     if server and isinstance(error, requests.exceptions.ConnectionError):
         # An agent cannot act on a bare "ConnectionError"; name the backend and
         # the remedy. ``server`` is the origin only, so no token or path leaks.
+        #
+        # The remedy has to be runnable by whoever is reading it. This client
+        # ships on the wheel, so a `uvx zebbern-kali-mcp` user has no source
+        # checkout and no compose file -- "docker compose up -d" alone was an
+        # instruction they could not follow. The full `docker run` line below
+        # is the one invocation that boots a backend capable of everything the
+        # tool surface advertises: NET_ADMIN/NET_RAW and /dev/net/tun are what
+        # vpn_connect needs, and no reader could infer them.
         return {
             "error": (
                 f"{label}: {detail} - cannot reach the Kali API server at {server}. "
-                "Start it with 'docker compose up -d', or point KALI_API_URL at a "
-                "running server."
+                "Start the backend with: docker run -d --name zebbern-kali "
+                "--restart unless-stopped -p 127.0.0.1:5000:5000 "
+                "--cap-add=NET_ADMIN --cap-add=NET_RAW --device=/dev/net/tun "
+                "ghcr.io/zebbern/zebbern-kali-mcp:latest "
+                "(or 'docker compose up -d' from a source checkout), "
+                "or point KALI_API_URL at a running server."
             ),
             "success": False,
         }

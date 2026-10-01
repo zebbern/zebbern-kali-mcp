@@ -170,6 +170,14 @@ CASES = [
     ("reverse_shell_status", {}),
     ("reverse_shell_listener_start", {"port": 19005}),
     ("reverse_shell_command", {"session_id": "probe-missing", "command": "id"}),
+    # The raw send/read pair. Both 404 on an unknown session id, which is
+    # the only deterministic outcome available: the listener started above
+    # is never connected back to, so there is no live shell to drive. The
+    # read window is bounded at 2s so a future live session could not stall
+    # the run here.
+    ("reverse_shell_send_input", {"session_id": "probe-missing",
+     "input_text": "id\n"}),
+    ("reverse_shell_read_output", {"session_id": "probe-missing", "timeout": 2}),
     ("reverse_shell_send_payload", {"session_id": "probe-missing", "payload_command": "id"}),
     ("reverse_shell_upload_content", {"session_id": "probe-missing", "content": "x", "remote_file": "/tmp/x"}),
     ("reverse_shell_download_content", {"session_id": "probe-missing", "remote_file": "/tmp/x"}),
