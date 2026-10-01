@@ -1,5 +1,6 @@
 import math
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -13,6 +14,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1] / "zebbern-kali"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from core import job_manager as job_manager_module
 from core.job_manager import JobManager
 
 
@@ -102,7 +104,36 @@ def test_cancel_transitions_running_job_and_stops_process(manager):
     completed = wait_for_terminal(manager, job["job_id"])
 
     assert result["success"] is True
+    assert result["canceled"] is True
+    assert result["already_terminal"] is False
     assert completed["status"] == "canceled"
+
+
+def test_cancel_is_idempotent_on_a_finished_job(manager):
+    """Cancelling work that is already over is not a caller error.
+
+    It used to answer success False with an error string, which is
+    field-for-field what a failed cancel of a still-running job looks like --
+    the one case the operator has to act on. The explicit canceled flag keeps
+    the call from ever claiming it cancelled something it did not: success is
+    True, canceled is False, and the job's real status comes back with it.
+    """
+    job = manager.start(python_command("print('over')"), shell=False, timeout=5)
+    wait_for_terminal(manager, job["job_id"])
+
+    result = manager.cancel(job["job_id"])
+
+    assert result["success"] is True
+    assert result["canceled"] is False
+    assert result["already_terminal"] is True
+    assert result["status"] == "succeeded"
+    assert "succeeded" in result["note"]
+
+
+def test_cancel_still_raises_for_an_unknown_job(manager):
+    """Idempotence covers a job that is over, not one that never existed."""
+    with pytest.raises(KeyError, match="Unknown job"):
+        manager.cancel("missing")
 
 
 def test_output_buffers_drop_oldest_lines(manager):
@@ -122,8 +153,47 @@ def test_unknown_job_is_reported_consistently(manager):
         manager.get("missing")
 
 
-def test_output_wait_rejects_non_finite_or_excessive_values():
+def test_output_wait_clamps_excess_and_rejects_non_finite():
+    """An over-max wait is clamped and reported, not rejected.
+
+    The ceiling keeps one poll well under the harness's ~60s tool-call abort,
+    which is worth keeping -- but a 400 cost the operator the entire poll for
+    asking too high, and nothing advertised the bound until it tripped. The
+    clamp must not hide the reduction: wait_timeout is the wait actually used,
+    wait_capped says it was reduced, max_output_wait states the bound. A
+    non-finite wait is still a hard error.
+    """
     manager = JobManager(max_output_wait=2)
+    try:
+        job = manager.start(python_command("print('done')"), shell=False, timeout=60)
+        wait_for_terminal(manager, job["job_id"])
+
+        with pytest.raises(ValueError, match="finite"):
+            manager.read_output(job["job_id"], timeout=math.inf)
+        with pytest.raises(ValueError, match="negative"):
+            manager.read_output(job["job_id"], timeout=-1)
+
+        clamped = manager.read_output(job["job_id"], timeout=3, lines=10)
+        legal = manager.read_output(job["job_id"], timeout=1, lines=10)
+
+        assert clamped["wait_capped"] is True
+        assert clamped["wait_timeout"] == 2
+        assert clamped["max_output_wait"] == 2
+        assert clamped["stdout"] == ["done"]
+        assert legal["wait_capped"] is False
+        assert legal["wait_timeout"] == 1
+    finally:
+        manager.shutdown()
+
+
+def test_clamped_output_wait_actually_bounds_the_block():
+    """The clamp is the real wait, not only a reported number.
+
+    A running job that has printed nothing is the case the ceiling exists for:
+    uncapped, this call blocks for the full requested wait, which is how a poll
+    ends up abandoned by the harness instead of answering.
+    """
+    manager = JobManager(max_output_wait=0.2)
     try:
         job = manager.start(
             python_command("import time; time.sleep(30)"),
@@ -131,10 +201,25 @@ def test_output_wait_rejects_non_finite_or_excessive_values():
             timeout=60,
         )
 
-        with pytest.raises(ValueError, match="finite"):
-            manager.read_output(job["job_id"], timeout=math.inf)
-        with pytest.raises(ValueError, match="cannot exceed 2"):
-            manager.read_output(job["job_id"], timeout=3)
+        started = time.monotonic()
+        result = manager.read_output(job["job_id"], timeout=5)
+        elapsed = time.monotonic() - started
+
+        assert result["wait_capped"] is True
+        assert result["wait_timeout"] == pytest.approx(0.2)
+        assert elapsed < 2, f"the clamp did not bound the block ({elapsed:.2f}s)"
+    finally:
+        manager.shutdown()
+
+
+def test_an_over_max_wait_on_an_unknown_job_reports_the_unknown_job():
+    """Validation used to answer "timeout cannot exceed N" for a job that does
+    not exist, which hid the real problem behind a complaint about an argument.
+    Clamping first lets the lookup speak."""
+    manager = JobManager(max_output_wait=2)
+    try:
+        with pytest.raises(KeyError, match="Unknown job"):
+            manager.read_output("missing", timeout=120)
     finally:
         manager.shutdown()
 
@@ -352,6 +437,80 @@ def test_shutdown_catches_a_job_between_registration_and_process_start(monkeypat
             manager.start(python_command("print('late')"), shell=False, timeout=5)
     finally:
         manager.shutdown()
+
+
+def test_line_buffer_wrap_shapes_the_launch_command(monkeypatch):
+    """Where the buffering fix lives, asserted without needing GNU stdbuf.
+
+    A C-stdio tool whose stdout is a pipe full-buffers ~4-8KB and delivers
+    nothing until it fills or the process exits, so job_output showed a banner
+    and then silence for the whole scan. Only the child's libc can change that,
+    which is what stdbuf sets up; the parent's bufsize=1 cannot.
+
+    The sh form is the load-bearing part: a bare `stdbuf -oL <command>` prefix
+    cannot exec a shell builtin, so `cd /x && nmap` -- an ordinary job command
+    here -- would stop working. The two mismatched combinations mean something
+    specific to Popen and must stay unwrapped.
+    """
+    monkeypatch.setattr(job_manager_module, "_STDBUF_PATH", "/usr/bin/stdbuf")
+
+    assert JobManager._line_buffered_launch("cd /x && nmap -p1 h", True) == [
+        "/usr/bin/stdbuf",
+        "-oL",
+        "-eL",
+        "/bin/sh",
+        "-c",
+        "cd /x && nmap -p1 h",
+    ]
+    assert JobManager._line_buffered_launch(["nmap", "-p1", "h"], False) == [
+        "/usr/bin/stdbuf",
+        "-oL",
+        "-eL",
+        "nmap",
+        "-p1",
+        "h",
+    ]
+    assert JobManager._line_buffered_launch(["nmap"], True) is None
+    assert JobManager._line_buffered_launch("nmap", False) is None
+
+    monkeypatch.setattr(job_manager_module, "_STDBUF_PATH", None)
+    assert JobManager._line_buffered_launch("nmap -p1 h", True) is None
+
+
+@pytest.mark.skipif(
+    job_manager_module._STDBUF_PATH is None,
+    reason="GNU stdbuf is absent on this system (non-Linux userland)",
+)
+def test_a_started_job_is_launched_line_buffered(manager, monkeypatch):
+    """End to end: the wrap reaches Popen and the job still works.
+
+    Also pins that the shell moved from Popen's shell=True into stdbuf's argv.
+    Leaving shell=True with a list would run bare `stdbuf` on POSIX.
+    """
+    recorded: dict[str, object] = {}
+    real_popen = subprocess.Popen
+
+    def spy(cmd, **kwargs):
+        recorded["cmd"] = cmd
+        recorded["shell"] = kwargs.get("shell")
+        return real_popen(cmd, **kwargs)
+
+    monkeypatch.setattr("core.job_manager.subprocess.Popen", spy)
+
+    job = manager.start("echo hi", shell=True, timeout=10)
+    completed = wait_for_terminal(manager, job["job_id"])
+
+    assert recorded["cmd"] == [
+        job_manager_module._STDBUF_PATH,
+        "-oL",
+        "-eL",
+        "/bin/sh",
+        "-c",
+        "echo hi",
+    ]
+    assert recorded["shell"] is False
+    assert completed["status"] == "succeeded"
+    assert manager.read_output(job["job_id"], lines=10)["stdout"] == ["hi"]
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows taskkill fallback")

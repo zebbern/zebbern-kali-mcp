@@ -20,12 +20,25 @@ def _fail_with(monkeypatch, client, error):
 
 
 def test_unreachable_backend_names_the_server_and_the_remedy(monkeypatch):
+    """The remedy must be runnable by the reader, not only by a checkout.
+
+    This client ships on the wheel, so the typical reader installed it with
+    `uvx zebbern-kali-mcp` and has no compose file -- "docker compose up -d"
+    on its own named a file they do not have. The full `docker run` line has
+    to be present, including the capabilities and the tun device, because
+    vpn_connect needs them and nobody could infer them from an error.
+    """
     client = _client()
 
     result = _fail_with(monkeypatch, client, requests.exceptions.ConnectionError())
 
     assert result["success"] is False
     assert "http://127.0.0.1:5000" in result["error"]
+    assert "docker run" in result["error"]
+    assert "ghcr.io/zebbern/zebbern-kali-mcp" in result["error"]
+    assert "--cap-add=NET_ADMIN" in result["error"]
+    assert "--cap-add=NET_RAW" in result["error"]
+    assert "--device=/dev/net/tun" in result["error"]
     assert "docker compose up -d" in result["error"]
     assert "KALI_API_URL" in result["error"]
 
@@ -165,3 +178,78 @@ def test_valid_base64_still_uploads():
     result = _upload_tools()["kali_upload"](content="cHJvYmU=", remote_path="/tmp/x")
 
     assert result["success"] is True
+
+
+def _recording_upload_tools():
+    """Same capture, but the client records what was actually posted."""
+    import mcp_tools.file_operations as file_operations
+
+    captured = {}
+    sent = {}
+
+    class Recorder:
+        def tool(self, *args, **kwargs):
+            def decorator(function):
+                captured[function.__name__] = function
+                return function
+
+            return decorator
+
+    class Client:
+        def safe_post(self, endpoint, data):
+            sent["endpoint"] = endpoint
+            sent["data"] = data
+            return {"success": True}
+
+    file_operations.register(Recorder(), Client())
+    return captured, sent
+
+
+def test_kali_upload_tells_an_agent_how_to_write_plain_text():
+    """The primitive existed; nothing told an agent it was the one to reach for.
+
+    "Upload content to the Kali server filesystem" does not answer "how do I
+    write this text to a file in the container", so the question got answered
+    by nesting base64 inside YAML inside a bash command line instead. The
+    description has to name the encoding step, because that step is the whole
+    reason the obvious call fails.
+    """
+    doc = _upload_tools()["kali_upload"].__doc__
+
+    assert 'base64.b64encode(text.encode("utf-8")).decode("ascii")' in doc
+
+
+def test_kali_upload_does_not_promise_an_encoding_switch_it_has_not_got():
+    """`encoding` has no reader on this route, and the docstring must say so.
+
+    api/kali/upload hands content straight to upload_to_kali_with_verification,
+    which base64-decodes unconditionally and takes no encoding argument. A
+    docstring reading "Content encoding (utf-8, binary)" invites a caller to
+    pass utf-8 and expect literal text, which silently writes base64 text to
+    disk instead -- the same shape as the target_upload_file default this repo
+    already paid for.
+    """
+    doc = _upload_tools()["kali_upload"].__doc__
+
+    assert "no effect" in doc
+
+
+def test_kali_upload_posts_the_caller_content_unchanged():
+    """Behaviour behind the docstring: the client re-encodes nothing.
+
+    The description tells the caller to encode the bytes themselves, so it is
+    only true as long as the wrapper forwards `content` verbatim and hashes
+    the decoded bytes it claims to hash.
+    """
+    import base64
+    import hashlib
+
+    tools, sent = _recording_upload_tools()
+    content = base64.b64encode("héllo\n".encode("utf-8")).decode("ascii")
+
+    result = tools["kali_upload"](content=content, remote_path="/tmp/x")
+
+    assert result["success"] is True
+    assert sent["endpoint"] == "api/kali/upload"
+    assert sent["data"]["content"] == content
+    assert sent["data"]["sha256"] == hashlib.sha256("héllo\n".encode("utf-8")).hexdigest()

@@ -8,15 +8,39 @@ def register(mcp: FastMCP, kali_client) -> None:
     """Register network pivot tools."""
 
     @mcp.tool()
-    def pivot_chisel_server(port: int = 8080, reverse: bool = True) -> Dict[str, Any]:
+    def pivot_chisel_server(
+        port: int = 8080, reverse: bool = True,
+        advertised_host: str = "", socks_port: int = 1080,
+    ) -> Dict[str, Any]:
         """
         Start a Chisel server for tunneling.
 
         Args:
             port: Listening port (default: 8080)
             reverse: Allow reverse tunnels (default: True)
+            advertised_host: Address the TARGET will dial in the returned
+                connect_command. Leave blank to auto-pick the VPN tunnel
+                address; with no VPN it falls back to this box's default-route
+                source address, which inside the container is the docker bridge
+                IP no target can reach. Check `advertised_host_source` in the
+                reply ("explicit" / "vpn" / "default_route") and
+                `advertised_host_note`.
+            socks_port: Requested reverse-SOCKS port (default: 1080). Bumped
+                past any port the VPN SOCKS proxy or another tunnel already
+                holds -- 1080 is the VPN's own microsocks, and asking chisel
+                for it leaves the client looping on "Server cannot listen". The
+                chosen port comes back as `reverse_socks_port`, with any skips
+                named in `socks_port_note`.
+
+        The reply also carries `connect_command_forward`, the plain
+        R:<LOCAL_PORT>:<TARGET_IP>:<TARGET_PORT> template to hand
+        pivot_chisel_client when you want a single port forward instead of
+        SOCKS.
         """
-        data = {"port": port, "reverse": reverse}
+        data = {
+            "port": port, "reverse": reverse,
+            "advertised_host": advertised_host, "socks_port": socks_port,
+        }
         return kali_client.safe_post("api/pivot/chisel/server", data)
 
     @mcp.tool()

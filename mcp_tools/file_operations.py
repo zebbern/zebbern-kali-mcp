@@ -64,12 +64,26 @@ def register(mcp: FastMCP, kali_client) -> None:
         encoding: str = "utf-8", verify_checksum: bool = True,
     ) -> Dict[str, Any]:
         """
-        Upload content to the Kali server filesystem.
+        Write a file onto the Kali container filesystem from base64 content.
+
+        This is the primitive for getting text or bytes into the container
+        without going through a shell: config files, wordlists, scripts,
+        target lists, YAML, anything whose quoting or newlines would be
+        mangled by nesting it in a `zebbern_exec` command line. Encode the
+        bytes you want on disk as base64 and pass them as `content`; the
+        server base64-decodes and writes exactly those bytes.
+
+        To write literal text, base64-encode its UTF-8 bytes first -- e.g.
+        `base64.b64encode(text.encode("utf-8")).decode("ascii")`. There is no
+        plain-text mode: this route always decodes.
 
         Args:
             content: Base64-encoded file content
             remote_path: Destination path on the Kali server
-            encoding: Content encoding (utf-8, binary)
+            encoding: Accepted for call compatibility and has no effect here.
+                The api/kali/upload route decodes base64 unconditionally and
+                never reads this value, so it cannot make the server write
+                `content` through literally. Leave it alone.
             verify_checksum: Compute and send SHA256 checksum for integrity verification
         """
         data = {"content": content, "remote_path": remote_path, "encoding": encoding}
@@ -83,7 +97,11 @@ def register(mcp: FastMCP, kali_client) -> None:
     @mcp.tool()
     def kali_download(remote_path: str, verify_checksum: bool = True) -> Dict[str, Any]:
         """
-        Download file content from the Kali server as base64.
+        Read a file off the Kali container filesystem as base64 content.
+
+        The counterpart to `kali_upload`: use it to read back scan output,
+        a config file, or a loot file without piping it through a shell,
+        then base64-decode the returned `content` locally.
 
         Args:
             remote_path: Path to file on the Kali server

@@ -41,13 +41,91 @@ def execute_shell_command(session_id):
             return jsonify({"error": "Command parameter is required"}), 400
 
         command = params["command"]
-        timeout = params.get("timeout", 60)
+        # 60 was exactly the MCP harness's ~60s abort, so a command that needed
+        # the whole budget raced it and our own timed_out result never came back.
+        timeout = params.get("timeout", 45)
+        suppress_history = params.get("suppress_history", True)
 
         shell_manager = active_sessions[session_id]
-        result = shell_manager.send_command(command, timeout)
+        result = shell_manager.send_command(command, timeout, suppress_history)
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error executing shell command: {str(e)}")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+
+@bp.route("/api/reverse-shell/<session_id>/send-raw", methods=["POST"])
+def send_raw_to_shell(session_id):
+    """Write bytes to a caught shell with no markers and no capture.
+
+    job_manager's send_input only reaches zebbern_exec jobs; reverse shells live
+    in active_sessions, so there was no lower-level way in when the marker
+    scrape in /command came back empty. Read the reply with /read-output.
+    """
+    try:
+        if session_id not in active_sessions:
+            return jsonify({"error": f"Session {session_id} not found"}), 404
+
+        params = request.json
+        if not params or "input" not in params:
+            return jsonify({"error": "input parameter is required"}), 400
+
+        input_text = params["input"]
+        if not isinstance(input_text, str):
+            return jsonify({"error": "input must be a string"}), 400
+
+        shell_manager = active_sessions[session_id]
+        result = shell_manager.send_raw(input_text)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error sending raw input to shell: {str(e)}")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+
+@bp.route("/api/reverse-shell/<session_id>/read-output", methods=["GET"])
+def read_raw_shell_output(session_id):
+    """Drain whatever the caught shell has sent, without sending a command.
+
+    ``success`` here means the read window ran, not that anything arrived --
+    an empty ``output`` with ``success: true`` is a quiet shell, and only
+    repeated empty windows plus reverse_shell_status' ``shell_responsive`` say
+    whether the channel is usable. ``lines`` bounds this window, not the
+    session: call again for more.
+
+    ``window_limit`` is a hard ceiling the manager now honours inside a single
+    read as well as between reads, and the surplus is carried on the session
+    rather than dropped. ``carry_over`` says how much is waiting, because
+    "I got exactly my limit" otherwise reads the same as "that was everything".
+    """
+    try:
+        if session_id not in active_sessions:
+            return jsonify({"error": f"Session {session_id} not found"}), 404
+
+        try:
+            timeout = int(request.args.get("timeout", 5))
+            max_lines = int(
+                request.args.get("lines", request.args.get("max_lines", 100))
+            )
+        except (TypeError, ValueError):
+            return jsonify({"error": "timeout and lines must be integers"}), 400
+
+        drop_shell_noise = str(
+            request.args.get("drop_shell_noise", "false")
+        ).strip().lower() in ("1", "true", "yes", "on")
+
+        shell_manager = active_sessions[session_id]
+        output = shell_manager.read_output(timeout, max_lines, drop_shell_noise)
+        return jsonify({
+            "success": True,
+            "output": output,
+            "session_id": session_id,
+            "lines_returned": len(output.split("\n")) if output else 0,
+            "window_limit": max_lines,
+            "carry_over": shell_manager.raw_carry_over(),
+            "drop_shell_noise": drop_shell_noise,
+        })
+    except Exception as e:
+        logger.error(f"Error reading shell output: {str(e)}")
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 

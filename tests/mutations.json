@@ -341,5 +341,411 @@
     "old": "    (\"ad_ldap_enum\", {\"domain\": \"probe.test\", \"username\": \"u\", \"password\": \"p\",\n     \"dc_ip\": \"127.0.0.1\"}),",
     "new": "    (\"ad_ldap_enum\", {\"domain\": \"probe.test\", \"username\": \"u\", \"password\": \"p\"}),",
     "tests": "tests/test_probe_harness.py"
+  },
+  {
+    "name": "zebbern_exec stops auto-promoting",
+    "file": "mcp_tools/command_exec.py",
+    "old": "        result = run_promotable(\n            kali_client, \"api/exec\", data,\n            heavy=False, background=background,\n        )",
+    "new": "        result = kali_client.safe_post(\"api/exec\", data)",
+    "tests": "tests/test_zebbern_exec_promotion.py"
+  },
+  {
+    "name": "zebbern_exec takes a heavy semaphore slot",
+    "file": "mcp_tools/command_exec.py",
+    "old": "            heavy=False, background=background,",
+    "new": "            heavy=True, background=background,",
+    "tests": "tests/test_zebbern_exec_promotion.py"
+  },
+  {
+    "name": "a signal exit goes back to being unexplained",
+    "file": "mcp_tools/command_exec.py",
+    "old": "    name = _SIGNAL_EXITS.get(result.get(\"return_code\"))",
+    "new": "    name = None",
+    "tests": "tests/test_zebbern_exec_promotion.py"
+  },
+  {
+    "name": "the signal note clobbers the truncation note",
+    "file": "mcp_tools/command_exec.py",
+    "old": "    result.setdefault(\"note\", message)",
+    "new": "    result[\"note\"] = message",
+    "tests": "tests/test_zebbern_exec_promotion.py"
+  },
+  {
+    "name": "the inline poll loses its short first interval",
+    "file": "mcp_tools/_autopromote.py",
+    "old": "    interval = min(poll, _INITIAL_POLL)",
+    "new": "    interval = poll",
+    "tests": "tests/test_autopromote.py"
+  },
+  {
+    "name": "reverse shell: match the echoed marker by substring again",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "    return _ANSI_RE.sub(\"\", line).strip() == marker",
+    "new": "    return marker in line",
+    "tests": "tests/test_reverse_shell_command_outcome.py"
+  },
+  {
+    "name": "reverse shell: anchor the base64 slice on the first (echoed) marker again",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "        rf\"(?m)^{_MARKER_PAD}{re.escape(marker)}{_MARKER_PAD}$\", text",
+    "new": "        re.escape(marker), text",
+    "tests": "tests/test_reverse_shell_command_outcome.py"
+  },
+  {
+    "name": "reverse shell: status infers responsiveness instead of measuring it",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "                self._shell_responsive = bool(end_marker_found and not session_closed)",
+    "new": "                self._shell_responsive = True",
+    "tests": "tests/test_reverse_shell_command_outcome.py"
+  },
+  {
+    "name": "reverse shell: send_raw stops writing to the pty",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "            written = os.write(self.master_fd, payload)",
+    "new": "            written = len(payload)",
+    "tests": "tests/test_reverse_shell_raw_io.py"
+  },
+  {
+    "name": "reverse shell: read_output drops shell noise by default again",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "        drop_shell_noise: bool = False,",
+    "new": "        drop_shell_noise: bool = True,",
+    "tests": "tests/test_reverse_shell_raw_io.py"
+  },
+  {
+    "name": "reverse shell: the history prelude latch never sets",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "        self._history_prelude_sent = True",
+    "new": "        self._history_prelude_sent = False",
+    "tests": "tests/test_reverse_shell_history_suppression.py"
+  },
+  {
+    "name": "reverse shell: unguard the history prelude so a dash target errors into the stream",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "            \"set +o history 2>/dev/null; \"",
+    "new": "            \"set +o history; \"",
+    "tests": "tests/test_reverse_shell_history_suppression.py"
+  },
+  {
+    "name": "reverse shell: skip the history prelude drain",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "        self._drain_until_marker(marker, _PRELUDE_DRAIN_SECONDS)",
+    "new": "        pass",
+    "tests": "tests/test_reverse_shell_history_suppression.py"
+  },
+  {
+    "name": "chisel server: advertise the bridge IP, ignore the VPN",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "        vpn_ip = self._vpn_tun_ip()",
+    "new": "        vpn_ip = \"\"",
+    "tests": "tests/test_pivot_advertised_address.py"
+  },
+  {
+    "name": "chisel server: reuse 1080 even when taken",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "            if port in taken or self._is_port_in_use(port):",
+    "new": "            if False:",
+    "tests": "tests/test_pivot_advertised_address.py"
+  },
+  {
+    "name": "pivot list: claim every listener is up",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "                    listening = self._probe_listener(t.local_port)",
+    "new": "                    listening = True",
+    "tests": "tests/test_pivot_listener_probe.py"
+  },
+  {
+    "name": "image: drop the boto3 preinstall again",
+    "file": "Dockerfile",
+    "old": "python3-boto3",
+    "new": "python3-boto",
+    "tests": "tests/test_docker_build_contract.py"
+  },
+  {
+    "name": "client error: hide the docker run line again",
+    "file": "mcp_tools/_client.py",
+    "old": "ghcr.io/zebbern/zebbern-kali-mcp:latest ",
+    "new": "",
+    "tests": "tests/test_client_error_messages.py"
+  },
+  {
+    "name": "entrypoint: stop creating /vpn again",
+    "file": "entrypoint.sh",
+    "old": "mkdir -p /vpn",
+    "new": ":",
+    "tests": "tests/test_entrypoint_vpn_dir.py"
+  },
+  {
+    "name": "kali_upload docs: drop the base64 recipe again",
+    "file": "mcp_tools/file_operations.py",
+    "old": "base64.b64encode(text.encode(\"utf-8\")).decode(\"ascii\")",
+    "new": "str(text)",
+    "tests": "tests/test_client_error_messages.py"
+  },
+  {
+    "name": "kali_upload docs: promise the encoding switch again",
+    "file": "mcp_tools/file_operations.py",
+    "old": "has no effect here",
+    "new": "switches the write mode",
+    "tests": "tests/test_client_error_messages.py"
+  },
+  {
+    "name": "job_output: reject an over-max wait again instead of clamping it",
+    "file": "zebbern-kali/core/job_manager.py",
+    "old": "        wait_capped = timeout > self.max_output_wait",
+    "new": "        wait_capped = False",
+    "tests": "tests/test_job_manager.py"
+  },
+  {
+    "name": "job_output route: a clamped wait stops being reported as clamped",
+    "file": "zebbern-kali/core/job_manager.py",
+    "old": "        wait_capped = timeout > self.max_output_wait",
+    "new": "        wait_capped = False",
+    "tests": "tests/test_job_routes.py"
+  },
+  {
+    "name": "job_cancel: 409 on an already-finished job again",
+    "file": "zebbern-kali/core/job_manager.py",
+    "old": "            if job.status in TERMINAL_STATES:\n                return {\n                    \"success\": True,",
+    "new": "            if job.status in TERMINAL_STATES:\n                return {\n                    \"success\": False,",
+    "tests": "tests/test_job_manager.py"
+  },
+  {
+    "name": "job_cancel: claim it cancelled a job that was already over",
+    "file": "zebbern-kali/core/job_manager.py",
+    "old": "                    \"canceled\": False,\n                    \"already_terminal\": True,",
+    "new": "                    \"canceled\": True,\n                    \"already_terminal\": False,",
+    "tests": "tests/test_job_manager.py"
+  },
+  {
+    "name": "jobs: stop line-buffering background subprocess output",
+    "file": "zebbern-kali/core/job_manager.py",
+    "old": "        if shell and isinstance(command, str):",
+    "new": "        if False and isinstance(command, str):",
+    "tests": "tests/test_job_manager.py"
+  },
+  {
+    "name": "reverse shell: filter the marker echo by prefix again, so the prompt-prefixed end-marker echo reaches the operator",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "                                        probe = _ANSI_RE.sub(\"\", text)\n                                        marker_echo = (\n                                            f\"echo '{start_marker}'\" in probe\n                                            or f\"echo '{end_marker}'\" in probe\n                                        )\n                                        if not marker_echo:\n",
+    "new": "                                        if not (text.startswith(\"echo '\") and (\"START_\" in text or \"END_\" in text)):\n",
+    "tests": "tests/test_reverse_shell_command_outcome.py"
+  },
+  {
+    "name": "reverse shell: stop recognising the END marker echo, keeping only the START half",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "                                            or f\"echo '{end_marker}'\" in probe\n",
+    "new": "                                            or False\n",
+    "tests": "tests/test_reverse_shell_command_outcome.py"
+  },
+  {
+    "name": "reverse shell: match any echo command rather than this call's markers, dropping genuine output",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "                                        marker_echo = (\n                                            f\"echo '{start_marker}'\" in probe\n                                            or f\"echo '{end_marker}'\" in probe\n                                        )\n",
+    "new": "                                        marker_echo = \"echo '\" in probe\n",
+    "tests": "tests/test_reverse_shell_command_outcome.py"
+  },
+  {
+    "name": "reverse shell: read_output never sets up its carry-over",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "        self._raw_read_buf = b\"\"\n        self._raw_pending_lines = []\n",
+    "new": "        self._raw_pending_lines = []\n",
+    "tests": "tests/test_reverse_shell_raw_io.py"
+  },
+  {
+    "name": "reverse shell: read_output starts from an empty buffer again, destroying a newline-less prompt",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "        buf = self._raw_read_buf\n",
+    "new": "        buf = b\"\"\n",
+    "tests": "tests/test_reverse_shell_raw_io.py"
+  },
+  {
+    "name": "reverse shell: read_output drops the complete lines a window could not return",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "        pending = self._raw_pending_lines\n",
+    "new": "        pending = []\n",
+    "tests": "tests/test_reverse_shell_raw_io.py"
+  },
+  {
+    "name": "reverse shell: read_output forgets the partial line on the way out",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "        self._raw_read_buf = buf\n",
+    "new": "        self._raw_read_buf = b\"\"\n",
+    "tests": "tests/test_reverse_shell_raw_io.py"
+  },
+  {
+    "name": "reverse shell: read_output forgets the carried lines on the way out",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "        self._raw_pending_lines = pending\n",
+    "new": "        self._raw_pending_lines = []\n",
+    "tests": "tests/test_reverse_shell_raw_io.py"
+  },
+  {
+    "name": "reverse shell: read_output withholds a newline-less prompt for one more call",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "        if buf and len(lines) < max_lines:\n",
+    "new": "        if False:\n",
+    "tests": "tests/test_reverse_shell_raw_io.py"
+  },
+  {
+    "name": "reverse shell: max_lines back to a soft bound inside a single read",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "            while pending and len(lines) < max_lines:\n",
+    "new": "            while pending:\n",
+    "tests": "tests/test_reverse_shell_raw_io.py"
+  },
+  {
+    "name": "reverse shell: the command timeout default rounds back to 60 (wrapper)",
+    "file": "mcp_tools/reverse_shell.py",
+    "old": "        session_id: str, command: str, timeout: int = 45,\n",
+    "new": "        session_id: str, command: str, timeout: int = 60,\n",
+    "tests": "tests/test_reverse_shell_command_outcome.py"
+  },
+  {
+    "name": "reverse shell: the command timeout default rounds back to 60 (route)",
+    "file": "zebbern-kali/api/blueprints/reverse_shell.py",
+    "old": "        timeout = params.get(\"timeout\", 45)\n",
+    "new": "        timeout = params.get(\"timeout\", 60)\n",
+    "tests": "tests/test_reverse_shell_command_outcome.py"
+  },
+  {
+    "name": "reverse shell: the command timeout default rounds back to 60 (manager)",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "        timeout: int = 45,\n",
+    "new": "        timeout: int = 60,\n",
+    "tests": "tests/test_reverse_shell_command_outcome.py"
+  },
+  {
+    "name": "pivot list: dial through the forwarders again to read their status",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "                elif t.tunnel_type in FORWARDER_LISTENER_TYPES:",
+    "new": "                elif False:",
+    "tests": "tests/test_pivot_listener_probe.py"
+  },
+  {
+    "name": "pivot list: report a confident False for a forwarder nothing could answer for",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "                        listening, method = None, \"unavailable\"",
+    "new": "                        listening, method = False, \"socket_table\"",
+    "tests": "tests/test_pivot_listener_probe.py"
+  },
+  {
+    "name": "pivot list: ask the socket table once per forwarder instead of once per call",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "                    if listening_ports is _UNQUERIED:",
+    "new": "                    if True:",
+    "tests": "tests/test_pivot_listener_probe.py"
+  },
+  {
+    "name": "pivot list: socat and ssh -L go back to being treated as connect-safe",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "FORWARDER_LISTENER_TYPES = {\n    \"socat\",\n    \"ssh_local\",\n}",
+    "new": "FORWARDER_LISTENER_TYPES = set()",
+    "tests": "tests/test_pivot_listener_probe.py"
+  },
+  {
+    "name": "pivot list: no listing tool becomes \"nothing is listening\"",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "            return _listening_ports_in(table)\n        return None",
+    "new": "            return _listening_ports_in(table)\n        return set()",
+    "tests": "tests/test_pivot_listener_probe.py"
+  },
+  {
+    "name": "pivot list: read any port off any socket-table line, listening or not",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "        if not any(column.upper() in _LISTEN_STATES for column in columns):\n            continue",
+    "new": "        if False:\n            continue",
+    "tests": "tests/test_pivot_listener_probe.py"
+  },
+  {
+    "name": "signal note: blame a self-match on any command containing \"kill\" again",
+    "file": "mcp_tools/command_exec.py",
+    "old": "    if _selects_processes_by_pattern(command):",
+    "new": "    if \"kill\" in command.lower() or \"fuser\" in command.lower():",
+    "tests": "tests/test_zebbern_exec_promotion.py"
+  },
+  {
+    "name": "signal note: drop the unconditional outside-kill half",
+    "file": "mcp_tools/command_exec.py",
+    "old": "        f\"Process exited on signal {-result['return_code']} ({name}) and produced \"\n        \"no output. Nothing here observed what sent it: an outside kill looks the \"\n        \"same (job_cancel, the OOM killer, a stopped backend).\"",
+    "new": "        f\"Process exited on signal {-result['return_code']} ({name}) and produced \"\n        \"no output.\"",
+    "tests": "tests/test_zebbern_exec_promotion.py"
+  },
+  {
+    "name": "signal note: match the killer on the whole path instead of its basename",
+    "file": "mcp_tools/command_exec.py",
+    "old": "            flags = _PATTERN_KILLERS.get(token.rsplit(\"/\", 1)[-1], False)",
+    "new": "            flags = _PATTERN_KILLERS.get(token, False)",
+    "tests": "tests/test_zebbern_exec_promotion.py"
+  },
+  {
+    "name": "signal note: credit a flag from another shell segment",
+    "file": "mcp_tools/command_exec.py",
+    "old": "    for segment in _SEGMENT_SPLIT.split(command):",
+    "new": "    for segment in [command]:",
+    "tests": "tests/test_zebbern_exec_promotion.py"
+  },
+  {
+    "name": "signal note: take the selection flag as a substring again",
+    "file": "mcp_tools/command_exec.py",
+    "old": "                if re.fullmatch(rf\"-[A-Za-z]*{short}[A-Za-z]*\", later):",
+    "new": "                if short in later:",
+    "tests": "tests/test_zebbern_exec_promotion.py"
+  },
+  {
+    "name": "signal table: drop SIGINT",
+    "file": "mcp_tools/command_exec.py",
+    "old": "_SIGNAL_EXITS = {-15: \"SIGTERM\", -9: \"SIGKILL\", -2: \"SIGINT\"}",
+    "new": "_SIGNAL_EXITS = {-15: \"SIGTERM\", -9: \"SIGKILL\"}",
+    "tests": "tests/test_zebbern_exec_promotion.py"
+  },
+  {
+    "name": "signal table: drop SIGKILL",
+    "file": "mcp_tools/command_exec.py",
+    "old": "_SIGNAL_EXITS = {-15: \"SIGTERM\", -9: \"SIGKILL\", -2: \"SIGINT\"}",
+    "new": "_SIGNAL_EXITS = {-15: \"SIGTERM\", -2: \"SIGINT\"}",
+    "tests": "tests/test_zebbern_exec_promotion.py"
+  },
+  {
+    "name": "signal table: drop SIGTERM",
+    "file": "mcp_tools/command_exec.py",
+    "old": "_SIGNAL_EXITS = {-15: \"SIGTERM\", -9: \"SIGKILL\", -2: \"SIGINT\"}",
+    "new": "_SIGNAL_EXITS = {-9: \"SIGKILL\", -2: \"SIGINT\"}",
+    "tests": "tests/test_zebbern_exec_promotion.py"
+  },
+  {
+    "name": "signal table: mistype SIGINT",
+    "file": "mcp_tools/command_exec.py",
+    "old": "_SIGNAL_EXITS = {-15: \"SIGTERM\", -9: \"SIGKILL\", -2: \"SIGINT\"}",
+    "new": "_SIGNAL_EXITS = {-15: \"SIGTERM\", -9: \"SIGKILL\", -2: \"SIGHUP\"}",
+    "tests": "tests/test_zebbern_exec_promotion.py"
+  },
+  {
+    "name": "image: swap the net-snmp clients for a lookalike package",
+    "file": "Dockerfile",
+    "old": "        snmp \\",
+    "new": "        snmpd \\",
+    "tests": "tests/test_docker_build_contract.py"
+  },
+  {
+    "name": "image: let the non-free snmp MIB downloader in",
+    "file": "Dockerfile",
+    "old": "        snmp \\",
+    "new": "        snmp \\n        snmp-mibs-downloader \\",
+    "tests": "tests/test_docker_build_contract.py"
+  },
+  {
+    "name": "image: unpin git-dumper",
+    "file": "Dockerfile",
+    "old": "pipx install git-dumper==1.0.9",
+    "new": "pipx install git-dumper",
+    "tests": "tests/test_docker_build_contract.py"
+  },
+  {
+    "name": "image: unpin man-spider",
+    "file": "Dockerfile",
+    "old": "        man-spider==2.0.0",
+    "new": "        man-spider",
+    "tests": "tests/test_docker_build_contract.py"
   }
 ]
