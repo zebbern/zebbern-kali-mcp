@@ -59,11 +59,22 @@ a PyPI bump, and a PyPI release does not deliver it. This has been misread once 
 differs from `pyproject.toml`.
 
 1. Bump **two** files: `pyproject.toml` and `zebbern-kali/core/config.py` (currently
-   1.0.17). Everything else derives. `test_backend_version_tracks_pyproject` fails if
+   1.0.18). Everything else derives. `test_backend_version_tracks_pyproject` fails if
    only one is touched — they used to drift by hand. `config.py` must keep a **literal**
    VERSION: `pyproject.toml` is excluded from the image by `.dockerignore` and the
    backend runs from source, so deriving it would break `/health` at container startup.
-2. Re-pin the integration gate digest (below) if the image changed.
+2. Re-pin the integration gate digest (below) if the image changed — in a **separate
+   commit, after step 1 has merged and rebuilt**. `run_smoke.py` compares the pinned
+   image's own `/live` version against the version declared in this source, so a commit
+   carrying both the bump and the pin fails the gate *by construction*: the only digest
+   that exists when the pin is written was built from the previous version. It fails with
+   a message that reads like the pin is merely stale — `pinned image reports version
+   '1.0.17', expected '1.0.18': the integration digest is stale and must be re-pinned to
+   an image built from this source`. The gate's `pull_request.paths` exclude
+   `pyproject.toml` and `zebbern-kali/**`, and that exclusion is what makes the sequence
+   work: the bump merges without the gate running, the `config.py` change rebuilds the
+   image at the new version, and only then can the pin be written. Bump first, pin
+   second, two PRs.
 3. Dry-run the gate: `gh workflow run integration.yml --ref main`.
 4. `gh workflow run publish.yml --ref main -f version=X.Y.Z`
 5. Tag afterwards: `git tag -a vX.Y.Z <commit> && git push origin vX.Y.Z`. Tags for
@@ -82,7 +93,21 @@ differs from `pyproject.toml`.
 `publish.yml` has `needs: [gate, integration]`, so no release ships without real tools
 executing. Nothing keeps that pin in step with `:latest`; it drifted three builds within
 hours of being introduced. Re-pin as a release step, and pin a digest you have
-**actually booted**, not one you only looked up. The digest is also passed to compose as
+**actually booted**, not one you only looked up.
+
+**`gh run watch --exit-status` can exit 0 while the build is still running.** Measured
+during the 1.0.18 release: it returned success, and `:latest` was still the previous
+digest. Pinning on that signal would have pinned the image *before* the change — the
+stale-image failure above, arriving through a new door, and invisible because the watch
+command had just reported success. Ask the run for its own `status` and treat anything but
+`completed` as not finished:
+
+```bash
+gh run view <id> --json status,conclusion --jq '"\(.status)/\(.conclusion)"'
+docker buildx imagetools inspect ghcr.io/zebbern/zebbern-kali-mcp:latest | grep -i '^Digest'
+```
+
+A digest that has not moved is the tell, so read it before and after. The digest is also passed to compose as
 `ZKM_IMAGE`, because a digest pull leaves no local tag — without it `docker compose up`
 would miss `:latest` and rebuild from the Dockerfile, far exceeding the job timeout.
 
@@ -523,7 +548,7 @@ need to abort, use `zebbern_exec(background=True)` and `job_cancel`.
 ## Tests, and what they do not prove
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q            # 1506 passed, 6 skipped, ~4m
+.venv/Scripts/python.exe -m pytest -q            # 1507 passed, 6 skipped, ~4m
 .venv/Scripts/python.exe -m pytest -m live -q    # 15 passed, 3 skipped; backend on :5000
 python tests/integration/run_smoke.py --image <img> --expect-variant full --check-trim
 python tests/integration/probe_tools.py          # all 135 tools, needs a backend
@@ -794,5 +819,5 @@ twice:
   exactly the case that used to look like a pass.` The entry was re-anchored. A later refactor
   of a quoted line silently invalidates that guard's proof until the script is re-run.
 
-Add a mutation to `tests/mutations.json` whenever you add a guard. The spec holds **103**
-entries and the last full run was **103/103 guards verified red**.
+Add a mutation to `tests/mutations.json` whenever you add a guard. The spec holds **107**
+entries and the last full run was **107/107 guards verified red**.
