@@ -60,7 +60,7 @@ a PyPI bump, and a PyPI release does not deliver it. This has been misread once 
 differs from `pyproject.toml`.
 
 1. Bump **two** files: `pyproject.toml` and `zebbern-kali/core/config.py` (currently
-   1.0.18). Everything else derives. `test_backend_version_tracks_pyproject` fails if
+   1.0.19). Everything else derives. `test_backend_version_tracks_pyproject` fails if
    only one is touched — they used to drift by hand. `config.py` must keep a **literal**
    VERSION: `pyproject.toml` is excluded from the image by `.dockerignore` and the
    backend runs from source, so deriving it would break `/health` at container startup.
@@ -659,7 +659,7 @@ capability the pilot suppresses gains a line naming the command that replaces it
 ## Tests, and what they do not prove
 
 ```bash
-.venv/Scripts/python.exe -m pytest -q            # 1507 passed, 6 skipped, ~4m
+.venv/Scripts/python.exe -m pytest -q            # 1624 passed, 6 skipped, ~3m
 .venv/Scripts/python.exe -m pytest -m live -q    # 15 passed, 3 skipped; backend on :5000
 python tests/integration/run_smoke.py --image <img> --expect-variant full --check-trim
 python tests/integration/probe_tools.py          # all 135 tools, needs a backend
@@ -984,8 +984,8 @@ twice:
   exactly the case that used to look like a pass.` The entry was re-anchored. A later refactor
   of a quoted line silently invalidates that guard's proof until the script is re-run.
 
-Add a mutation to `tests/mutations.json` whenever you add a guard. The spec holds **128**
-entries and the last full run was **128/128 guards verified red**. An entry has exactly five
+Add a mutation to `tests/mutations.json` whenever you add a guard. The spec holds **140**
+entries and the last full run was **140/140 guards verified red**. An entry has exactly five
 keys — `name`, `file`, `old`, `new`, `tests`. `occurrences` is a CLI parameter of the checker
 that defaults to 1; no entry sets it, and adding it to one is a schema divergence that reads
 as deliberate.
