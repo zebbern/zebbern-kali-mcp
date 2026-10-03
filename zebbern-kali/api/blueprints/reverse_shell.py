@@ -2,9 +2,25 @@
 
 from flask import Blueprint, request, jsonify
 from core.config import logger, active_sessions
-from core.reverse_shell_manager import ReverseShellManager
+from core.reverse_shell_manager import (
+    ReverseShellManager,
+    persist_sessions,
+    restore_sessions,
+)
 
 bp = Blueprint("reverse_shell", __name__)
+
+# Rebuild restored stand-ins from a prior process's sessions.json at
+# import, i.e. backend start. A backend restart (a routine
+# `docker compose up -d --force-recreate`) otherwise drops the in-memory
+# registry and the status/list routes answer empty, indistinguishable
+# from 'nothing ever started'. restore_sessions never raises; the guard
+# is belt-and-suspenders so a corrupt state file can never stop the
+# backend from starting.
+try:
+    restore_sessions(active_sessions)
+except Exception as exc:  # pragma: no cover - restore_sessions is total
+    logger.warning(f"Could not restore reverse-shell sessions: {exc}")
 
 
 @bp.route("/api/reverse-shell/listener/start", methods=["POST"])
@@ -23,6 +39,10 @@ def start_reverse_shell_listener():
 
         if result.get("success"):
             active_sessions[session_id] = shell_manager
+            # Persist on create so the listener survives a restart as a
+            # restored stand-in. persisted=false means the state dir was
+            # unwritable; the listener still started.
+            result["persisted"] = persist_sessions(active_sessions)
 
         return jsonify(result)
     except Exception as e:
@@ -179,6 +199,9 @@ def stop_shell_session(session_id):
         return jsonify({
             "success": True,
             "message": f"Shell session {session_id} stopped successfully",
+            # Rewrite the registry so the stopped session is no longer a
+            # restored stand-in after the next restart.
+            "persisted": persist_sessions(active_sessions),
         })
     except Exception as e:
         logger.error(f"Error stopping shell session: {str(e)}")
@@ -189,7 +212,7 @@ def stop_shell_session(session_id):
 def list_shell_sessions():
     try:
         sessions = {}
-        for session_id, shell_manager in active_sessions.items():
+        for session_id, shell_manager in list(active_sessions.items()):
             sessions[session_id] = shell_manager.get_status()
         return jsonify(sessions)
     except Exception as e:

@@ -29,6 +29,7 @@ line ending "(Guest)". Inventing credentials is the worst answer this tool can
 give.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -141,3 +142,69 @@ def test_asreproast_can_be_given_the_password_its_username_needs():
     signature = wrapper[start:wrapper.index(")", start)]
 
     assert "password" in signature, "username alone is silently ignored"
+
+
+class TestAsreproastDoesNotRoastAnUnreachableDC:
+    """GetNPUsers exits 0 on a connection error, printing the reason as a
+    [-] line. Kerberoast and secretsdump already refuse to call that a clean
+    result; asreproast was left out and reported success:True with no hashes.
+    """
+
+    def _tool(self, tmp_path, impacket_reply):
+        tool = object.__new__(ad.ADTools)
+        tool.output_dir = str(tmp_path)
+        # asreproast builds an output_file under this subdir; create it so the
+        # path is well-formed even though the guard returns before any write.
+        os.makedirs(os.path.join(tool.output_dir, "kerberoast"), exist_ok=True)
+        tool._run_impacket = lambda *a, **kw: impacket_reply
+        return tool
+
+    def test_a_connection_error_is_not_a_clean_roast(self, tmp_path):
+        reply = {
+            "success": True,  # impacket exits 0 even when it never connected
+            "stdout": (
+                "Impacket v0.13.0\n"
+                "[-] [Errno Connection error (corp.local:88)]\n"
+            ),
+            "stderr": "",
+            "tool_errors": ["[-] [Errno Connection error (corp.local:88)]"],
+            "command": "GetNPUsers.py ...",
+        }
+        tool = self._tool(tmp_path, reply)
+
+        result = tool.asreproast(
+            domain="corp.local", dc_ip="10.0.0.1",
+            username="u", password="p",
+        )
+
+        assert result["success"] is False, (
+            "an unreachable DC must not report a clean AS-REP roast"
+        )
+        assert result["tool_errors"] == [
+            "[-] [Errno Connection error (corp.local:88)]"
+        ], "the error that proves nothing was enumerated must be surfaced"
+        assert result["hashes_obtained"] == 0
+
+    def test_a_real_roast_with_a_benign_warning_still_succeeds(self, tmp_path):
+        reply = {
+            "success": True,
+            "stdout": (
+                "Impacket v0.13.0\n"
+                "[-] CCache file is not found. Skipping...\n"
+                "$krb5asrep$23$svc@CORP.LOCAL:abc123...\n"
+            ),
+            "stderr": "",
+            "tool_errors": ["[-] CCache file is not found. Skipping..."],
+            "command": "GetNPUsers.py ...",
+        }
+        tool = self._tool(tmp_path, reply)
+
+        result = tool.asreproast(
+            domain="corp.local", dc_ip="10.0.0.1",
+            username="u", password="p",
+        )
+
+        assert result["success"] is True, (
+            "a genuine hash alongside a benign [-] warning is still a roast"
+        )
+        assert result["hashes_obtained"] == 1

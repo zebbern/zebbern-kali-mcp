@@ -507,6 +507,25 @@ class ADTools:
                         if match:
                             vulnerable_users.append(match.group(1))
 
+                # Nothing found AND impacket complained means it never reached
+                # the DC. Reporting that as a clean AS-REP roast of a domain
+                # with no roastable accounts is a finding invented out of a
+                # connection error -- the same guard kerberoast and secretsdump
+                # already carry.
+                tool_errors = result.get("tool_errors") or []
+                if not hashes and not vulnerable_users and tool_errors:
+                    return {
+                        "success": False,
+                        "domain": domain,
+                        "error": (
+                            "GetNPUsers reported an error and returned nothing: "
+                            + "; ".join(tool_errors[:3])
+                        ),
+                        "tool_errors": tool_errors,
+                        "hashes_obtained": 0,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+
                 return {
                     "success": True,
                     "domain": domain,

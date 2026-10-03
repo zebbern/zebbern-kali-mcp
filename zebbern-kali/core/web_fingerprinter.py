@@ -10,6 +10,18 @@ from urllib.parse import urlparse
 from core.config import logger
 
 
+# Body patterns that mean the page actually loads the technology -- a
+# resource, path or CDN reference -- as opposed to a page that merely
+# names it in prose. Only these promote a body match to strong evidence.
+RESOURCE_PATTERNS = {
+    "wp-content", "wp-includes", "sites/all/", "sites/default/",
+    "core/misc/drupal.js", "com_content", "skin/frontend/", "js/mage/",
+    "varien", "cdn.shopify.com", "jquery.min.js", "angular.min.js",
+    "angular.js", "vue.min.js", "vue.js", "springframework",
+    "action_controller", "apache-coyote", "catalina", "mod_ssl", "mod_php",
+}
+
+
 class WebFingerprinter:
     """Fingerprint web applications to identify technologies."""
     
@@ -94,7 +106,7 @@ class WebFingerprinter:
             "patterns": ["vue.js", "vue.min.js", "__vue__", "v-bind", "v-model"]
         },
         "jquery": {
-            "patterns": ["jquery", "jquery.min.js", "jquery-"]
+            "patterns": ["jquery", "jquery.min.js"]
         },
         
         # E-commerce
@@ -103,7 +115,7 @@ class WebFingerprinter:
             "meta": ["generator:shopify"]
         },
         "woocommerce": {
-            "patterns": ["woocommerce", "wc-", "add-to-cart"]
+            "patterns": ["woocommerce", "add-to-cart"]
         },
         
         # Other
@@ -113,11 +125,11 @@ class WebFingerprinter:
         },
         "aws": {
             "headers": ["x-amz-", "server:amazons3"],
-            "patterns": ["amazonaws.com", "aws-"]
+            "patterns": ["amazonaws.com"]
         },
         "php": {
             "headers": ["x-powered-by:php"],
-            "patterns": [".php", "phpsessid"]
+            "patterns": ["phpsessid"]
         }
     }
     
@@ -168,6 +180,8 @@ class WebFingerprinter:
                 "server": None,
                 "frameworks": [],
                 "js_libraries": [],
+                "evidence": {},
+                "body_mentions": [],
                 "headers_of_interest": {},
                 "potential_vulns": [],
                 "paths_found": []
@@ -186,36 +200,51 @@ class WebFingerprinter:
             detected["status_code"] = response.status_code
             detected["final_url"] = response.url
             
-            # Check technologies
+            # Check technologies. Evidence is separated by strength: a
+            # header, a cookie, or a resource/path/CDN reference in the body
+            # is strong (the page actually loads the tech); a bare body-text
+            # mention is weak (the page merely names it). Only strong
+            # evidence promotes a tech into technologies/cms/server/
+            # frameworks/js_libraries and pulls in VULN_MAPPINGS; a
+            # weak-only match is reported under body_mentions, which is not
+            # a claim the tech runs here.
             for tech, signatures in self.TECH_SIGNATURES.items():
-                found = False
-                
-                # Check headers
+                ev = []
+                strong = False
+
+                # Check headers (strong). Collect every match so provenance
+                # is complete -- do not break early.
                 for header_sig in signatures.get("headers", []):
                     key, val = header_sig.split(":", 1) if ":" in header_sig else (header_sig, "")
                     if key in headers and (not val or val in headers[key]):
-                        found = True
-                        break
-                
-                # Check cookies
+                        ev.append("header:" + header_sig)
+                        strong = True
+
+                # Check cookies (strong)
                 for cookie_sig in signatures.get("cookies", []):
                     if cookie_sig.lower() in cookies:
-                        found = True
-                        break
-                
-                # Check patterns in HTML
+                        ev.append("cookie:" + cookie_sig)
+                        strong = True
+
+                # Check patterns in HTML. A resource/path/CDN reference
+                # (RESOURCE_PATTERNS) is strong; any other body substring is
+                # only a mention and stays weak.
                 for pattern in signatures.get("patterns", []):
                     if pattern.lower() in html:
-                        found = True
-                        break
-                
-                # Check meta tags
+                        ev.append("body:" + pattern)
+                        if pattern in RESOURCE_PATTERNS:
+                            strong = True
+
+                # Check meta tags (weak)
                 for meta in signatures.get("meta", []):
                     if meta.lower() in html:
-                        found = True
-                        break
-                
-                if found:
+                        ev.append("meta:" + meta)
+
+                confident = strong
+                if ev:
+                    detected["evidence"][tech] = ev
+
+                if confident:
                     # Categorize the technology
                     if tech in ["wordpress", "drupal", "joomla", "magento", "shopify"]:
                         detected["cms"] = tech
@@ -229,12 +258,14 @@ class WebFingerprinter:
                         detected["frameworks"].append(tech)
                     else:
                         detected["technologies"].append(tech)
-                    
+
                     # Add potential vulnerabilities
                     if tech in self.VULN_MAPPINGS:
                         for vuln in self.VULN_MAPPINGS[tech]:
                             if vuln not in detected["potential_vulns"]:
                                 detected["potential_vulns"].append(vuln)
+                elif ev:
+                    detected["body_mentions"].append(tech)
             
             # Extract interesting headers
             interesting_headers = [
@@ -275,10 +306,22 @@ class WebFingerprinter:
                     except:
                         continue
             
-            # Try whatweb if available
-            whatweb_result = self._run_whatweb(url)
-            if whatweb_result:
+            # Try whatweb if available. A bare None used to mean any of "not
+            # installed", "timed out" and "ran and exited non-zero", so an
+            # absent whatweb key was indistinguishable from "ran and found
+            # nothing" -- mirror detect_waf's wafw00f_status.
+            whatweb_result, whatweb_status = self._run_whatweb(url)
+            detected["whatweb_status"] = whatweb_status
+            if whatweb_result is not None:
                 detected["whatweb"] = whatweb_result
+            
+            detected["detection_note"] = (
+                "body_mentions are technology names found as plain text in "
+                "the response body and are not proof the technology runs "
+                "here; technologies, cms, server, frameworks and "
+                "js_libraries are backed by a response header, a cookie, or "
+                "a resource/path/CDN reference."
+            )
             
             return {
                 "success": True,
@@ -290,8 +333,17 @@ class WebFingerprinter:
             logger.error(f"Fingerprint failed: {e}")
             return {"success": False, "error": str(e)}
     
-    def _run_whatweb(self, url: str) -> Optional[Dict]:
-        """Run whatweb tool if available."""
+    def _run_whatweb(self, url: str) -> tuple:
+        """Run whatweb tool if available.
+
+        Returns (payload, status). payload is {"raw": ...} only when whatweb
+        actually ran and produced output, and None otherwise. status mirrors
+        detect_waf's wafw00f_status so an absent whatweb key can be told apart
+        from "ran and found nothing": 'not_installed' on FileNotFoundError,
+        'timed_out' on a subprocess timeout, 'exit <rc>' on a non-zero exit,
+        and 'ok' when it ran.
+        """
+        whatweb_status = "ok"
         try:
             result = subprocess.run(
                 ["whatweb", "--color=never", "-a", "3", url],
@@ -299,11 +351,16 @@ class WebFingerprinter:
                 text=True,
                 timeout=30
             )
-            if result.returncode == 0 and result.stdout:
-                return {"raw": result.stdout.strip()}
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-        return None
+            if result.returncode == 0:
+                if result.stdout:
+                    return {"raw": result.stdout.strip()}, whatweb_status
+                return None, whatweb_status
+            whatweb_status = f"exit {result.returncode}"
+        except FileNotFoundError:
+            whatweb_status = "not_installed"
+        except subprocess.TimeoutExpired:
+            whatweb_status = "timed_out"
+        return None, whatweb_status
     
     def scan_multiple(self, urls: List[str]) -> Dict[str, Any]:
         """Fingerprint multiple URLs."""

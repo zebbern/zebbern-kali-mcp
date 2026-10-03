@@ -318,6 +318,28 @@ class TestTheSchemaDoesNotInviteACallTheBackendRefuses:
         assert posted["data"]["dc_ip"] == "10.0.0.1"
         assert posted["data"]["query"] == "groups"
 
+    def test_bloodhound_collect_does_not_offer_dc_ip_as_optional(self):
+        import inspect
+
+        registered, _ = self._tools()
+        sig = inspect.signature(registered["ad_bloodhound_collect"])
+
+        assert sig.parameters["dc_ip"].default is inspect.Parameter.empty, (
+            "the route 400s without it, so a default here invites that failure"
+        )
+        assert "auto-detected" not in registered["ad_bloodhound_collect"].__doc__, (
+            "the docstring promised an auto-detection the backend never does"
+        )
+
+    def test_bloodhound_collect_still_forwards_everything_it_did(self):
+        registered, posted = self._tools()
+
+        registered["ad_bloodhound_collect"]("corp.local", "alice", "pw", "10.0.0.1",
+                                            collection_method="DCOnly")
+
+        assert posted["data"]["dc_ip"] == "10.0.0.1"
+        assert posted["data"]["collection_method"] == "DCOnly"
+
     def test_secretsdump_refuses_the_call_the_backend_would_refuse(self):
         registered, posted = self._tools()
 

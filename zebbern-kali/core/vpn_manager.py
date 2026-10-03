@@ -12,6 +12,13 @@ from core.config import logger
 
 WIREGUARD_DIR = Path("/etc/wireguard")
 OPENVPN_PID_DIR = Path("/run/openvpn")
+OPENVPN_LOG_FILE = Path("/tmp/openvpn.log")
+# connect_openvpn waits for the daemon log to confirm the tunnel came up instead
+# of sleeping blindly. Bounded well under the ~55s harness abort so a slow
+# handshake yields an advisory connected=None rather than a hang.
+OPENVPN_CONNECT_TIMEOUT = 15
+OPENVPN_CONNECT_POLL_INTERVAL = 0.5
+OPENVPN_FAILURE_MARKERS = ("AUTH_FAILED", "TLS Error", "TLS handshake failed")
 SOCKS_PID_FILE = Path("/run/microsocks.pid")
 SOCKS_DEFAULT_PORT = 1080
 SOCKS_DEFAULT_LISTEN_HOST = "0.0.0.0"
@@ -241,13 +248,40 @@ def disconnect_wireguard(interface: str = "wg0") -> dict:
 # OpenVPN
 # ---------------------------------------------------------------------------
 
+def _poll_openvpn_connected(log_file, timeout=None):
+    """Advisory check of whether the OpenVPN tunnel actually came up.
+
+    Reads the daemon log only (never the tunnel, so it has no side effects on
+    what it reports). Returns True once 'Initialization Sequence Completed'
+    appears, False on a known failure marker, and None when neither is observed
+    within the bounded wait or the log cannot be read -- None means "could not
+    tell", never "down".
+    """
+    if timeout is None:
+        timeout = OPENVPN_CONNECT_TIMEOUT
+    deadline = time.time() + timeout
+    while True:
+        try:
+            log_text = log_file.read_bytes().decode("utf-8", errors="ignore")
+        except OSError:
+            log_text = None
+        if log_text is not None:
+            if "Initialization Sequence Completed" in log_text:
+                return True
+            if any(marker in log_text for marker in OPENVPN_FAILURE_MARKERS):
+                return False
+        if time.time() >= deadline:
+            return None
+        time.sleep(OPENVPN_CONNECT_POLL_INTERVAL)
+
+
 def connect_openvpn(config_path: str) -> dict:
     """Start an OpenVPN connection in daemon mode."""
     src = _validate_config_path(config_path)
 
     OPENVPN_PID_DIR.mkdir(parents=True, exist_ok=True)
     pid_file = OPENVPN_PID_DIR / "client.pid"
-    log_file = Path("/tmp/openvpn.log")
+    log_file = OPENVPN_LOG_FILE
 
     # Kill any existing instance
     if pid_file.exists():
@@ -277,8 +311,10 @@ def connect_openvpn(config_path: str) -> dict:
             "type": "openvpn",
         }
 
-    # Wait briefly for the tun device
-    time.sleep(3)
+    # Poll the daemon log for the handshake instead of sleeping blindly. This is
+    # advisory only: connected never gates success (daemonization already
+    # succeeded) -- it reports whether the tunnel was observed to come up.
+    connected = _poll_openvpn_connected(log_file)
 
     tun_out = subprocess.run(
         ["ip", "-4", "addr", "show", "dev", "tun0"],
@@ -295,6 +331,7 @@ def connect_openvpn(config_path: str) -> dict:
         "type": "openvpn",
         "interface": "tun0",
         "ip": assigned_ip,
+        "connected": connected,
         "pid_file": str(pid_file),
         "log_file": str(log_file),
         "socks_proxy": proxy,
@@ -362,6 +399,23 @@ def get_vpn_status() -> dict:
                 text=True,
             )
             ip_match = re.search(r"inet (\S+)", tun_out.stdout)
+            # `connected` here means "up now", derived from current
+            # interface state -- not the historical daemon-log marker,
+            # which is append-only and stays True after the tunnel drops.
+            # Rule 1: log_ok is None means the log could not be read
+            # (cannot tell), so connected is None; no inet on tun0 now
+            # means the tunnel is not up now regardless of log history, so
+            # connected is False; otherwise the log marker decides.
+            # Advisory only -- never flips `active` (the pid existence
+            # check) or success.
+            iface_up = bool(ip_match)
+            log_ok = _poll_openvpn_connected(OPENVPN_LOG_FILE, timeout=0)
+            if log_ok is None:
+                connected = None
+            elif not iface_up:
+                connected = False
+            else:
+                connected = log_ok
             connections.append(
                 {
                     "type": "openvpn",
@@ -369,6 +423,7 @@ def get_vpn_status() -> dict:
                     "ip": ip_match.group(1) if ip_match else "unknown",
                     "pid": pid,
                     "active": True,
+                    "connected": connected,
                 }
             )
         except (ProcessLookupError, ValueError):

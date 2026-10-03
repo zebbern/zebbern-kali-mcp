@@ -26,7 +26,7 @@ def run_nmap(params: Dict[str, Any]) -> Dict[str, Any]:
         target = params.get("target", "")
         scan_type = params.get("scan_type", "-sCV")
         ports = params.get("ports", "")
-        additional_args = params.get("additional_args", "") or "-T4 -Pn"
+        additional_args = params.get("additional_args", "")
         background = params.get("background", False)
 
         if not target:
@@ -40,6 +40,13 @@ def run_nmap(params: Dict[str, Any]) -> Dict[str, Any]:
 
         if ports:
             command += f" -p {ports}"
+
+        # Baseline timing/host-discovery flags are always applied, not replaced:
+        # any additional_args used to silently wipe them (asking for --script vuln
+        # dropped -Pn, and a ping-blocking host then read as down). nmap honours the
+        # last -T template, so an operator -Tn in additional_args still wins; -Pn is
+        # forced (to run host discovery, call zebbern_exec directly).
+        command += " -T4 -Pn"
 
         if additional_args:
             command += f" {additional_args}"
