@@ -17,6 +17,7 @@ Read [Three rules](#three-rules) first; the rest of the file leans on them.
 [Output integrity](#output-integrity) ·
 [Session lifetime](#session-lifetime) ·
 [Invariants not to break](#invariants-not-to-break) ·
+[Typed-wrapper verdict](#the-typed-wrapper-verdict) ·
 [Tests](#tests-and-what-they-do-not-prove) ·
 [Defect shapes](#defect-shapes-that-keep-recurring) ·
 [Mutation checking](#check-that-a-guard-fails-when-you-break-the-thing)
@@ -297,6 +298,34 @@ answered by saying so — adding `--stats-every` to the `tools_nmap` wrapper was
 **rejected**, because a progress flag earns nothing `job_status` does not already give, and
 anything that stops a scan to report on it returns a worse scan. Closed question.
 
+**The `api/exec` background branch resolves an *omitted* timeout — a narrowing of this file's
+own "do not fix that in the route" directive. SETTLED: KEPT (2026-10-02).** Decided by a
+delegated agent (Fable 5.1) acting under the owner's standing grant of 2026-10-02 ("change or
+rewrite anything as long as Fable 5.1 says it should be done"); the owner did not personally
+review this specific change, so this is recorded as a delegated-agent decision, not an owner
+decision — do not re-describe it as the owner's. Kept because it fixes a latent bug independent
+of all other work (`zebbern_exec` sends no `timeout` on its default, so without this
+`zebbern_exec('hydra ...')` was capped at 3600s and orphaned at one hour instead of inheriting
+hydra's 86400 `TOOL_TIMEOUTS` tier), because it is faithful to the original "do not fix that in
+the route" directive (which protects a caller who *passed* a number from being surprised — an
+omitted timeout surprises no one), and because the typed-wrapper verdict independently names
+exactly this change, with exactly this scope, as the necessary enabling fix. If a future change
+reopens it, revert the `get_command_timeout` block in `api/blueprints/command.py` and this note
+together. It used to hand `params.get("timeout", 3600)` straight to `job_manager.start`
+with no `get_command_timeout` resolution, and this file told you to keep it that way — which
+silently capped `zebbern_exec('hydra ...')` at one hour, because `zebbern_exec` omits `timeout`
+on its default and so inherited 3600 instead of hydra's 86400 tier, a latent bug independent of
+the collapse work. The narrowing: an **omitted** `timeout` now resolves
+through `get_command_timeout(command)`, so a background job inherits its command's
+`TOOL_TIMEOUTS` tier exactly as `execute_command` does everywhere else. An **explicit** operator
+`timeout`, and every direct-HTTP caller that passes a number, stay untouched — the "do not
+surprise the caller" rule still holds for the number they sent. The one behaviour change for a
+direct caller: `background=True` + an omitted `timeout` + a long tool now gets that tool's
+longer backstop instead of 3600, which is the safer failure — the hydra run that was killed
+and orphaned at one hour runs to its tier, and it matches `execute_command`. It has to live in
+the route: the wheel cannot import `TOOL_TIMEOUTS` (`core/tool_config.py` ships only in the
+image), so `mcp_tools` has no tier to resolve against.
+
 ## Background jobs
 
 `background=True` rides `params` into the runner, `execute_command` hands the command to
@@ -356,27 +385,50 @@ file afterwards — backgrounded, the parse never runs. Each has a `background` 
 other background job. Every other flag mirrors the synchronous branch, which is byte-for-byte
 unchanged and still the path a direct HTTP caller gets.
 
-**`zebbern_exec` was the last tool that could orphan its own output.** It posted synchronously
-to `api/exec`, whose **foreground** branch is the one execution path in the repo that tees
+**`zebbern_exec` was the last `exec`-family tool that could orphan its own output — it was not
+the last tool, and this sentence used to say it was.** Three `api_security` wrappers —
+`api_rate_limit_test`, `api_fuzz_endpoint` and `api_graphql_fuzz` — each post synchronously with
+no `read_timeout`, no `background` and no job registration, and each loops in the Flask handler
+(`requests_count`; params × 24 fuzz payloads) over `requests` calls bounded individually by
+`timeout=10`. Their orphan window is now **bounded, not closed**: `API_REQUEST_CEILING = 2000`
+and `API_LOOP_BUDGET_SECONDS = 45` (both in `zebbern-kali/core/api_security.py`) break every one
+of the three loops on a request-count ceiling (`requests_capped`) and a wall-clock deadline
+(`time_capped`), and the handler then returns its accumulated partial findings with those two
+flags set — before the ~60s harness abort can abandon the call. Not *closed*, because `timeout=10`
+is `requests`' per-read/per-connect timeout, not a total: a byte-dribbling tarpit can stall one
+in-flight request past it, so the true worst case is ~55s (the 45s budget is only checked between
+requests, plus up to ~10s for the one request in flight when it trips) — still under the harness
+abort, but not a hard 45s. What is still **unfixed** is only MID-RUN cancellability and disk
+teeing: both need `job_manager` to run an in-process Python callable rather than a subprocess,
+which it cannot today. That is deferred and does not orphan — the loop already returns on its own
+within the window above. Fixing it properly spans both release tracks, and the gate boots a
+pinned published digest, so it cannot exercise the change pre-merge.
+
+`zebbern_exec` itself posted synchronously to `api/exec`, whose **foreground**
+branch is the one execution path in the repo that tees
 nowhere — only the background branch reaches `job_manager`, which writes
 `$JOB_OUTPUT_DIR/<job_id>.log` — so a command outrunning the ~60s harness abort left a
 subprocess running with nobody listening and nothing on disk, and an operator who passed
 `timeout=300` had no way to see the value never mattered. It now goes through
 `run_promotable(heavy=False)`; `heavy=False` is deliberate, so it cannot become a
 `heavy_tool_post` caller taking one of five semaphore slots for every `whoami`. Its `timeout`
-bounds the **job** and is the operator's number: the `api/exec` background branch hands the raw
-value to `job_manager.start` without `get_command_timeout` resolution, unlike
-`execute_command`, so `zebbern_exec('hydra ...')` is capped by this argument (default 3600),
-never by hydra's `TOOL_TIMEOUTS` tier. Do not "fix" that in the route — direct HTTP callers
-would be surprised by a timeout they did not ask for.
+bounds the **job**: an **explicit** value is the operator's number and the `api/exec`
+background branch hands it to `job_manager.start` untouched, with no `get_command_timeout`
+resolution — a direct HTTP caller must not be surprised by a timeout it did not ask for. An
+**omitted** `timeout` is the case that changed on 2026-10-02 (see [Timeouts](#timeouts)): it now
+resolves through `get_command_timeout(command)` like `execute_command`, so
+`zebbern_exec('hydra ...')`, which sends no `timeout` on its default, inherits hydra's
+`TOOL_TIMEOUTS` tier instead of being capped at 3600 and orphaned at one hour.
 
 **Any new `heavy_tool_post` caller must pass a `read_timeout`**; without one it holds a slot
 out of five for the full 90000s client timeout. The only remaining call site is inside
 `run_promotable`, which always passes `read_timeout=budget`, capping the semaphore hold at
 ~50s even against a backend that ignores `background`.
 
-`api_kiterunner_scan` and `api_newman_run` are the other two `api_security` wrappers with
-no bound, and they cannot orphan for a reason that is not in the code: `kiterunner`, `kr`
+`api_kiterunner_scan` and `api_newman_run` are two more `api_security` wrappers with
+no bound — unlike the three loop scanners above, which are now bounded by a count ceiling and a
+wall-clock deadline, these two carry no clamp at all — and they cannot orphan
+today for a reason that is not in the code: `kiterunner`, `kr`
 and `newman` are **not installed in the image**, so they fail immediately with "command not
 found". Install any of them and they need the same treatment — and newman needs a different
 answer, because its structured report goes to a `--reporter-json-export` file rather than
@@ -488,16 +540,46 @@ other kills nothing. Every entry in `_SIGNAL_EXITS` is exercised by a test param
 the table itself, plus a second parametrization pinning the three signals by name so deleting
 one goes red — a table-driven test alone just yields one case fewer.
 
+**The PTY fd lifecycle is now one helper, and only the mechanics moved.** [Delegated-agent
+decision under zebbern's standing authority grant, 2026-10-02.] `pty.openpty()` +
+`select.select` + `os.read`/`os.write` on a master fd, plus the SIGTERM→SIGKILL→survivor-reap
+group teardown, were implemented three times (`reverse_shell_manager`, `metasploit_manager`,
+`ssh_manager`); they now live once in `core/pty_session.PtySession`, which owns the fd loop and
+the strip-ANSI-for-match-only discipline — `_ANSI_RE` lives there and `reverse_shell_manager`
+and `metasploit_manager` import it rather than each keeping a copy. `read()` keeps the
+three-way `None` (nothing ready) / `b''` (EOF) / `bytes` contract the inlined loops branched
+on; `strip_for_match` strips for the MATCH only and never rewrites the bytes handed back
+(rule 2). `ssh_manager.stop()` now delegates to `PtySession.close()` and so uses the same
+killpg-group teardown the other two already had and it previously lacked — a bare
+`process.terminate()` signalled only the setsid leader and could orphan an ssh control-master
+or proxy child. The managers keep every byte of their own marker/prompt/capture logic; each
+wires `PtySession` to its OWN module-level `os`/`select` names, so the golden-master recorder's
+in-place patching still drives the extracted loop unchanged.
+
 ## Session lifetime
 
-**A backend restart drops every session silently.** Jobs, reverse-shell listeners, SSH
-sessions and MSF sessions are in-memory only; after a restart the `*_status` tools return
-empty with no error, reading exactly like "it never started". `job_list` answers
-`{"jobs": [], "count": 0}` for the same reason, so an empty listing means "this backend has
-run nothing", not "nothing is running". Pivot tunnels are the exception — `network_pivot`
-persists to `state.json` and reloads them as `status="stopped"`, visibly dropped rather than
-vanished. Given how routine `docker compose up -d --force-recreate` is here, this is the
-first thing to suspect when a long scan disappears.
+**A backend restart still destroys every live session — a PTY, a Popen and a socket do not
+survive `docker compose up -d --force-recreate`. What no longer vanishes is the RECORD of
+them.** Jobs, reverse-shell listeners, SSH and MSF sessions now persist their metadata through
+`core/state_store.py` (atomic temp + `os.replace`, generalized from network_pivot) and reload
+after a restart as visibly dead: `status='stopped'`/`'orphaned'`, `restored=true`, live-only
+probes (`shell_responsive`, a job's `return_code`) as `None`. A reloaded entry carries NO live
+handle — never `poll()` it, `killpg` it, or probe its old pid, which may now belong to an
+unrelated process (the rule network_pivot already followed with pid=0). A reloaded job reads
+its output from the surviving `$JOB_OUTPUT_DIR/<job_id>.log`, so a restart mid-scan no longer
+loses what already ran. Persistence is metadata only — nothing is resurrected — and
+best-effort: an unwritable state dir degrades to `persisted=false` exactly as a job's log
+degrades to `output_logged=false`, and never fails a session operation. Passwords and key
+contents are deliberately NOT persisted; a dead reloaded session has no use for them and
+writing them would create a secret at rest that memory-only state never did.
+
+[Delegated-agent decision under zebbern's standing authority grant, 2026-10-02: the prior rule
+described the drop-everything behaviour as an accepted hazard; that was the state of the code,
+not a decision to keep it, and it has now been fixed. The state dir for all four registries is
+`core/config.session_state_dir()` — `$ZKM_STATE_DIR`, else the `state` sibling of
+`$JOB_OUTPUT_DIR` on the durable kali-tmp volume, else the OS temp dir from source; MSF was
+additionally moved onto that resolver (it had defaulted to a container-temp subdir a
+force-recreate wipes) so all four land on the same durable volume.]
 
 **`exec_stream` registers no job and cannot be cancelled.** On client disconnect the
 `finally` in `stream_command_execution` only sets `consumer_closed`, which stops the queue;
@@ -544,6 +626,35 @@ need to abort, use `zebbern_exec(background=True)` and `job_cancel`.
 - Defaults `API_LISTEN_HOST=0.0.0.0` and an empty `KALI_API_TOKEN` are load bearing (the
   container needs `0.0.0.0` to be reachable through the loopback port publish). Do not "fix"
   the exposure warning by changing them.
+
+## The typed-wrapper verdict
+
+**The 135-vs-1 typed-wrappers question was judged, and the pilot ships as an instrument, not an
+experiment (2026-10-02).** Keep a capability typed iff its runner does one of HANDLE
+(server-side state outliving the call), TRANSFORM (returns a field the command's own stdout
+does not contain, excluding `json.loads` of the tool's own `--json`), ORCHESTRATE (a
+data-dependent loop also routed through `job_manager`), or it is a remote HTTP API client.
+Everything else reduces to `return execute_command(f'...')` and is ceremony the agent could
+write itself through `zebbern_exec`; ~43 of 135 qualify as collapsible. The pilot does **not**
+delete them — it ships an opt-in, default-OFF per-tool suppression via a `ZKM_COLLAPSE_PILOT`
+env set feeding `_CapabilityFilteringMCP` in `register_all`. Deletion is the wrong lever:
+discovery is a startup snapshot and a schema removal on the wheel track is unrecoverable (see
+the fail-open manifest invariant), whereas the env switch is a one-line revert. Env-unset keeps
+the surface at exactly **135**, so no pin site moves and no count assertion changes; unknown env
+names are ignored — fail-open, never raise. Widening the env set is gated on the
+`probe_tools.py` falsifier: the model composes the collapsed command into `zebbern_exec`, and
+the orphan / wrong-syntax / destructive rates are compared **net of the wrappers' own measured
+defects**, not against zero. What shipped builds the instrument and runs no experiment — in
+the pilot-OFF default the 135-vs-1 question stays **open**, and `tools_nmap` keeps its deferred
+footgun: passing `additional_args` silently replaces its `-T4 -Pn` default (that default is the
+value of the same arg), so asking for `--script vuln` drops `-Pn` and a ping-blocking host
+reads as down — documented here, not fixed in this change.
+
+**The capability cheat-sheet lives in the `zebbern_exec` docstring**, not in a new tool (a
+six-pin-site change plus a probe case and a baseline entry) and not in a README or an MCP
+resource (neither is reliably in the model's runtime context): `command_exec` is a core module
+and so is always in context. It is extended as the `ZKM_COLLAPSE_PILOT` env set widens — each
+capability the pilot suppresses gains a line naming the command that replaces it.
 
 ## Tests, and what they do not prove
 
@@ -613,6 +724,19 @@ still testable, and that is where `ad_smb_enum` was caught returning
 `success: true, null_session: true` against a host running no SMB, a security claim asserted
 from the auth mode chosen rather than any result.
 
+**A guard added to the siblings and not to the one that needed it most.** impacket exits 0 on a
+connection error and prints the reason as a `[-]` line, so `_run_impacket`'s `tool_errors` is
+the only thing that separates "reached the DC and found nothing" from "never reached the DC".
+kerberoast and secretsdump were given a guard that reads it; **asreproast was not**, and it
+answered `success: true, hashes_obtained: 0` — a clean AS-REP roast invented out of a
+connection error, the worst direction for this family to fail in. `tests/test_ad_tool_claims.py`
+named only the siblings that had been fixed, so nothing pointed at the gap; a review found it
+by reading the three implementations side by side. `vpn_connect` sat in the same blind spot and
+was written off as "needs a peer" twice: `core.vpn_manager` imports clean on Windows and
+`tests/test_vpn_manager.py` already monkeypatches its `subprocess`, so all three cases are
+deterministic with no peer at all. When a fix lands on a family, re-read every member of it —
+and check whether the "untestable" label survives an import attempt.
+
 ### Two containers from one image, then diff the replies
 
 The only real check is post-merge: rebuild, boot, call the tools. There is a cheaper one, and
@@ -647,6 +771,26 @@ Two traps in how that was diagnosed:
 - The real tell was `history_suppressed: true`, emitted at exactly one place in the patched
   branch, which proved it had run.
 
+**The golden-master harness is the pre-merge gate the two-container method could not be.**
+[Delegated-agent decision under zebbern's standing authority grant, 2026-10-02.] When the
+regression above was found, "the only real check is two containers from one image" was the
+best tool available — but it is post-merge (it needs a published image to `docker cp` into)
+and reaches a real PTY only on a live Linux backend this Windows dev host does not have. The
+better pre-merge gate, now in place, is a golden master recorded FIRST: before the PtySession
+extraction, `tests/_pty_golden_recorder.py` drove each real manager through the suite's `pty`
+stub with a scripted `os.read`/`select.select`/`time` timeline and froze the exact
+operator-facing bytes and flags to `tests/fixtures/pty_golden/`; the extraction then had to
+reproduce them byte-identical (`tests/test_pty_golden_master.py`), and reverting the
+`_executed_marker` fix to the old substring test turns a fixture red. Recording the fixtures
+AFTER a change proves nothing — they would merely enshrine whatever the new code does, the
+very trap the live diff caught — so the recording has to precede the change it guards. The
+two-container live diff is NOT retired: it stays the POST-merge backstop for real-PTY timing a
+scripted-timeline golden master cannot reach, and it is still the only thing that proves the
+image builds. And the PtySession extraction is explicitly NOT a capture-logic rewrite — it
+relocated only the fd mechanics (`pty.openpty`/`select`/`os.read`/`os.write`/group teardown)
+into `core/pty_session.py`; every byte of each manager's marker, prompt and capture logic
+stayed in the manager, which is why the frozen fixtures reproduced unchanged.
+
 ## Defect shapes that keep recurring
 
 **Neither the suite nor the probe can tell you a tool works.** Calling each tool through an
@@ -679,6 +823,11 @@ should say. One call, one output. The shapes, worth checking first in anything n
   was the one that always failed. Audit by finding every route that 400s on a missing key and
   checking it against the wrappers that post there. A signature cannot express "one of two",
   so `ad_secretsdump` checks locally and returns the backend's own wording.
+  `ad_bloodhound_collect` was the third, found by a later sweep and worse than the other two:
+  its docstring did not merely default `dc_ip` to `""`, it promised "auto-detected if empty"
+  for detection code that exists nowhere. Fixing the two named above did not find it, because
+  the audit was run against the routes already known to 400 rather than against every route
+  that does.
 - **`success: true` for work that did not happen.** `reverse_shell_command` against a dead
   shell, `exploit_copy` carrying "Could not find EDB-ID #" as its message, a chisel client
   already defunct, `payload_generate` with an empty file. Check the thing the tool exists to
@@ -778,6 +927,22 @@ should say. One call, one output. The shapes, worth checking first in anything n
 - **A tool reaching outside itself.** `payload_host_start` called `os.chdir`, which is
   process-wide, moving the cwd of every later `zebbern_exec` from the mounted volume to a
   container-layer directory.
+- **A fix that only runs on a path no one takes.** The cross-restart session persistence
+  (see [Session lifetime](#session-lifetime)) landed working for jobs, reverse shells and
+  SSH and did nothing for MSF on the one path that matters: `kali_server.py`'s SIGTERM
+  handler called `msf_manager.destroy_all_sessions()`, which clears `self.sessions` and
+  re-persists an EMPTY file, so every routine `docker restart` / `docker compose up -d
+  --force-recreate` wiped the just-persisted MSF records before the new process could
+  reload them -- while reverse shells and SSH, whose handler calls `manager.stop()`,
+  survived. `destroy_all_sessions` is correct as the operator tool `msf_session_destroy_all`
+  (the operator asked for the records gone), so the shutdown path got its own
+  `MetasploitManager.shutdown()` that stops each live process and leaves the registry,
+  mirroring `job_manager.shutdown()`. It survived 1619 green tests because the load-bearing
+  half is `kali_server.py`'s wiring, and that file cannot be imported on Windows (`pty` /
+  `termios` via `api.routes`), so the suite can only assert its source text and never drive
+  the SIGTERM path; the end-to-end proof is a live `docker restart` showing the session
+  reload as a dead stand-in rather than the list coming back empty. [Delegated-agent
+  decision under zebbern's standing authority grant, 2026-10-03.]
 
 The two *disagreement* shapes (an argument nothing reads; a 400 on a schema-optional key) are
 the exception to "nothing automated catches this", and worth re-running as audits after any
@@ -819,5 +984,8 @@ twice:
   exactly the case that used to look like a pass.` The entry was re-anchored. A later refactor
   of a quoted line silently invalidates that guard's proof until the script is re-run.
 
-Add a mutation to `tests/mutations.json` whenever you add a guard. The spec holds **107**
-entries and the last full run was **107/107 guards verified red**.
+Add a mutation to `tests/mutations.json` whenever you add a guard. The spec holds **128**
+entries and the last full run was **128/128 guards verified red**. An entry has exactly five
+keys — `name`, `file`, `old`, `new`, `tests`. `occurrences` is a CLI parameter of the checker
+that defaults to 1; no entry sets it, and adding it to one is a schema divergence that reads
+as deliberate.
