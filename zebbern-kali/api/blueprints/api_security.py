@@ -157,10 +157,15 @@ def auth_bypass_test():
         if not url:
             return jsonify({"error": "url is required", "success": False}), 400
 
+        headers = params.get("headers") or {}
+        if isinstance(headers, str):
+            headers = dict(header_pairs(headers))
+
         result = api_tester.auth_bypass_test(
             url=url,
             valid_token=params.get("valid_token", ""),
-            headers=params.get("headers", {})
+            headers=headers,
+            method=params.get("method", "GET"),
         )
         return jsonify(result)
     except Exception as e:

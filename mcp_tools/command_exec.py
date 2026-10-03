@@ -125,7 +125,7 @@ def register(mcp: FastMCP, kali_client) -> None:
     """Register command execution and system info tools."""
 
     @mcp.tool()
-    def zebbern_exec(command: str, timeout: int = 3600, cwd: str = "", background: bool = False) -> Dict[str, Any]:
+    def zebbern_exec(command: str, timeout: int = 0, cwd: str = "", background: bool = False) -> Dict[str, Any]:
         """
         Execute ANY command on the Kali server with full root access.
 
@@ -138,11 +138,15 @@ def register(mcp: FastMCP, kali_client) -> None:
 
         Args:
             command: The command to execute (any shell command, pipes, chains, etc.)
-            timeout: Backstop seconds after which the JOB is terminated
-                (default: 3600 = 1 hour). It bounds the job, not this call, and
-                it is the operator's value -- the api/exec background branch does
-                not resolve it against the TOOL_TIMEOUTS table, so a
-                `hydra ...` run here is bounded by this argument, not hydra's tier.
+            timeout: Backstop seconds after which the JOB is terminated. It
+                bounds the job, not this call. The default 0 is a sentinel
+                meaning "omit it": with no timeout on the wire the api/exec
+                background branch resolves the backstop from the command's
+                TOOL_TIMEOUTS tier (e.g. hydra 86400, sqlmap 28800, nmap
+                14400), so a `hydra ...` run here gets hydra's own tier
+                automatically instead of a flat one-hour cap. Pass an explicit
+                value only to SHORTEN that tier-derived budget; it is still
+                the job's backstop, never a limit on this call.
             cwd: Optional working directory for the command. This is a per-process
                 cwd (Popen(cwd=...)), so it affects this command only. Left empty
                 the command inherits the backend's cwd, which is /root -- note
@@ -162,10 +166,43 @@ def register(mcp: FastMCP, kali_client) -> None:
             Check `finished` and `timed_out`, never `success`. A `note` is added
             when a signal killed the command and it printed nothing: it names the
             signal, which is observed, and does not claim what sent it.
+
+        Composing raw scanner commands -- a capability cheat-sheet
+        ----------------------------------------------------------
+        zebbern_exec is where a scanner is driven by hand when no typed
+        wrapper stands between you and the binary, so the defaults a wrapper
+        used to supply are now yours to pass. The footguns that bite hardest,
+        each one a command that looks like it ran and did nothing useful:
+
+        - sqlmap: ALWAYS pass `--batch`, or it stops at an interactive prompt
+          with nobody to answer it; the job then runs until killed and, past
+          the ~60s harness abort, orphans with the prompt still unanswered.
+          Add `--disable-coloring` so the log is clean. Tier: 28800s.
+        - nmap: host discovery is NOT skipped for you. Pass `-Pn` yourself
+          against a host that blocks ping, or the scan calls it down and
+          scans nothing; choose timing (`-T4`) and `--script` explicitly too.
+          Tier: 14400s.
+        - hydra: there is no implicit `-l admin` / `-P rockyou.txt`. Name the
+          login (`-l` / `-L`), the wordlist (`-P` / `-p`) and the service
+          yourself, or the run does nothing. Tier: 86400s.
+        - msfconsole: drive it non-interactively with `-q -x '<resource
+          commands>; exit'`, never bare, or it waits at its own prompt until
+          the budget expires.
+
+        A backgrounded command inherits its binary's TOOL_TIMEOUTS tier
+        automatically now (see `timeout` above), so you restate a tier only
+        when you mean to shorten it.
+
+        When the wrapper-collapse pilot is active, a suppressed scanner
+        wrapper is composed here by hand instead, and this sheet is the
+        source of truth for its safe defaults -- extend it as the pilot's
+        env set widens.
         """
-        data: Dict[str, Any] = {"command": command, "timeout": timeout}
+        data: Dict[str, Any] = {"command": command}
         if cwd:
             data["cwd"] = cwd
+        if timeout != 0:
+            data["timeout"] = timeout
         # heavy=False: this must not become a heavy_tool_post caller holding one of
         # five semaphore slots. run_promotable sets background in the body itself
         # and takes heavy/background explicitly, so zebbern_exec is deliberately

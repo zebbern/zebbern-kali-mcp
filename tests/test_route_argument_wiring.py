@@ -175,3 +175,75 @@ def test_graphql_fuzz_route_still_requires_a_url(monkeypatch):
     resp = _client(mod).post("/api/api-security/graphql/fuzz", json={})
 
     assert resp.status_code == 400
+
+
+def test_auth_bypass_route_normalizes_header_string_and_forwards_method(monkeypatch):
+    """The wrapper sends headers as a "k: v" string and a method; the route
+    used to pass the raw string through (crashing dict.update in the runner)
+    and never forwarded method. Mirror the fuzz route: normalize to a dict and
+    thread method."""
+    mod = _load("api_security")
+    seen = {}
+
+    class _Tester:
+        def auth_bypass_test(self, **kwargs):
+            seen.update(kwargs)
+            return {"success": True}
+
+    monkeypatch.setattr(mod, "api_tester", _Tester())
+    resp = _client(mod).post(
+        "/api/api-security/auth-bypass",
+        json={
+            "url": "http://t",
+            "headers": "X-Forwarded-For: 127.0.0.1",
+            "method": "POST",
+        },
+    )
+
+    assert resp.status_code == 200, resp.get_json()
+    assert seen["headers"] == {"X-Forwarded-For": "127.0.0.1"}, (
+        f"the header string was not normalized to a dict: {seen!r}"
+    )
+    assert seen["method"] == "POST", f"method was dropped: {seen!r}"
+
+
+def test_auth_bypass_core_threads_method_and_survives_a_header_dict(monkeypatch):
+    """The runner used to probe with a hardcoded requests.get and had no method
+    param: a genuinely open POST endpoint read as no bypass. The no-auth and
+    token-bypass probes must go through requests.request(method, ...), and
+    req_headers.update on a real dict must not raise."""
+    import core.api_security as cas
+
+    request_calls = []
+    get_calls = []
+
+    class _Resp:
+        status_code = 404
+
+    def fake_request(method, url, **kwargs):
+        request_calls.append((method, url))
+        return _Resp()
+
+    def fake_get(url, **kwargs):
+        get_calls.append(url)
+        return _Resp()
+
+    def fake_post(url, **kwargs):
+        return _Resp()
+
+    monkeypatch.setattr(cas.requests, "request", fake_request)
+    monkeypatch.setattr(cas.requests, "get", fake_get)
+    monkeypatch.setattr(cas.requests, "post", fake_post)
+
+    result = cas.api_tester.auth_bypass_test(
+        "http://t", headers={"X-Forwarded-For": "127.0.0.1"}, method="POST"
+    )
+
+    assert result["success"] is True
+    assert request_calls, "the no-auth/bypass probes never went through requests.request"
+    assert all(m == "POST" for m, _ in request_calls), (
+        f"method was not threaded into the probes: {request_calls!r}"
+    )
+    # No valid_token, so the baseline GET is skipped; both the no-auth and the
+    # token-bypass probes must use requests.request, never requests.get.
+    assert get_calls == [], f"a probe fell back to requests.get: {get_calls!r}"

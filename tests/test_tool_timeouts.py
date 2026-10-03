@@ -170,12 +170,17 @@ def test_metasploit_keeps_success_true_on_a_timeout():
 KALI_SERVER_SRC = (BACKEND_ROOT / "kali_server.py").read_text(encoding="utf-8")
 
 
-def test_shutdown_handler_destroys_msf_sessions():
-    """signal_handler tears down background jobs, reverse-shell sessions and SSH
-    sessions, and left msf sessions -- the one type that now leads a process
-    group -- running. Necessarily a source guard: kali_server imports api.routes,
-    which pulls in pty/termios, so the handler cannot be driven on Windows."""
-    assert "destroy_all_sessions" in KALI_SERVER_SRC
+def test_shutdown_handler_stops_msf_sessions_without_clearing():
+    """signal_handler now STOPS msf sessions WITHOUT clearing their records, the
+    way it already treats reverse-shell and SSH sessions: it calls
+    msf_manager.shutdown(), not destroy_all_sessions(), so a graceful restart
+    (docker restart / docker compose up -d --force-recreate, both SIGTERM)
+    leaves the persisted registry on disk to be reloaded as dead stand-ins
+    rather than wiping it. Necessarily a source guard: kali_server imports
+    api.routes, which pulls in pty/termios, so the handler cannot be driven on
+    Windows."""
+    assert "msf_manager.shutdown()" in KALI_SERVER_SRC
+    assert "destroy_all_sessions" not in KALI_SERVER_SRC
     assert "msf_manager" in KALI_SERVER_SRC
 
 

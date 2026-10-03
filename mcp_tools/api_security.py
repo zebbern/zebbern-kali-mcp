@@ -45,7 +45,12 @@ def register(mcp: FastMCP, kali_client) -> None:
                 Ignored when you pass your own query.
 
         Returns:
-            findings, plus the query actually used and query_generated.
+            findings, plus the query actually used and query_generated. The
+            backend clamps the total request budget -- a count ceiling and a
+            wall-clock deadline below the harness abort, because this loops
+            in-process and no background job can adopt it -- and reports
+            requests_capped / time_capped when it stopped early; total_requests
+            is the count actually sent, not a theoretical product.
         """
         parsed: Dict[str, Any] = {}
         text = (variables or "").strip()
@@ -101,6 +106,12 @@ def register(mcp: FastMCP, kali_client) -> None:
             parameters: Comma-separated parameter names to fuzz
             wordlist: Custom wordlist path (default: built-in)
             headers: Custom headers as key:value pairs, comma-separated
+
+        The backend clamps the total request budget -- a count ceiling and a
+        wall-clock deadline below the harness abort, because this fuzz loops
+        in-process and no background job can adopt it -- and reports
+        requests_capped / time_capped plus total_requests, the count actually
+        sent.
         """
         data = {
             "url": url, "method": method, "parameters": parameters,
@@ -117,6 +128,11 @@ def register(mcp: FastMCP, kali_client) -> None:
             url: Target API endpoint
             requests_count: Number of requests to send (default: 100)
             method: HTTP method (default: GET)
+
+        The backend clamps requests_count to a count ceiling and stops at a
+        wall-clock deadline below the harness abort (this loops in-process, so
+        no background job can adopt or cancel it); it reports requests_capped /
+        time_capped, and requests_sent reflects what was actually sent.
         """
         data = {"url": url, "requests_count": requests_count, "method": method}
         return kali_client.safe_post("api/api-security/rate-limit", data)
