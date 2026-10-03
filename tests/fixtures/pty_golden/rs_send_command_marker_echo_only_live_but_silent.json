@@ -1,0 +1,19 @@
+{
+  "command": "whoami",
+  "debug_info": {
+    "capture_mode_activated": false,
+    "end_marker": "END_bbbbbbbb",
+    "end_marker_found": false,
+    "start_marker": "START_aaaaaaaa"
+  },
+  "error": "no end marker within 2s; the command may still be running on the target and any output above is partial",
+  "execution_time": "<normalized:execution_time>",
+  "history_suppressed": false,
+  "lines_captured": 0,
+  "output": "",
+  "partial_results": false,
+  "session_closed": false,
+  "session_id": "golden_rs",
+  "success": false,
+  "timed_out": true
+}

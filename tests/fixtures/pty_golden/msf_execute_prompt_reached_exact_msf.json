@@ -1,0 +1,10 @@
+{
+  "console_exited": false,
+  "detector": "exact_msf",
+  "execution_time": "<normalized:execution_time>",
+  "output": "sessions -l\r\n\r\nActive sessions\r\n===============\r\nNo active sessions.\r\n\r\nmsf6 > ",
+  "partial_results": false,
+  "session_id": "golden_msf",
+  "success": true,
+  "timed_out": false
+}

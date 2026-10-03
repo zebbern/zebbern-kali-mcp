@@ -1,0 +1,18 @@
+{
+  "command": "cat f | base64",
+  "debug_info": {
+    "capture_mode_activated": true,
+    "end_marker": "END_bbbbbbbb",
+    "end_marker_found": true,
+    "start_marker": "START_aaaaaaaa"
+  },
+  "execution_time": "<normalized:execution_time>",
+  "history_suppressed": false,
+  "lines_captured": 1,
+  "output": "UmVhbCBkb3dubG9hZCB0ZXN0IDE3NTQxNDk3NTEK",
+  "partial_results": false,
+  "session_closed": false,
+  "session_id": "golden_rs",
+  "success": true,
+  "timed_out": false
+}

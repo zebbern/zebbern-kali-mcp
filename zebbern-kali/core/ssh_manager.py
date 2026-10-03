@@ -3,13 +3,14 @@
 
 import os
 import time
-import subprocess
-import pty
 import select
 import uuid
+from datetime import datetime
 from typing import Dict, Any
-from .config import logger
+from .config import logger, session_state_dir
 from .logging_utils import render_command
+from .pty_session import PtySession
+from .state_store import StateStore
 
 
 class SSHSessionManager:
@@ -29,6 +30,35 @@ class SSHSessionManager:
         self.last_output = ""
         self.start_time = time.time()
         self.command_count = 0
+        # Backend-restart persistence. A live session is created here; a
+        # restored stand-in is rebuilt from ssh_sessions.json by
+        # restore_sessions, which sets restored=True. created_at is
+        # persisted; the password and key contents never are.
+        self.created_at = datetime.now().isoformat()
+        self.restored = False
+
+    def _pty_io(self) -> PtySession:
+        """A PtySession over the current master_fd/process.
+
+        pty.openpty + select.select + os.read + os.write on a master fd was
+        implemented independently here, in reverse_shell_manager and in
+        metasploit_manager; that lifecycle now lives in core.pty_session. This
+        wraps the fd the session already holds so start_session's spawn and
+        validation, send_command and stop() all drive it through one owner.
+        os.read / select.select / os.write are passed as THIS module's own
+        names, resolved at call time, so the suite's existing seam -- which
+        swaps ssh_manager.os / .select for a scripted timeline -- still drives
+        the loop after the extraction. read_output keeps its own inlined loop on
+        purpose: no route reaches it, and its carry-over-in-locals bug is left
+        for a change of its own with its own golden master.
+        """
+        return PtySession(
+            self.master_fd,
+            self.process,
+            _select=select.select,
+            _read=os.read,
+            _write=os.write,
+        )
 
     def start_session(self) -> Dict[str, Any]:
         """Start an interactive SSH session using sshpass or key authentication"""
@@ -52,28 +82,20 @@ class SSHSessionManager:
 
             ssh_cmd.extend(["-p", str(self.port), f"{self.username}@{self.target}"])
 
-            # Allocate pseudo-terminal for interactive session
-            master_fd, slave_fd = pty.openpty()
-            self.master_fd = master_fd
-            self.slave_fd = slave_fd
-
             if self.password and not self.key_file:
                 # Use sshpass for password authentication
                 full_cmd = ["sshpass", "-p", self.password] + ssh_cmd
             else:
                 full_cmd = ssh_cmd
 
-            # Start SSH process with PTY
-            self.process = subprocess.Popen(
-                full_cmd,
-                stdin=slave_fd,
-                stdout=slave_fd,
-                stderr=slave_fd,
-                preexec_fn=os.setsid
-            )
-
-            # Close slave FD in parent
-            os.close(slave_fd)
+            # Allocate a PTY and attach SSH to its slave end. openpty +
+            # Popen(setsid) + close-slave is the shared spawn in
+            # core.pty_session now; close_fds=True matches the subprocess
+            # default this relied on before the extraction.
+            session = PtySession.spawn(full_cmd, close_fds=True)
+            self.master_fd = session.master_fd
+            self.slave_fd = None
+            self.process = session.process
 
             # Wait for connection establishment
             time.sleep(2)
@@ -81,11 +103,13 @@ class SSHSessionManager:
             # Test if connection is ready by sending a simple command
             # Note: We need to test the connection directly via the PTY before setting is_connected
             try:
-                # Try to read from the PTY to see if SSH connection is established
-                ready, _, _ = select.select([master_fd], [], [], 5.0)
-                if ready:
-                    # Try to read initial SSH output
-                    test_data = os.read(master_fd, 1024)
+                # Read initial SSH output via the shared session. session.read
+                # folds select+os.read: None (nothing ready within 5s) and b""
+                # (EOF) both fall through to the command test below, exactly as
+                # the old select/if-ready pair did; only real bytes are checked
+                # for a refusal banner.
+                test_data = self._pty_io().read(5.0, 1024)
+                if test_data:
                     if b"Connection refused" in test_data or b"Connection timed out" in test_data:
                         self.stop()
                         return {
@@ -174,10 +198,12 @@ class SSHSessionManager:
             if is_base64_cmd:
                 logger.info(f"Executing base64 command on {self.target}")
 
-            # Send command and marker
-            os.write(self.master_fd, (command + "\n").encode())
+            # Send command and marker. One PtySession wraps the current fd for
+            # both these writes and the read loop below.
+            pty = self._pty_io()
+            pty.write((command + "\n").encode())
             time.sleep(0.2)  # Increased delay for base64 commands
-            os.write(self.master_fd, (f"echo '{end_marker}'\n").encode())
+            pty.write((f"echo '{end_marker}'\n").encode())
 
             # Collect output until we see the end marker
             start_time = time.time()
@@ -185,10 +211,12 @@ class SSHSessionManager:
             buffer = b""
 
             while time.time() - start_time < timeout:
-                ready, _, _ = select.select([self.master_fd], [], [], 1.0)
-                if self.master_fd in ready:
+                # session.read folds select+os.read: None is the old not-ready
+                # case (the loop simply re-polls), b"" the EOF break, bytes the
+                # data branch. The body and its OSError guard are unchanged.
+                data = pty.read(1.0, 1024)
+                if data is not None:
                     try:
-                        data = os.read(self.master_fd, 1024)
                         if not data:
                             break
 
@@ -387,13 +415,41 @@ class SSHSessionManager:
 
     def get_status(self) -> Dict[str, Any]:
         """Get the status of the SSH session"""
+        if getattr(self, "restored", False):
+            # Rebuilt from ssh_sessions.json after a backend restart. No
+            # process and no master_fd are held, so process.poll() is never
+            # reached -- this returns a fixed stopped report rather than
+            # probing a handle it does not own (CLAUDE.md rule 3). The
+            # password was never persisted, so a reloaded entry cannot
+            # reconnect; it is a tombstone, not a usable session.
+            return {
+                "session_id": self.session_id,
+                "target": self.target,
+                "username": self.username,
+                "port": self.port,
+                "created_at": getattr(self, "created_at", None),
+                "status": "stopped",
+                "is_connected": False,
+                "process_alive": False,
+                "restored": True,
+                "start_time": self.start_time,
+                "command_count": self.command_count,
+                "note": (
+                    "the backend restarted; this SSH session is gone. "
+                    "The record survived but the connection did not, and "
+                    "the credential was never persisted, so commands are "
+                    "refused -- start a new session."
+                ),
+            }
         return {
             "session_id": self.session_id,
             "target": self.target,
             "username": self.username,
             "port": self.port,
+            "created_at": self.created_at,
             "is_connected": self.is_connected,
             "process_alive": self.process and self.process.poll() is None,
+            "restored": False,
             "start_time": self.start_time,
             "command_count": self.command_count
         }
@@ -431,19 +487,32 @@ class SSHSessionManager:
         return "\n".join(lines)
 
     def stop(self):
-        """Stop the SSH session"""
-        try:
-            if self.process:
-                logger.info(f"Stopping SSH session to {self.target}")
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    self.process.kill()
-                self.process = None
+        """Stop the SSH session.
 
-            if self.master_fd:
-                os.close(self.master_fd)
+        Teardown now goes through PtySession.close(), a DELIBERATE upgrade over
+        the old bare self.process.terminate(): SSH is spawned under os.setsid, so
+        a plain terminate() signalled only the leader and could orphan an ssh
+        control-master child or a proxy it had forked. close() signals the whole
+        process group -- SIGTERM, escalate to SIGKILL on a timeout, then probe
+        and reap a surviving child -- and closes the master fd, the same ladder
+        reverse_shell_manager and metasploit_manager already use. Not a byte of
+        captured output is involved, so the golden masters do not reach it; it is
+        covered by
+        tests/test_pty_session.py::test_ssh_stop_tears_down_through_the_pty_group_close.
+        """
+        try:
+            if self.process is not None:
+                logger.info(f"Stopping SSH session to {self.target}")
+                self._pty_io().close()
+                self.process = None
+                self.master_fd = None
+            elif self.master_fd is not None:
+                # No process to signal, but a dangling fd still to release --
+                # close() is a no-op without a process, so close it directly.
+                try:
+                    os.close(self.master_fd)
+                except OSError:
+                    pass
                 self.master_fd = None
 
         except Exception as e:
@@ -478,3 +547,89 @@ class SSHSessionManager:
         except Exception as e:
             logger.error(f"Error in SSH download: {str(e)}")
             return {"error": str(e), "success": False}
+
+
+_SSH_STATE_FILENAME = "ssh_sessions.json"
+
+
+def _ssh_store() -> StateStore:
+    """StateStore over ``<session_state_dir>/ssh_sessions.json``.
+
+    Resolved at call time so the state dir honours ZKM_STATE_DIR / the
+    job-dir sibling without caching a path from import.
+    """
+    return StateStore(os.path.join(session_state_dir(), _SSH_STATE_FILENAME))
+
+
+def persist_sessions(active_ssh_sessions) -> bool:
+    """Write SSH session METADATA to ssh_sessions.json. Never raises.
+
+    Called on create and on stop -- never on an is_connected flip. Stores
+    only the PATH to a key file, NEVER its contents and NEVER the
+    password: a dead reloaded entry cannot use a credential, and writing
+    one would create a secret-at-rest the memory-only state never had.
+    This is not log redaction -- no operator-visible output is withheld; a
+    field that was never persisted is simply not added. Returns whether
+    the write landed (``persisted``); an unwritable state dir degrades to
+    False and the session operation carries on (CLAUDE.md rule 2).
+    """
+    records = {}
+    for session_id, manager in list(active_ssh_sessions.items()):
+        records[str(session_id)] = {
+            "session_id": manager.session_id,
+            "target": manager.target,
+            "username": manager.username,
+            "port": manager.port,
+            "key_file": manager.key_file or "",
+            "created_at": getattr(manager, "created_at", None),
+        }
+    try:
+        os.makedirs(session_state_dir(), exist_ok=True)
+        _ssh_store().save({"sessions": records})
+        return True
+    except Exception as exc:
+        logger.warning(f"Could not persist SSH sessions: {exc}")
+        return False
+
+
+def restore_sessions(active_ssh_sessions) -> int:
+    """Rebuild restored stand-ins from a prior process's ssh_sessions.json.
+
+    Run once at backend start. Each stand-in is a lightweight
+    SSHSessionManager carrying NO process, NO master_fd and NO password
+    (the constructor leaves process/master_fd None; password defaults to
+    ""), so send_command refuses it on its existing ``not is_connected or
+    not master_fd`` guard and nothing polls a pid on its behalf (CLAUDE.md
+    rule 3). get_status reports it as status=stopped, is_connected=False,
+    process_alive=False, restored=True. Never raises: a missing or corrupt
+    file leaves the registry empty, exactly as a fresh boot would. Returns
+    how many stand-ins were registered.
+    """
+    try:
+        state = _ssh_store().load()
+    except Exception as exc:
+        logger.warning(f"Could not load SSH sessions: {exc}")
+        return 0
+    records = state.get("sessions")
+    if not isinstance(records, dict):
+        return 0
+    restored = 0
+    for session_id, record in records.items():
+        if not isinstance(record, dict) or session_id in active_ssh_sessions:
+            continue
+        try:
+            manager = SSHSessionManager(
+                record.get("target", ""),
+                record.get("username", ""),
+                password="",
+                key_file=record.get("key_file", "") or "",
+                port=record.get("port", 22),
+                session_id=record.get("session_id", session_id),
+            )
+        except Exception:
+            continue
+        manager.restored = True
+        manager.created_at = record.get("created_at") or manager.created_at
+        active_ssh_sessions[session_id] = manager
+        restored += 1
+    return restored

@@ -1,0 +1,10 @@
+{
+  "console_exited": false,
+  "detector": "meterpreter",
+  "execution_time": "<normalized:execution_time>",
+  "output": "sysinfo\r\nComputer     : TARGET\r\nOS           : Windows\r\nmeterpreter > ",
+  "partial_results": false,
+  "session_id": "golden_msf",
+  "success": true,
+  "timed_out": false
+}

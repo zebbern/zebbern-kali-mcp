@@ -1,0 +1,10 @@
+{
+  "console_exited": false,
+  "detector": "timeout",
+  "execution_time": "<normalized:execution_time>",
+  "output": "",
+  "partial_results": false,
+  "session_id": "golden_msf",
+  "success": true,
+  "timed_out": true
+}

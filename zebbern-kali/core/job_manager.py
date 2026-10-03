@@ -16,9 +16,19 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence, TextIO, Union
 
+from core.state_store import StateStore
+
 
 Command = Union[str, Sequence[str]]
-TERMINAL_STATES = frozenset({"succeeded", "failed", "canceled", "timed_out"})
+# "orphaned" is a reload-only terminal state (see _rehydrate): a job the
+# previous process left running, rebuilt after a backend restart. It is
+# terminal so cancel() and _make_room() treat it as done, but its outcome is
+# unknowable -- unlike the live terminal states, whose outcomes were observed
+# -- so read_output and _metadata derive success -> None for it rather than
+# the False that bare membership would give.
+TERMINAL_STATES = frozenset(
+    {"succeeded", "failed", "canceled", "timed_out", "orphaned"}
+)
 
 # GNU stdbuf, when this system has one. A C-stdio program whose stdout is a pipe
 # -- which every job's is -- switches from line- to full-buffering and holds
@@ -58,6 +68,8 @@ class _Job:
     started_at: Optional[float] = None
     finished_at: Optional[float] = None
     error: Optional[str] = None
+    restored: bool = False
+    persisted: bool = False
     events: deque[dict[str, str]] = field(default_factory=deque)
     process: Optional[subprocess.Popen[str]] = field(default=None, repr=False)
     input_queue: queue.Queue[Optional[str]] = field(init=False, repr=False)
@@ -111,6 +123,16 @@ class JobManager:
         self._jobs: dict[str, _Job] = {}
         self._stopping = False
         self._condition = threading.Condition(threading.RLock())
+        # Cross-restart persistence of job METADATA (never the Popen handle
+        # or the input queue, which a new process cannot re-adopt). A backend
+        # restart -- a routine `docker compose up -d --force-recreate` here --
+        # drops the in-memory registry, after which *_status and job_list
+        # answer empty, indistinguishable from "nothing ever started".
+        # jobs.json sits beside the per-job logs in output_dir; those logs
+        # already hold 100% of each job's output, so a reloaded job's bytes
+        # come back from disk.
+        self._store = StateStore(os.path.join(self.output_dir, "jobs.json"))
+        self._load_persisted()
 
     def start(
         self,
@@ -173,6 +195,7 @@ class JobManager:
                 job.error = str(exc)
                 job.output_closed = True
                 job.finished_at = time.time()
+                self._persist_locked()
                 self._condition.notify_all()
             raise
 
@@ -183,6 +206,7 @@ class JobManager:
             job.started_at = time.time()
             job.status = "running"
             self._open_log(job)
+            self._persist_locked()
             cancel_after_start = job.cancel_requested
             initial_metadata = self._metadata(job)
             self._condition.notify_all()
@@ -325,13 +349,34 @@ class JobManager:
                     timeout=timeout,
                 )
 
-            events = list(job.events)[-lines:]
+            if job.restored:
+                # A reloaded job's in-memory ring is empty; its bytes survive
+                # only in the on-disk log the previous process wrote. Serve the
+                # window from there, bounded the same way as the live ring.
+                events = self._read_log_events(job, lines)
+            else:
+                events = list(job.events)[-lines:]
             stdout = [event["line"] for event in events if event["source"] == "stdout"]
             stderr = [event["line"] for event in events if event["source"] == "stderr"]
+            orphaned = job.status == "orphaned"
             return {
-                "success": job.status in {"queued", "running", "succeeded"},
+                # An orphaned job's outcome is unknowable, so both the advisory
+                # flag and the tri-state report None rather than the False that
+                # TERMINAL_STATES membership would otherwise derive: "nothing
+                # could tell me", not "no".
+                "success": (
+                    None
+                    if orphaned
+                    else job.status in {"queued", "running", "succeeded"}
+                ),
                 "job_success": (
-                    job.status == "succeeded" if job.status in TERMINAL_STATES else None
+                    None
+                    if orphaned
+                    else (
+                        job.status == "succeeded"
+                        if job.status in TERMINAL_STATES
+                        else None
+                    )
                 ),
                 "job_id": job.job_id,
                 "session_id": job.job_id,
@@ -344,6 +389,8 @@ class JobManager:
                 "output_truncated": job.output_truncated,
                 "output_path": job.output_path,
                 "output_logged": job.output_logged,
+                "restored": job.restored,
+                "persisted": job.persisted,
                 "wait_timeout": float(timeout),
                 "wait_capped": wait_capped,
                 "max_output_wait": self.max_output_wait,
@@ -485,10 +532,171 @@ class JobManager:
         except KeyError as exc:
             raise KeyError(f"Unknown job: {job_id}") from exc
 
+    def _persist_locked(self) -> None:
+        """Write every job's METADATA to jobs.json. The caller holds the lock.
+
+        Called on each status transition worth surviving a restart -- a job
+        going ``running``, and every terminal state. Both call sites already
+        hold ``self._condition`` (``start`` and the watcher), so the writes
+        are serialised; ``StateStore``'s unique-temp-per-writer replace is a
+        second line of defence, not the primary one. Only serialisable fields
+        are stored -- never the ``Popen`` handle or the input queue, which a
+        reloaded process must not try to re-adopt.
+
+        Never raises. A persistence fault (an unwritable state dir) degrades
+        to ``persisted=False`` on the jobs -- the same honest degradation
+        ``output_logged`` makes for an unwritable log dir -- and the operation
+        that triggered the write carries on. Failing a scan because its
+        bookkeeping could not be written would be the worse outcome, so every
+        exception the save can raise is swallowed here by design.
+        """
+        records = {
+            job_id: {
+                "job_id": job.job_id,
+                "command": job.command,
+                "status": job.status,
+                "return_code": job.return_code,
+                "timed_out": job.timed_out,
+                "created_at": job.created_at,
+                "started_at": job.started_at,
+                "finished_at": job.finished_at,
+                "output_path": job.output_path,
+            }
+            for job_id, job in self._jobs.items()
+        }
+        try:
+            self._store.save({"jobs": records})
+            persisted = True
+        except Exception:
+            persisted = False
+        for job in self._jobs.values():
+            job.persisted = persisted
+
+    def _load_persisted(self) -> None:
+        """Rebuild stand-in jobs from a prior process's jobs.json, at init.
+
+        A job that was already terminal reloads as itself -- its on-disk log
+        is the whole of its output. A job the old process left running
+        reloads as ``orphaned``: the process is gone and its outcome cannot
+        be known. Never raises -- an unreadable state file leaves an empty
+        registry, exactly as a fresh boot would. The reload honours the live
+        ``max_jobs`` bound by keeping only the most recent records; this caps
+        job *records*, never any job's output (the logs on disk are
+        untouched), the same discipline ``_make_room`` applies to the live
+        registry.
+        """
+        try:
+            state = self._store.load()
+        except Exception:
+            return
+        records = state.get("jobs")
+        if not isinstance(records, dict):
+            return
+        candidates = [rec for rec in records.values() if isinstance(rec, dict)]
+        candidates.sort(key=lambda rec: rec.get("created_at") or 0, reverse=True)
+        for record in candidates[: self.max_jobs]:
+            job_id = record.get("job_id")
+            if not job_id:
+                continue
+            try:
+                job = self._rehydrate(str(job_id), record)
+            except Exception:
+                continue
+            self._jobs[job.job_id] = job
+
+    def _rehydrate(self, job_id: str, record: dict[str, Any]) -> _Job:
+        """Build one stand-in ``_Job`` from a persisted record.
+
+        The stand-in carries ``process=None`` and ``process_group_id=None``,
+        so no poll/killpg/taskkill path can touch it: the old pid may now
+        belong to an unrelated process, and signalling it would be traffic
+        against a stranger (CLAUDE.md rule 3). ``cancel`` sees a terminal
+        status and returns ``already_terminal``; ``_make_room`` may evict it;
+        ``read_output`` serves its bytes from the on-disk log, not the empty
+        ring.
+        """
+        status = record.get("status")
+        output_path = record.get("output_path")
+        job = _Job(
+            job_id=job_id,
+            command=record.get("command", ""),
+            cwd=None,
+            shell=False,
+            timeout=0.0,
+            max_output_lines=self.max_output_lines,
+            max_output_chars=self.max_output_chars,
+            max_pending_inputs=self.max_pending_inputs,
+        )
+        job.process = None
+        job.process_group_id = None
+        job.pid = None
+        job.output_path = output_path
+        job.output_logged = bool(output_path)
+        job.output_closed = True
+        job.created_at = record.get("created_at") or job.created_at
+        job.started_at = record.get("started_at")
+        job.finished_at = record.get("finished_at")
+        job.restored = True
+        job.persisted = True
+        if status in TERMINAL_STATES:
+            job.status = status
+            job.return_code = record.get("return_code")
+            job.timed_out = bool(record.get("timed_out"))
+        else:
+            # Running (or queued) when the process died: the outcome is
+            # unknowable, so it must not masquerade as success or failure;
+            # return_code and timed_out stay None for the same reason.
+            job.status = "orphaned"
+            job.return_code = None
+            job.timed_out = None
+            job.error = (
+                "Backend restarted while this job was still {0}; the process "
+                "did not survive the restart and its final outcome is "
+                "unknown. Output captured before the restart is preserved at "
+                "{1}.".format(status, output_path)
+            )
+        return job
+
+    def _read_log_events(self, job: _Job, lines: int) -> list[dict[str, str]]:
+        """The last ``lines`` lines of a reloaded job's on-disk log, as events.
+
+        The log tees stdout and stderr merged in arrival order, so the split
+        cannot be recovered from disk; the chronological lines come back
+        under ``stdout``, where tool output conventionally lands and where
+        ``read_output``'s consumers look. Each line is clipped to
+        ``max_line_chars`` exactly as the live ring clips, so the window is
+        bounded the same way. An unreadable log (deleted, or its dir gone)
+        yields an empty list -- honest absence, never an exception.
+        """
+        path = job.output_path
+        if not path:
+            return []
+        try:
+            with open(
+                path, "r", encoding="utf-8", errors="replace", newline=""
+            ) as handle:
+                raw = handle.read()
+        except OSError:
+            return []
+        events: list[dict[str, str]] = []
+        for line in raw.splitlines()[-lines:]:
+            if len(line) > self.max_line_chars:
+                line = line[: self.max_line_chars]
+            events.append({"source": "stdout", "line": line})
+        return events
+
     @staticmethod
     def _metadata(job: _Job) -> dict[str, Any]:
         data = {
-            "success": job.status in {"queued", "running", "succeeded"},
+            # Orphaned is terminal but its outcome was never observed, so it
+            # reports None here as well (not the False that membership would
+            # derive) -- consistent with read_output. The live terminal states
+            # stay False: those outcomes were seen, orphaned's was not.
+            "success": (
+                None
+                if job.status == "orphaned"
+                else job.status in {"queued", "running", "succeeded"}
+            ),
             "job_id": job.job_id,
             "session_id": job.job_id,
             "status": job.status,
@@ -499,6 +707,8 @@ class JobManager:
             "output_truncated": job.output_truncated,
             "output_path": job.output_path,
             "output_logged": job.output_logged,
+            "restored": job.restored,
+            "persisted": job.persisted,
             "created_at": job.created_at,
             "started_at": job.started_at,
             "finished_at": job.finished_at,
@@ -643,6 +853,7 @@ class JobManager:
             else:
                 job.status = "succeeded" if return_code == 0 else "failed"
             job.finished_at = time.time()
+            self._persist_locked()
             self._condition.notify_all()
 
         try:

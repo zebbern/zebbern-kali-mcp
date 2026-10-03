@@ -140,7 +140,7 @@ class NetworkPivotManager:
         
         # Tool paths
         self.chisel_path = self._find_tool("chisel")
-        self.ligolo_path = self._find_tool("ligolo-ng")
+        self.ligolo_path = self._find_tool("ligolo-proxy")
         self.socat_path = "/usr/bin/socat"
         
         # Track processes
@@ -192,8 +192,21 @@ class NetworkPivotManager:
         }
         
         state_file = os.path.join(self.output_dir, "state.json")
-        with open(state_file, 'w') as f:
-            json.dump(state, f, indent=2)
+        tmp_file = state_file + ".tmp"
+        try:
+            with open(tmp_file, 'w') as f:
+                json.dump(state, f, indent=2)
+            os.replace(tmp_file, state_file)
+        except Exception:
+            # json.dump (or the open) raised mid-write: drop the partial
+            # .tmp best-effort so no orphan is left beside an intact
+            # pre-existing state.json, then re-raise. os.replace is only
+            # reached on the success path, so its atomicity is unchanged.
+            try:
+                os.unlink(tmp_file)
+            except OSError:
+                pass
+            raise
     
     def _load_state(self):
         """Load saved state."""
@@ -888,7 +901,7 @@ class NetworkPivotManager:
             if not self.ligolo_path:
                 return {
                     "success": False, 
-                    "error": "Ligolo-ng not found. Install from: https://github.com/nicocha30/ligolo-ng",
+                    "error": "ligolo-proxy not found. Install from: https://github.com/nicocha30/ligolo-ng",
                     "install_commands": [
                         "wget https://github.com/nicocha30/ligolo-ng/releases/latest/download/ligolo-ng_proxy_Linux_64bit.tar.gz",
                         "tar -xzf ligolo-ng_proxy_Linux_64bit.tar.gz",

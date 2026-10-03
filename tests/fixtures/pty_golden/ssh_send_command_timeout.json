@@ -1,0 +1,8 @@
+{
+  "command": "sleep 100",
+  "execution_time": "<normalized:execution_time>",
+  "output": "uid=0(root)",
+  "session_id": "golden_ssh",
+  "success": true,
+  "timeout": true
+}

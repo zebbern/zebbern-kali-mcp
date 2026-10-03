@@ -1,0 +1,19 @@
+{
+  "command": "cat /etc/passwd",
+  "debug_info": {
+    "capture_mode_activated": true,
+    "end_marker": "END_bbbbbbbb",
+    "end_marker_found": false,
+    "start_marker": "START_aaaaaaaa"
+  },
+  "error": "the reverse shell closed before the command completed; it did not run. Check reverse_shell_status and start a new listener.",
+  "execution_time": "<normalized:execution_time>",
+  "history_suppressed": false,
+  "lines_captured": 1,
+  "output": "root:x:0:0:root:/root:/bin/bash",
+  "partial_results": true,
+  "session_closed": true,
+  "session_id": "golden_rs",
+  "success": false,
+  "timed_out": false
+}
