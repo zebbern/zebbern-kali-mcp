@@ -401,7 +401,7 @@
   {
     "name": "reverse shell: send_raw stops writing to the pty",
     "file": "zebbern-kali/core/reverse_shell_manager.py",
-    "old": "            written = os.write(self.master_fd, payload)",
+    "old": "            written = self._pty_io().write(payload)",
     "new": "            written = len(payload)",
     "tests": "tests/test_reverse_shell_raw_io.py"
   },
@@ -747,5 +747,236 @@
     "old": "        man-spider==2.0.0",
     "new": "        man-spider",
     "tests": "tests/test_docker_build_contract.py"
+  },
+  {
+    "name": "asreproast: roast an unreachable DC clean again",
+    "file": "zebbern-kali/core/ad_tools.py",
+    "old": "                if not hashes and not vulnerable_users and tool_errors:",
+    "new": "                if False and not hashes and not vulnerable_users and tool_errors:",
+    "tests": "tests/test_ad_tool_claims.py"
+  },
+  {
+    "name": "openvpn: claim the tunnel is up without reading the log",
+    "file": "zebbern-kali/core/vpn_manager.py",
+    "old": "    connected = _poll_openvpn_connected(log_file)",
+    "new": "    connected = True",
+    "tests": "tests/test_vpn_manager.py"
+  },
+  {
+    "name": "bloodhound_collect: dc_ip optional again despite the 400",
+    "file": "mcp_tools/ad_tools.py",
+    "old": "        dc_ip: str, collection_method: str = \"all\",",
+    "new": "        dc_ip: str = \"\", collection_method: str = \"all\",",
+    "tests": "tests/test_arguments_the_backend_reads.py"
+  },
+  {
+    "name": "api auth-bypass route: normalize header string and forward method",
+    "file": "zebbern-kali/api/blueprints/api_security.py",
+    "old": "        headers = params.get(\"headers\") or {}\n        if isinstance(headers, str):\n            headers = dict(header_pairs(headers))\n\n        result = api_tester.auth_bypass_test(",
+    "new": "        headers = params.get(\"headers\", {})\n\n        result = api_tester.auth_bypass_test(",
+    "tests": "tests/test_route_argument_wiring.py"
+  },
+  {
+    "name": "api auth-bypass core: probe with requests.request(method) not a hardcoded GET",
+    "file": "zebbern-kali/core/api_security.py",
+    "old": "                resp = requests.request(method, url, headers=req_headers, timeout=10, verify=False)",
+    "new": "                resp = requests.get(url, headers=req_headers, timeout=10, verify=False)",
+    "tests": "tests/test_route_argument_wiring.py"
+  },
+  {
+    "name": "pivot _save_state: write in place instead of atomically",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "            with open(tmp_file, 'w') as f:\n                json.dump(state, f, indent=2)\n            os.replace(tmp_file, state_file)",
+    "new": "            with open(state_file, 'w') as f:\n                json.dump(state, f, indent=2)",
+    "tests": "tests/test_pivot_state_persistence.py"
+  },
+  {
+    "name": "zebbern_exec: a default call must OMIT the timeout key",
+    "file": "mcp_tools/command_exec.py",
+    "old": "        if timeout != 0:\n            data[\"timeout\"] = timeout",
+    "new": "        if timeout != -1:\n            data[\"timeout\"] = timeout",
+    "tests": "tests/test_zebbern_exec_timeout_contract.py"
+  },
+  {
+    "name": "zebbern_exec: cheat-sheet keeps the sqlmap --batch footgun",
+    "file": "mcp_tools/command_exec.py",
+    "old": "        - sqlmap: ALWAYS pass `--batch`, or it stops at an interactive prompt",
+    "new": "        - sqlmap: ALWAYS pass this flag, or it stops at an interactive prompt",
+    "tests": "tests/test_zebbern_exec_timeout_contract.py"
+  },
+  {
+    "name": "exec route background branch resolves an omitted timeout, not an explicit one",
+    "file": "zebbern-kali/api/blueprints/command.py",
+    "old": "            job_timeout = get_command_timeout(command) if requested is None else requested",
+    "new": "            job_timeout = get_command_timeout(command)",
+    "tests": "tests/test_exec_route_timeout_resolution.py"
+  },
+  {
+    "name": "collapse pilot: make a core tool suppressible again",
+    "file": "mcp_tools/__init__.py",
+    "old": "    suppress = frozenset(suppress) - _core_tool_names()",
+    "new": "    suppress = frozenset(suppress)",
+    "tests": "tests/test_collapse_pilot_switch.py"
+  },
+  {
+    "name": "api_security: graphql_fuzz count ceiling stops the in-process loop",
+    "file": "zebbern-kali/core/api_security.py",
+    "old": "if requests_sent >= API_REQUEST_CEILING:\n                            requests_capped = True\n                            break\n                        if (time.time() - loop_start) >= API_LOOP_BUDGET_SECONDS:\n                            time_capped = True\n                            break\n                        fuzzed_vars = variables.copy()",
+    "new": "if requests_sent >= API_REQUEST_CEILING:\n                            requests_capped = True\n                        if (time.time() - loop_start) >= API_LOOP_BUDGET_SECONDS:\n                            time_capped = True\n                            break\n                        fuzzed_vars = variables.copy()",
+    "tests": "tests/test_api_security_request_bounds.py::test_graphql_fuzz_count_ceiling_caps_requests_sent"
+  },
+  {
+    "name": "api_security: api_fuzz_endpoint count ceiling stops the in-process loop",
+    "file": "zebbern-kali/core/api_security.py",
+    "old": "if requests_sent >= API_REQUEST_CEILING:\n                            requests_capped = True\n                            break\n                        if (time.time() - loop_start) >= API_LOOP_BUDGET_SECONDS:\n                            time_capped = True\n                            break\n                        fuzzed_params = test_data.copy()",
+    "new": "if requests_sent >= API_REQUEST_CEILING:\n                            requests_capped = True\n                        if (time.time() - loop_start) >= API_LOOP_BUDGET_SECONDS:\n                            time_capped = True\n                            break\n                        fuzzed_params = test_data.copy()",
+    "tests": "tests/test_api_security_request_bounds.py::test_api_fuzz_endpoint_count_ceiling_caps_requests_sent"
+  },
+  {
+    "name": "api_security: rate_limit_test count ceiling stops the in-process loop",
+    "file": "zebbern-kali/core/api_security.py",
+    "old": "if len(results) >= API_REQUEST_CEILING:\n                    requests_capped = True\n                    break\n                if (time.time() - start_time) >= API_LOOP_BUDGET_SECONDS:\n                    time_capped = True\n                    break\n                try:",
+    "new": "if len(results) >= API_REQUEST_CEILING:\n                    requests_capped = True\n                if (time.time() - start_time) >= API_LOOP_BUDGET_SECONDS:\n                    time_capped = True\n                    break\n                try:",
+    "tests": "tests/test_api_security_request_bounds.py::test_rate_limit_test_count_ceiling_caps_requests_sent"
+  },
+  {
+    "name": "run_nmap: baseline -T4 -Pn always applied; additional_args augments, not replaces",
+    "file": "zebbern-kali/tools/kali_tools.py",
+    "old": "        additional_args = params.get(\"additional_args\", \"\")\n        background = params.get(\"background\", False)\n\n        if not target:\n            logger.warning(\"Nmap called without target parameter\")\n            return {\n                \"error\": \"Target parameter is required\",\n                \"success\": False\n            }\n\n        command = f\"nmap {scan_type}\"\n\n        if ports:\n            command += f\" -p {ports}\"\n\n        # Baseline timing/host-discovery flags are always applied, not replaced:\n        # any additional_args used to silently wipe them (asking for --script vuln\n        # dropped -Pn, and a ping-blocking host then read as down). nmap honours the\n        # last -T template, so an operator -Tn in additional_args still wins; -Pn is\n        # forced (to run host discovery, call zebbern_exec directly).\n        command += \" -T4 -Pn\"",
+    "new": "        additional_args = params.get(\"additional_args\", \"\") or \"-T4 -Pn\"\n        background = params.get(\"background\", False)\n\n        if not target:\n            logger.warning(\"Nmap called without target parameter\")\n            return {\n                \"error\": \"Target parameter is required\",\n                \"success\": False\n            }\n\n        command = f\"nmap {scan_type}\"\n\n        if ports:\n            command += f\" -p {ports}\"",
+    "tests": "tests/test_nmap_command.py"
+  },
+  {
+    "name": "pivot ligolo: resolve the name that is never on disk again",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "        self.ligolo_path = self._find_tool(\"ligolo-proxy\")",
+    "new": "        self.ligolo_path = self._find_tool(\"ligolo-ng\")",
+    "tests": "tests/test_pivot_ligolo_binary.py"
+  },
+  {
+    "name": "reverse shell list: iterate the live dict again",
+    "file": "zebbern-kali/api/blueprints/reverse_shell.py",
+    "old": "        for session_id, shell_manager in list(active_sessions.items()):",
+    "new": "        for session_id, shell_manager in active_sessions.items():",
+    "tests": "tests/test_reverse_shell_route_snapshot.py"
+  },
+  {
+    "name": "web_fingerprinter: fingerprint_url reports a missing whatweb as not_installed",
+    "file": "zebbern-kali/core/web_fingerprinter.py",
+    "old": "        except FileNotFoundError:\n            whatweb_status = \"not_installed\"",
+    "new": "        except FileNotFoundError:\n            whatweb_status = \"ok\"",
+    "tests": "tests/test_whatweb_status.py"
+  },
+  {
+    "name": "callback catcher: the per-session .jsonl tee is what makes an evicted callback recoverable",
+    "file": "zebbern-kali/core/callback_catcher.py",
+    "old": "            self._tee_callback(entry)",
+    "new": "            pass",
+    "tests": "tests/test_callback_eviction.py"
+  },
+  {
+    "name": "command executor: timeout path drains readers before finalizing",
+    "file": "zebbern-kali/core/command_executor.py",
+    "old": "                self.stdout_thread.join(timeout=5)\n                self.stderr_thread.join(timeout=5)",
+    "new": "",
+    "tests": "tests/test_command_executor_timeout_drain.py"
+  },
+  {
+    "name": "pivot _save_state: leave the orphan .tmp behind on a failed write",
+    "file": "zebbern-kali/core/network_pivot.py",
+    "old": "            try:\n                os.unlink(tmp_file)\n            except OSError:\n                pass\n            raise",
+    "new": "            raise",
+    "tests": "tests/test_save_state_tmp_cleanup.py"
+  },
+  {
+    "name": "vpn status: connected reports ever-came-up, not up-now",
+    "file": "zebbern-kali/core/vpn_manager.py",
+    "old": "            iface_up = bool(ip_match)\n            log_ok = _poll_openvpn_connected(OPENVPN_LOG_FILE, timeout=0)\n            if log_ok is None:\n                connected = None\n            elif not iface_up:\n                connected = False\n            else:\n                connected = log_ok\n",
+    "new": "            connected = _poll_openvpn_connected(OPENVPN_LOG_FILE, timeout=0)\n",
+    "tests": "tests/test_vpn_manager.py::test_get_vpn_status_connected_false_when_interface_down_despite_log"
+  },
+  {
+    "name": "pty_session: read collapses EOF (b\"\") into the not-ready None signal",
+    "file": "zebbern-kali/core/pty_session.py",
+    "old": "        return self._read(self.master_fd, size)",
+    "new": "        return self._read(self.master_fd, size) or None",
+    "tests": "tests/test_pty_golden_master.py"
+  },
+  {
+    "name": "pty_session: read returns bytes when select was not ready instead of None",
+    "file": "zebbern-kali/core/pty_session.py",
+    "old": "        if not ready:\n            return None",
+    "new": "        if not ready:\n            return b\"\"",
+    "tests": "tests/test_pty_session.py"
+  },
+  {
+    "name": "pty_session: strip_for_match no longer strips ANSI for the match",
+    "file": "zebbern-kali/core/pty_session.py",
+    "old": "        return _ANSI_RE.sub(\"\", text)",
+    "new": "        return text",
+    "tests": "tests/test_pty_session.py"
+  },
+  {
+    "name": "pty_session: close skips the SIGKILL survivor-reap escalation",
+    "file": "zebbern-kali/core/pty_session.py",
+    "old": "        if uses_process_group and not group_escalated:",
+    "new": "        if False and uses_process_group and not group_escalated:",
+    "tests": "tests/test_pty_session.py"
+  },
+  {
+    "name": "persistence: a reloaded reverse-shell stand-in reports restored=false",
+    "file": "zebbern-kali/core/reverse_shell_manager.py",
+    "old": "                \"restored\": True,",
+    "new": "                \"restored\": False,",
+    "tests": "tests/test_session_persistence.py"
+  },
+  {
+    "name": "persistence: a reloaded running job reloads as succeeded instead of orphaned",
+    "file": "zebbern-kali/core/job_manager.py",
+    "old": "            job.status = \"orphaned\"\n            job.return_code = None",
+    "new": "            job.status = \"succeeded\"\n            job.return_code = None",
+    "tests": "tests/test_job_persistence.py"
+  },
+  {
+    "name": "persistence: orphaned job derives success False instead of None",
+    "file": "zebbern-kali/core/job_manager.py",
+    "old": "            orphaned = job.status == \"orphaned\"",
+    "new": "            orphaned = False",
+    "tests": "tests/test_job_persistence.py"
+  },
+  {
+    "name": "persistence: orphaned not terminal, so a reloaded job is no longer a cancel no-op",
+    "file": "zebbern-kali/core/job_manager.py",
+    "old": "    {\"succeeded\", \"failed\", \"canceled\", \"timed_out\", \"orphaned\"}",
+    "new": "    {\"succeeded\", \"failed\", \"canceled\", \"timed_out\"}",
+    "tests": "tests/test_job_persistence.py"
+  },
+  {
+    "name": "state_store: a failed write leaves its orphan .tmp behind",
+    "file": "zebbern-kali/core/state_store.py",
+    "old": "            try:\n                os.unlink(tmp_path)\n            except OSError:\n                pass\n            raise",
+    "new": "            raise",
+    "tests": "tests/test_state_store.py"
+  },
+  {
+    "name": "msf shutdown: clear and persist empty on the way down",
+    "file": "zebbern-kali/core/metasploit_manager.py",
+    "old": "        with self._lock:\n            for session in self.sessions.values():\n                if getattr(session, \"restored\", False):\n                    continue",
+    "new": "        with self._lock:\n            self.sessions.clear()\n            self._save_sessions()\n            for session in self.sessions.values():\n                if getattr(session, \"restored\", False):\n                    continue",
+    "tests": "tests/test_msf_persistence.py::test_shutdown_keeps_the_persisted_registry"
+  },
+  {
+    "name": "msf shutdown: restart wipes sessions via destroy_all again",
+    "file": "zebbern-kali/kali_server.py",
+    "old": "        msf_manager.shutdown()",
+    "new": "        msf_manager.destroy_all_sessions()",
+    "tests": "tests/test_tool_timeouts.py::test_shutdown_handler_stops_msf_sessions_without_clearing"
+  },
+  {
+    "name": "fingerprint: a body mention is proof the tech runs",
+    "file": "zebbern-kali/core/web_fingerprinter.py",
+    "old": "                confident = strong",
+    "new": "                confident = bool(ev)",
+    "tests": "tests/test_fingerprint_evidence.py"
   }
 ]

@@ -100,11 +100,19 @@ def unrestricted_exec():
         import time
 
         if background:
+            # An omitted timeout resolves to the command's own backstop tier, so
+            # a backgrounded `hydra` keeps its 24h budget instead of the silent
+            # 3600s default. An explicit operator timeout is honoured verbatim --
+            # a direct HTTP caller must never be surprised by a budget it did not
+            # ask for, so only the omitted default is resolved.
+            from core.tool_config import get_command_timeout
+            requested = params.get("timeout")
+            job_timeout = get_command_timeout(command) if requested is None else requested
             job = job_manager.start(
                 command,
                 shell=shell,
                 cwd=cwd,
-                timeout=timeout,
+                timeout=job_timeout,
             )
             return jsonify({
                 **job,

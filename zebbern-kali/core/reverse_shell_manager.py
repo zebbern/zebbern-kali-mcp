@@ -4,7 +4,6 @@
 import os
 import time
 import subprocess
-import pty
 import select
 import signal
 import threading
@@ -12,20 +11,20 @@ import uuid
 import base64
 import socket
 import re
+from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
-from .config import logger, COMMAND_TIMEOUT
+from .config import logger, COMMAND_TIMEOUT, session_state_dir
+from .pty_session import PtySession, _ANSI_RE
+from .state_store import StateStore
 
 
-# Escape sequences and readline's control bytes are stripped for the marker
-# MATCH only. Every byte read from the shell still reaches the operator through
-# send_command's output/all_lines and through read_output -- nothing here caps,
-# truncates or rewrites captured output.
-_ANSI_RE = re.compile(
-    r"\x1b\[[0-9;?]*[ -/]*[@-~]"           # CSI ... final byte
-    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC ... BEL / ST
-    r"|\x1b[@-Z\\-_]"                      # two-character escapes
-    r"|[\x00-\x08\x0b\x0c\x0e-\x1f]"       # readline's \x01/\x02 prompt markers
-)
+# _ANSI_RE now lives in core.pty_session and is imported above. Escape sequences
+# and readline's control bytes are stripped for the marker MATCH only; every byte
+# read from the shell still reaches the operator through send_command's
+# output/all_lines and through read_output -- nothing here caps, truncates or
+# rewrites captured output. The copy that used to sit here was byte-identical to
+# metasploit_manager's, so the shared definition replaces both (the pattern is
+# still pinned by tests/test_pty_session.py::test_ansi_regex_matches_the_reverse_shell_definition).
 
 # What may share a line with an executed marker without being output: escape
 # sequences, the \r of a \r\n pair, tabs, spaces. \n is deliberately absent so
@@ -110,6 +109,35 @@ class ReverseShellManager:
         # socket, because a live socket is not a usable channel.
         self._shell_responsive = None
         self._shell_last_command_at = None
+        # Backend-restart persistence. A live session is created here; a
+        # restored stand-in is rebuilt from sessions.json by
+        # restore_sessions, which sets restored=True. created_at is
+        # persisted so a reloaded tombstone can say when its listener
+        # first came up.
+        self.created_at = datetime.now().isoformat()
+        self.restored = False
+
+    def _pty_io(self) -> PtySession:
+        """A PtySession over the current master_fd/process.
+
+        pty.openpty + select.select + os.read + os.write on a master fd was
+        implemented independently here, in metasploit_manager and in ssh_manager;
+        that lifecycle now lives in core.pty_session. This wraps the fd the
+        manager already holds so start_listener's spawn/validation, send_command,
+        read_output, send_raw and the history prelude all drive it through one
+        owner. os.read / select.select / os.write are passed as THIS module's own
+        names, resolved at call time, so the suite's existing seam -- which swaps
+        reverse_shell_manager.os / .select for a scripted timeline -- still drives
+        the loop after the extraction, exactly as it did when the primitives were
+        inlined here.
+        """
+        return PtySession(
+            self.master_fd,
+            self.process,
+            _select=select.select,
+            _read=os.read,
+            _write=os.write,
+        )
 
     def _is_port_in_use(self, port: int) -> bool:
         """Check if a port is already in use using multiple validation methods"""
@@ -187,61 +215,47 @@ class ReverseShellManager:
                     command = f"nc -nvlp {self.port}"
                     self.listener_type = "netcat"  # Update type for consistency
 
-                # Use PTY allocation for both pwncat and netcat fallback
-                master_fd, slave_fd = pty.openpty()
-                self.master_fd = master_fd
-                self.slave_fd = slave_fd
-                # Spawn listener attached to the slave side of PTY
-                self.process = subprocess.Popen(
-                    command,
-                    shell=True,
-                    stdin=slave_fd,
-                    stdout=slave_fd,
-                    stderr=slave_fd,
-                    preexec_fn=os.setsid  # Create new process group
-                )
-                # Close slave FD in parent, communicate via master_fd
-                os.close(slave_fd)
+                # Use PTY allocation for both pwncat and netcat fallback. The
+                # openpty + Popen(setsid) + close-slave spawn is one shared copy
+                # in core.pty_session now. close_fds=True keeps the child from
+                # inheriting and holding open the master fd, matching the
+                # subprocess default this relied on before the extraction.
+                session = PtySession.spawn(command, shell=True, close_fds=True)
+                self.master_fd = session.master_fd
+                self.slave_fd = None
+                self.process = session.process
                 # Don't assume immediate connection
                 self.is_connected = False
             else:
-                # Default to netcat with PTY allocation
+                # Default to netcat with PTY allocation. openpty + Popen(setsid)
+                # + close-slave is the shared spawn in core.pty_session now;
+                # close_fds=True matches the subprocess default this used before.
                 command = f"nc -nvlp {self.port}"
-                # Allocate pseudo-terminal
-                master_fd, slave_fd = pty.openpty()
-                self.master_fd = master_fd
-                self.slave_fd = slave_fd
-                # Spawn netcat listener attached to the slave side of PTY
-                self.process = subprocess.Popen(
-                    command,
-                    shell=True,
-                    stdin=slave_fd,
-                    stdout=slave_fd,
-                    stderr=slave_fd,
-                    preexec_fn=os.setsid  # Create new process group
-                )
-                # Close slave FD in parent, communicate via master_fd
-                os.close(slave_fd)
+                session = PtySession.spawn(command, shell=True, close_fds=True)
+                self.master_fd = session.master_fd
+                self.slave_fd = None
+                self.process = session.process
                 # Don't assume connection until actually established
                 self.is_connected = False
 
             # Critical validation: Check if process started successfully
             time.sleep(0.5)  # Give process time to initialize
-            if self.process.poll() is not None:
+            if self._pty_io().poll() is not None:
                 # Process has already terminated, likely due to bind error
                 try:
-                    # Try to read any error output from the master_fd
-                    ready, _, _ = select.select([self.master_fd], [], [], 0.1)
+                    # Try to read any error output from the PTY. session.read's
+                    # three-way return folds select+os.read into one call: None
+                    # (nothing ready) and b"" (EOF) both leave the default
+                    # message in place, so only real bytes overwrite it.
                     error_msg = "Process terminated immediately"
-                    if ready:
-                        try:
-                            error_data = os.read(self.master_fd, 1024)
-                            if error_data:
-                                error_output = error_data.decode('utf-8', errors='ignore').strip()
-                                if error_output:
-                                    error_msg = f"Process error: {error_output}"
-                        except:
-                            pass
+                    try:
+                        error_data = self._pty_io().read(0.1, 1024)
+                        if error_data:
+                            error_output = error_data.decode('utf-8', errors='ignore').strip()
+                            if error_output:
+                                error_msg = f"Process error: {error_output}"
+                    except:
+                        pass
 
                     # Clean up resources
                     try:
@@ -414,7 +428,7 @@ class ReverseShellManager:
             f"echo '{marker}'\r\n"
         )
         try:
-            os.write(self.master_fd, prelude.encode())
+            self._pty_io().write(prelude.encode())
         except OSError as exc:
             logger.warning(f"Could not send the history prelude: {exc}")
             return False
@@ -435,19 +449,15 @@ class ReverseShellManager:
         deadline = time.time() + budget
         seen = ""
         found = False
+        pty = self._pty_io()
         while time.time() < deadline:
             try:
-                rlist, _, _ = select.select([self.master_fd], [], [], 0.5)
+                data = pty.read(0.5, 4096)
             except Exception as exc:
-                logger.debug(f"Prelude drain select failed: {exc}")
-                break
-            if self.master_fd not in rlist:
-                continue
-            try:
-                data = os.read(self.master_fd, 4096)
-            except OSError as exc:
                 logger.debug(f"Prelude drain read failed: {exc}")
                 break
+            if data is None:
+                continue
             if not data:
                 break
             seen += data.decode(errors="ignore")
@@ -482,7 +492,7 @@ class ReverseShellManager:
             }
         payload = input_text.encode()
         try:
-            written = os.write(self.master_fd, payload)
+            written = self._pty_io().write(payload)
         except OSError as exc:
             return {
                 "success": False,
@@ -532,12 +542,15 @@ class ReverseShellManager:
                 if suppress_history and not self._history_prelude_sent:
                     self._send_history_prelude()
 
-                # Send start marker, command, and end marker via PTY
-                os.write(self.master_fd, (f"echo '{start_marker}'\r\n").encode())
+                # Send start marker, command, and end marker via PTY. One
+                # PtySession wraps the current fd for both these writes and the
+                # read loop below.
+                pty = self._pty_io()
+                pty.write((f"echo '{start_marker}'\r\n").encode())
                 time.sleep(0.3 if is_base64_command else 0.2)  # Extra time for base64
-                os.write(self.master_fd, (command + "\r\n").encode())
+                pty.write((command + "\r\n").encode())
                 time.sleep(0.5 if is_base64_command else 0.2)  # More time for base64 output
-                os.write(self.master_fd, (f"echo '{end_marker}'\r\n").encode())
+                pty.write((f"echo '{end_marker}'\r\n").encode())
 
                 # Collect output between markers with improved buffering
                 start_time = time.time()
@@ -557,9 +570,12 @@ class ReverseShellManager:
 
                     while time.time() - start_time < timeout and not end_marker_found:
                         try:
-                            rlist, _, _ = select.select([self.master_fd], [], [], 2.0)  # Longer select timeout
-                            if self.master_fd in rlist:
-                                data = os.read(self.master_fd, 8192)  # Larger buffer for base64
+                            # session.read folds select+os.read into one call:
+                            # None (nothing ready) is the old not-ready else
+                            # branch, b"" (EOF) the old empty-read branch, bytes
+                            # the data branch -- same three cases, same sleeps.
+                            data = pty.read(2.0, 8192)  # Larger buffer for base64
+                            if data is not None:
                                 if not data:
                                     time.sleep(0.1)
                                     continue
@@ -726,9 +742,11 @@ class ReverseShellManager:
                     # Regular line-by-line processing for non-base64 commands
                     while time.time() - start_time < timeout and not end_marker_found:
                         try:
-                            rlist, _, _ = select.select([self.master_fd], [], [], 1.0)
-                            if self.master_fd in rlist:
-                                data = os.read(self.master_fd, 4096)  # Larger buffer
+                            # session.read folds select+os.read: None is the old
+                            # not-ready else branch, b"" the EOF branch, bytes the
+                            # data branch -- same three cases as before.
+                            data = pty.read(1.0, 4096)  # Larger buffer
+                            if data is not None:
                                 if not data:
                                     # EOF on the master fd: the shell on the far
                                     # end is gone. Nothing ran, and this used to
@@ -897,6 +915,34 @@ class ReverseShellManager:
 
     def get_status(self) -> Dict[str, Any]:
         """Get the status of the reverse shell session"""
+        if getattr(self, "restored", False):
+            # Rebuilt from sessions.json after a backend restart. No
+            # process and no master_fd are held, so there is nothing to
+            # poll or probe -- this returns a fixed stopped report rather
+            # than running netstat/poll (CLAUDE.md rule 3). shell_responsive
+            # is None, not False: the channel can never be tried again,
+            # which is not the same as a command having been tried and
+            # failed (the advisory-flag rule).
+            return {
+                "session_id": self.session_id,
+                "port": self.port,
+                "listener_type": self.listener_type,
+                "created_at": getattr(self, "created_at", None),
+                "status": "stopped",
+                "is_connected": False,
+                "process_alive": False,
+                "listener_active": False,
+                "actual_network_connection": False,
+                "restored": True,
+                "shell_responsive": None,
+                "shell_last_command_at": None,
+                "note": (
+                    "the backend restarted; this listener and its port "
+                    "are gone. The session record survived but the "
+                    "process did not, so command/send-raw/read-output "
+                    "are refused -- start a new listener."
+                ),
+            }
         # Check if process is actually alive
         process_alive = self.process and self.process.poll() is None
 
@@ -928,6 +974,7 @@ class ReverseShellManager:
             "port": self.port,
             "is_connected": self.is_connected,
             "process_alive": process_alive,
+            "restored": False,
             "listener_active": self.listener_thread and self.listener_thread.is_alive(),
             "actual_network_connection": actual_connection,
             # is_connected, process_alive and actual_network_connection are
@@ -993,6 +1040,7 @@ class ReverseShellManager:
         """
         if not self.is_connected or not self.master_fd:
             return ""
+        pty = self._pty_io()
         pending = self._raw_pending_lines
         buf = self._raw_read_buf
         lines = []
@@ -1016,29 +1064,31 @@ class ReverseShellManager:
         consecutive_empty = 0
         _hand_over()
         while time.time() < deadline and len(lines) < max_lines:
-            ready, _, _ = select.select([self.master_fd], [], [], 0.5)
-            if self.master_fd in ready:
-                try:
-                    data = os.read(self.master_fd, 4096)
-                    if not data:
-                        consecutive_empty += 1
-                        if consecutive_empty >= 3:
-                            break
-                        continue
-                    consecutive_empty = 0
-                    buf += data
-                    while b"\n" in buf:
-                        line, buf = buf.split(b"\n", 1)
-                        pending.append(line.decode(errors="ignore").strip())
-                    _hand_over()
-                except OSError:
-                    break
-            else:
+            # session.read folds the select+os.read this loop used to inline.
+            # The OSError that os.read raised is still caught here; the three-way
+            # return splits into the same branches the two-level if/else had.
+            try:
+                data = pty.read(0.5, 4096)
+            except OSError:
+                break
+            if data is None:
                 # Quiet for a select interval. A pending remainder ends the
                 # window too, so a bare prompt comes back in ~0.5s rather than
                 # sitting here for the full budget.
                 if lines or buf:
                     break
+                continue
+            if not data:
+                consecutive_empty += 1
+                if consecutive_empty >= 3:
+                    break
+                continue
+            consecutive_empty = 0
+            buf += data
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                pending.append(line.decode(errors="ignore").strip())
+            _hand_over()
         if buf and len(lines) < max_lines:
             remainder = buf.decode(errors="ignore").strip()
             if remainder:
@@ -1064,6 +1114,15 @@ class ReverseShellManager:
 
     def stop(self):
         """Stop the reverse shell listener"""
+        if getattr(self, "restored", False):
+            # A restored stand-in holds no process and no fd; its port now
+            # belongs to whatever took it after the restart. Forget the
+            # record without the lsof/kill-by-port cleanup below, which
+            # would otherwise signal a stranger on that port (CLAUDE.md
+            # rule 3: a teardown path must not act on a live handle it
+            # does not own).
+            self.is_connected = False
+            return
         try:
             if self.process:
                 logger.info(f"Stopping reverse shell listener process (PID: {self.process.pid})")
@@ -1328,3 +1387,87 @@ class ReverseShellManager:
         except Exception as e:
             logger.error(f"Error generating reverse shell payload: {str(e)}")
             return {"success": False, "error": f"Failed to generate payload: {str(e)}"}
+
+
+_SESSION_STATE_FILENAME = "sessions.json"
+
+
+def _session_store() -> StateStore:
+    """StateStore over ``<session_state_dir>/sessions.json``.
+
+    Resolved at call time so the state dir honours ZKM_STATE_DIR / the
+    job-dir sibling without caching a path from import.
+    """
+    return StateStore(os.path.join(session_state_dir(), _SESSION_STATE_FILENAME))
+
+
+def persist_sessions(active_sessions) -> bool:
+    """Write reverse-shell session METADATA to sessions.json. Never raises.
+
+    Called on create and on stop -- never on an is_connected flip, which
+    is a live fact a restart cannot keep. The whole registry is mirrored,
+    keyed by session_id (so re-persisting a reloaded stand-in is
+    idempotent), minus the live handles (process / master_fd / PTY
+    buffers) a new process cannot re-adopt. Returns whether the write
+    landed, which the route surfaces as ``persisted``: an unwritable state
+    dir degrades to False and the session operation carries on, the same
+    honest degradation job_manager makes for an unwritable log dir
+    (CLAUDE.md rule 2).
+    """
+    records = {}
+    for session_id, manager in list(active_sessions.items()):
+        records[str(session_id)] = {
+            "session_id": manager.session_id,
+            "port": manager.port,
+            "listener_type": manager.listener_type,
+            "created_at": getattr(manager, "created_at", None),
+            "status": "stopped" if getattr(manager, "restored", False) else "active",
+        }
+    try:
+        os.makedirs(session_state_dir(), exist_ok=True)
+        _session_store().save({"sessions": records})
+        return True
+    except Exception as exc:
+        logger.warning(f"Could not persist reverse-shell sessions: {exc}")
+        return False
+
+
+def restore_sessions(active_sessions) -> int:
+    """Rebuild restored stand-ins from a prior process's sessions.json.
+
+    Run once at backend start. Each stand-in is a lightweight
+    ReverseShellManager carrying NO process and NO master_fd (the
+    constructor leaves both None), so send_command/send_raw/read_output
+    refuse it on their existing ``not is_connected`` / ``master_fd is
+    None`` guards and nothing polls a pid or probes a port on its behalf
+    (CLAUDE.md rule 3). get_status reports it as status=stopped,
+    is_connected=False, process_alive=False, restored=True,
+    shell_responsive=None. Never raises: a missing or corrupt file leaves
+    the registry empty, exactly as a fresh boot would. Returns how many
+    stand-ins were registered.
+    """
+    try:
+        state = _session_store().load()
+    except Exception as exc:
+        logger.warning(f"Could not load reverse-shell sessions: {exc}")
+        return 0
+    records = state.get("sessions")
+    if not isinstance(records, dict):
+        return 0
+    restored = 0
+    for session_id, record in records.items():
+        if not isinstance(record, dict) or session_id in active_sessions:
+            continue
+        try:
+            manager = ReverseShellManager(
+                record.get("port"),
+                record.get("session_id", session_id),
+                record.get("listener_type", "netcat"),
+            )
+        except Exception:
+            continue
+        manager.restored = True
+        manager.created_at = record.get("created_at") or manager.created_at
+        active_sessions[session_id] = manager
+        restored += 1
+    return restored

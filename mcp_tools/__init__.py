@@ -1,6 +1,7 @@
 """Modular tool registration and optional capability profiles."""
 
 import logging
+import os
 from functools import lru_cache
 from collections.abc import Mapping
 from types import ModuleType
@@ -248,14 +249,40 @@ class _CapabilityFilteringMCP:
         return maybe_register
 
 
+def _parse_suppress_env(value: str | None) -> frozenset[str]:
+    """Parse ``ZKM_COLLAPSE_PILOT``: split on commas, strip, drop empties.
+
+    Unlike ``parse_module_exclusions`` this never raises on an unknown name --
+    an unrecognised entry simply matches no registered tool and suppresses
+    nothing. A stale or typo'd env value must not brick startup against the
+    fail-open invariant, so name validation is deliberately absent.
+    """
+    if not value:
+        return frozenset()
+    return frozenset(part.strip() for part in value.split(",") if part.strip())
+
+
 def register_all(
     mcp: FastMCP,
     kali_client: KaliToolsClient,
     profile: str = "auto",
     health: Mapping[str, Any] | None = None,
     exclude: frozenset[str] = frozenset(),
+    suppress_tools: frozenset[str] = frozenset(),
 ) -> None:
-    """Register the modules selected by ``profile``, minus ``exclude``."""
+    """Register the modules selected by ``profile``, minus ``exclude``.
+
+    ``suppress_tools`` names individual tools to leave unregistered for the
+    collapse pilot; when empty it defaults from the ``ZKM_COLLAPSE_PILOT`` env
+    var. Core primitives are never suppressible.
+    """
+    suppress = suppress_tools or _parse_suppress_env(os.environ.get("ZKM_COLLAPSE_PILOT"))
+    # Never hide a core primitive, mirroring the core subtraction in
+    # _unavailable_auto_tools: a suppressed core tool is unrecoverable the same way.
+    suppress = frozenset(suppress) - _core_tool_names()
+    if suppress:
+        logger.info("Suppressed tools (collapse pilot): %s", ", ".join(sorted(suppress)))
+
     if profile.strip().lower() == "auto":
         unavailable = _unavailable_auto_tools(health)
         total = len(_all_auto_tool_names())
@@ -275,7 +302,9 @@ def register_all(
             unavailable = frozenset()
         elif unavailable:
             logger.info("Auto profile omitted tools: %s", ", ".join(sorted(unavailable)))
-        mcp = _CapabilityFilteringMCP(mcp, unavailable)
+        mcp = _CapabilityFilteringMCP(mcp, unavailable | suppress)
+    elif suppress:
+        mcp = _CapabilityFilteringMCP(mcp, suppress)
 
     if exclude:
         logger.info("Excluded tool modules: %s", ", ".join(sorted(exclude)))

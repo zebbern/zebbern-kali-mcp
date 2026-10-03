@@ -1,0 +1,23 @@
+[
+  {
+    "carry_over": {
+      "bytes": 0,
+      "lines": 8
+    },
+    "output": "line01\nline02\nline03\nline04"
+  },
+  {
+    "carry_over": {
+      "bytes": 0,
+      "lines": 4
+    },
+    "output": "line05\nline06\nline07\nline08"
+  },
+  {
+    "carry_over": {
+      "bytes": 0,
+      "lines": 0
+    },
+    "output": "line09\nline10\nline11\nline12"
+  }
+]

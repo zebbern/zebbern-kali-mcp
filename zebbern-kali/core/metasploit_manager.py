@@ -2,7 +2,6 @@
 """Metasploit Session Manager for persistent msfconsole sessions."""
 
 import os
-import pty
 import re
 import select
 import signal
@@ -12,18 +11,17 @@ import time
 import uuid
 from typing import Dict, Any, Optional
 from queue import Queue, Empty
-from core.config import logger
+from core.config import logger, session_state_dir
+from core.state_store import StateStore
+from core.pty_session import PtySession, _ANSI_RE
 
-# Escape sequences are stripped for the prompt *match* only. The buffer handed
-# back to the operator is never rewritten -- msfconsole draws its prompt through
-# readline, so the trailing line carries colour codes that would otherwise sit
-# between the ">" and the end of the line and defeat the anchor.
-_ANSI_RE = re.compile(
-    r"\x1b\[[0-9;?]*[ -/]*[@-~]"      # CSI ... final byte
-    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC ... BEL / ST
-    r"|\x1b[@-Z\\-_]"                 # two-character escapes
-    r"|[\x00-\x08\x0b\x0c\x0e-\x1f]"  # readline's \x01/\x02 prompt markers
-)
+# _ANSI_RE now lives in core.pty_session and is imported above. Escape sequences
+# are stripped for the prompt *match* only; the buffer handed back to the
+# operator is never rewritten -- msfconsole draws its prompt through readline, so
+# the trailing line carries colour codes that would otherwise sit between the
+# ">" and the end of the line and defeat the anchor. The copy that used to sit
+# here was byte-identical to reverse_shell_manager's, so one shared definition
+# replaces both.
 
 # "msf" + ">" anywhere in the last 200 characters was the old test, and it
 # misses every post-exploitation workflow: a meterpreter or shell prompt after a
@@ -102,8 +100,41 @@ class MetasploitSession:
         self.created_at = time.time()
         self.last_activity = time.time()
         self.is_ready = False
+        # A restored stand-in is a session a backend restart dropped: it
+        # holds no process and no fd and is rebuilt from disk only so
+        # list_sessions can show it was dropped rather than letting it
+        # vanish. ``restored`` stays False for every real session -- that
+        # is how _cleanup_dead_sessions tells a stand-in to leave alone
+        # (its old pid may be a stranger's now, rule 3) from a crashed
+        # session whose process group it must reap. ``last_known_ready``
+        # keeps the is_ready the session last persisted with, so a
+        # stand-in can report it had reached a prompt before the drop
+        # without claiming it is ready now.
+        self.restored = False
+        self.last_known_ready = None
         self._reader_thread: Optional[threading.Thread] = None
         self._running = False
+
+    def _pty_io(self) -> PtySession:
+        """A PtySession over the current master_fd/process.
+
+        pty.openpty + select.select + os.read + os.write on a master fd was
+        implemented independently here, in reverse_shell_manager and in
+        ssh_manager; that lifecycle now lives in core.pty_session. This wraps the
+        fd the session already holds so start()'s spawn, the reader thread and
+        execute()'s write all drive it through one owner. os.read / select.select
+        / os.write are passed as THIS module's own names, resolved at call time,
+        so the suite's existing seam -- which swaps metasploit_manager.os /
+        .select for a scripted timeline -- still drives the loop after the
+        extraction, exactly as it did when the primitives were inlined here.
+        """
+        return PtySession(
+            self.master_fd,
+            self.process,
+            _select=select.select,
+            _read=os.read,
+            _write=os.write,
+        )
 
     @property
     def output_buffer(self) -> str:
@@ -139,23 +170,17 @@ class MetasploitSession:
     def start(self) -> bool:
         """Start the msfconsole process with a PTY."""
         try:
-            # Create a pseudo-terminal
-            self.master_fd, self.slave_fd = pty.openpty()
-            
-            # Start msfconsole with the slave end as stdin/stdout/stderr
-            self.process = subprocess.Popen(
+            # Create a pseudo-terminal and attach msfconsole to its slave end.
+            # openpty + Popen(setsid) + close-slave is the shared spawn in
+            # core.pty_session now; close_fds=True is preserved from the original.
+            session = PtySession.spawn(
                 ["msfconsole", "-q"],  # -q for quiet mode (no banner)
-                stdin=self.slave_fd,
-                stdout=self.slave_fd,
-                stderr=self.slave_fd,
-                preexec_fn=os.setsid,
-                close_fds=True
+                close_fds=True,
             )
-            
-            # Close slave fd in parent process
-            os.close(self.slave_fd)
+            self.master_fd = session.master_fd
             self.slave_fd = None
-            
+            self.process = session.process
+
             # Start reader thread
             self._running = True
             self._reader_thread = threading.Thread(target=self._read_output, daemon=True)
@@ -183,16 +208,20 @@ class MetasploitSession:
         """Continuously read output from msfconsole."""
         while self._running and self.master_fd is not None:
             try:
-                ready, _, _ = select.select([self.master_fd], [], [], 0.1)
-                if ready:
-                    data = os.read(self.master_fd, 4096)
-                    if data:
-                        # Decoded outside the lock: the critical section is now
-                        # two appends and a clock read, shorter than it was.
-                        text = data.decode("utf-8", errors="replace")
-                        with self.output_lock:
-                            self._append_output(text)
-                            self.last_activity = time.time()
+                # Loop-control edit, not pure relocation: the old
+                # ready = select.select(...); if ready: data = os.read(...)
+                # becomes consuming session.read(0.1)'s three-way return. None
+                # (nothing ready) and b"" (EOF) are both falsy and skipped, as
+                # the old `if ready` then `if data` pair did; only real bytes
+                # are appended.
+                data = self._pty_io().read(0.1, 4096)
+                if data:
+                    # Decoded outside the lock: the critical section is now
+                    # two appends and a clock read, shorter than it was.
+                    text = data.decode("utf-8", errors="replace")
+                    with self.output_lock:
+                        self._append_output(text)
+                        self.last_activity = time.time()
             except (OSError, IOError):
                 break
             except Exception as e:
@@ -228,7 +257,7 @@ class MetasploitSession:
                 self.output_buffer = ""
             
             # Send command
-            os.write(self.master_fd, (command + "\n").encode())
+            self._pty_io().write((command + "\n").encode())
             self.last_activity = time.time()
             
             # Wait for output and prompt
@@ -433,10 +462,136 @@ class MetasploitSession:
 class MetasploitManager:
     """Manages multiple persistent Metasploit sessions."""
     
-    def __init__(self, max_sessions: int = 5):
+    def __init__(self, max_sessions: int = 5, state_dir: Optional[str] = None):
         self.sessions: Dict[str, MetasploitSession] = {}
         self.max_sessions = max_sessions
         self._lock = threading.Lock()
+        # Cross-restart persistence of session METADATA only -- never the
+        # Popen handle, the master fd or the pid, none of which a new
+        # process can re-adopt. A backend restart (a routine `docker
+        # compose up -d --force-recreate` here) drops the in-memory
+        # registry, after which msf_session_list answers empty --
+        # indistinguishable from "nothing was ever started".
+        # msf_sessions.json rehydrates each dropped session as a dead
+        # stand-in instead, the same way JobManager and
+        # NetworkPivotManager already persist their registries.
+        self._persisted = False
+        self._store = self._open_store(state_dir)
+        self._load_sessions()
+
+    def _open_store(self, state_dir: Optional[str]) -> Optional[StateStore]:
+        """Wire up the on-disk session registry, or None if impossible.
+
+        A session operation must NEVER fail because the state directory is
+        missing or read-only -- the same honest degradation job_manager
+        makes with ``output_logged=False`` -- so every error here is
+        swallowed, the store is left unset and ``_persisted`` stays False.
+        ``state_dir`` overrides for tests; otherwise the directory comes from
+        ``config.session_state_dir()`` -- the SAME resolution the reverse-shell
+        and SSH registries use, so all three land on the ``$ZKM_STATE_DIR`` /
+        JOB_OUTPUT_DIR-sibling ``state`` dir on the durable kali-tmp volume
+        (not a container-temp subdir a force-recreate would wipe), with the OS
+        temp dir only as the from-source fallback.
+        """
+        try:
+            directory = state_dir or session_state_dir()
+            os.makedirs(directory, exist_ok=True)
+            store = StateStore(os.path.join(directory, "msf_sessions.json"))
+            self._persisted = True
+            return store
+        except Exception as exc:
+            logger.warning(f"MSF session persistence disabled: {exc}")
+            self._persisted = False
+            return None
+
+    def _session_record(self, session: "MetasploitSession") -> Dict[str, Any]:
+        """The metadata persisted for one session: id, birth, last-known ready.
+
+        A restored stand-in carries its last-known readiness in
+        ``last_known_ready`` (its live ``is_ready`` is always False), so
+        saving it back reads that field or the original is lost on the next
+        restart. No pid, fd or process handle is ever serialised: a new
+        process cannot re-adopt them and a stale pid now points at a
+        stranger (rule 3).
+        """
+        if getattr(session, "restored", False):
+            ready = session.last_known_ready
+        else:
+            ready = session.is_ready
+        return {
+            "session_id": session.session_id,
+            "created_at": session.created_at,
+            "is_ready": bool(ready),
+        }
+
+    def _save_sessions(self) -> None:
+        """Persist the whole registry, degrading silently on an I/O fault.
+
+        Called under ``self._lock`` from the create/destroy paths, which
+        have already mutated ``self.sessions``. A write fault flips
+        ``_persisted`` False and is logged, never raised: losing
+        persistence must not fail the operation that triggered the save.
+        list_sessions deliberately does NOT save -- a status read must not
+        gain a disk-write side effect (rule 3) -- so a session reaped only
+        by _cleanup_dead_sessions is re-persisted by the next
+        create/destroy, not by the read that reaped it.
+        """
+        if self._store is None:
+            return
+        try:
+            self._store.save(
+                {"sessions": {sid: self._session_record(s)
+                              for sid, s in self.sessions.items()}}
+            )
+            self._persisted = True
+        except Exception as exc:
+            logger.warning(f"Failed to persist MSF sessions: {exc}")
+            self._persisted = False
+
+    def _restored_session(
+        self, session_id: str, record: Dict[str, Any]
+    ) -> "MetasploitSession":
+        """A dead stand-in for a session a restart dropped.
+
+        Built through the real constructor, which opens no PTY, then marked
+        ``restored`` with its process and fd left None, so ``is_alive()``
+        is False with no probe and nothing here can signal a pid that may
+        now belong to a stranger (rule 3). ``is_ready`` is False -- the
+        console is gone -- while ``last_known_ready`` keeps what it
+        persisted with.
+        """
+        session = MetasploitSession(session_id)
+        session.restored = True
+        session._running = False
+        try:
+            session.created_at = float(record.get("created_at"))
+        except (TypeError, ValueError):
+            pass  # keep the constructor's clock; a missing birth is not fatal
+        session.last_activity = session.created_at
+        session.last_known_ready = bool(record.get("is_ready"))
+        session.is_ready = False
+        return session
+
+    def _load_sessions(self) -> None:
+        """Rehydrate dropped sessions as dead stand-ins at construction.
+
+        An absent or unreadable file is the normal "nothing persisted yet"
+        case and leaves the registry empty. Each record becomes a stand-in
+        keyed by its own id; one malformed record is skipped rather than
+        aborting the whole load.
+        """
+        if self._store is None:
+            return
+        try:
+            data = self._store.load()
+        except Exception as exc:
+            logger.warning(f"Failed to load MSF sessions: {exc}")
+            return
+        for sid, record in (data.get("sessions") or {}).items():
+            try:
+                self.sessions[sid] = self._restored_session(sid, record or {})
+            except Exception as exc:
+                logger.warning(f"Skipping unrestorable MSF session {sid!r}: {exc}")
     
     def create_session(self) -> Dict[str, Any]:
         """Create a new Metasploit session."""
@@ -453,10 +608,12 @@ class MetasploitManager:
             
             if session.start():
                 self.sessions[session_id] = session
+                self._save_sessions()
                 return {
                     "success": True,
                     "session_id": session_id,
-                    "message": "Metasploit session created successfully"
+                    "message": "Metasploit session created successfully",
+                    "persisted": self._persisted,
                 }
             else:
                 return {"error": "Failed to start Metasploit session", "success": False}
@@ -479,7 +636,14 @@ class MetasploitManager:
                     "console_exited": False,
                 }
             if not session.is_alive():
-                del self.sessions[session_id]
+                # A restored stand-in is kept so it stays visible in
+                # list_sessions until the operator destroys it, and is
+                # never probed -- it holds no process, and its old pid may
+                # belong to a stranger now (rule 3). is_alive() already
+                # returned False with no probe because process is None. A
+                # real session that just died is dropped here as before.
+                if not getattr(session, "restored", False):
+                    del self.sessions[session_id]
                 return {
                     "error": f"Session {session_id} is no longer running",
                     "success": False,
@@ -499,6 +663,14 @@ class MetasploitManager:
                     "session_id": sid,
                     "is_alive": session.is_alive(),
                     "is_ready": session.is_ready,
+                    # Advisory, like connected/timed_out elsewhere, and
+                    # never flips success: a restored stand-in is a session
+                    # a restart dropped, shown dead rather than vanished.
+                    # last_known_ready is the readiness it had before the
+                    # drop (None for a live session) so it is not confused
+                    # with current readiness.
+                    "restored": getattr(session, "restored", False),
+                    "last_known_ready": getattr(session, "last_known_ready", None),
                     "created_at": session.created_at,
                     "last_activity": session.last_activity,
                     "uptime": time.time() - session.created_at
@@ -515,7 +687,12 @@ class MetasploitManager:
             session = self.sessions.pop(session_id, None)
             if session:
                 session.stop()
-                return {"success": True, "message": f"Session {session_id} destroyed"}
+                self._save_sessions()
+                return {
+                    "success": True,
+                    "message": f"Session {session_id} destroyed",
+                    "persisted": self._persisted,
+                }
             return {"error": f"Session {session_id} not found", "success": False}
     
     def destroy_all_sessions(self) -> Dict[str, Any]:
@@ -525,7 +702,44 @@ class MetasploitManager:
             for session in self.sessions.values():
                 session.stop()
             self.sessions.clear()
-            return {"success": True, "message": f"Destroyed {count} sessions"}
+            self._save_sessions()
+            return {
+                "success": True,
+                "message": f"Destroyed {count} sessions",
+                "persisted": self._persisted,
+            }
+    
+    def shutdown(self) -> None:
+        """Stop live sessions on process exit WITHOUT clearing the registry.
+
+        The SIGTERM handler used to call ``destroy_all_sessions`` here, which
+        clears ``self.sessions`` and re-persists an EMPTY file, so a routine
+        ``docker restart`` / ``docker compose up -d --force-recreate`` (both
+        SIGTERM) wiped the persisted records before the new process could
+        reload them -- the cross-restart persistence did nothing on the one
+        path that matters. This stops each live session's process the way the
+        reverse-shell and SSH managers' ``stop()`` already does on shutdown,
+        but leaves ``self.sessions`` and the on-disk file UNTOUCHED: the live
+        sessions were persisted at create_session time, so ``_load_sessions``
+        rehydrates them as dead stand-ins after the restart instead of
+        finding an emptied registry. ``destroy_all_sessions`` is deliberately
+        left alone -- it is the operator tool ``msf_session_destroy_all``,
+        where clearing and persisting-empty is exactly what the operator
+        asked for. A restored stand-in is skipped: it holds no process and
+        no pid, and a reused pid could now belong to a stranger (rule 3),
+        exactly as _cleanup_dead_sessions leaves one be.
+        """
+        with self._lock:
+            for session in self.sessions.values():
+                if getattr(session, "restored", False):
+                    continue
+                try:
+                    session.stop()
+                except Exception as exc:
+                    logger.error(
+                        f"Error stopping MSF session {session.session_id} on "
+                        f"shutdown: {exc}"
+                    )
     
     def _cleanup_dead_sessions(self):
         """Remove dead sessions, tearing down any process group they leave.
@@ -536,7 +750,18 @@ class MetasploitManager:
         which reaps it. Guarded because this runs under the manager lock inside
         list_sessions / create_session, which have no outer try/except.
         """
-        dead_sessions = [sid for sid, s in self.sessions.items() if not s.is_alive()]
+        # A restored stand-in is already dead -- a restart dropped its
+        # process -- but it holds no process group to reap and its pid was
+        # never persisted, so stop() would have nothing to signal and must
+        # not run (rule 3: the old pid may be a stranger's). It is also
+        # deliberately NOT dropped here, so list_sessions keeps showing it
+        # was dropped rather than letting it vanish; only destroy_session
+        # removes it. Only a genuinely crashed real session is reaped and
+        # removed, as before.
+        dead_sessions = [
+            sid for sid, s in self.sessions.items()
+            if not s.is_alive() and not getattr(s, "restored", False)
+        ]
         for sid in dead_sessions:
             session = self.sessions.pop(sid, None)
             if session is not None:

@@ -35,10 +35,15 @@ class CommandExecutor:
     def _finalize_output(self):
         """Collapse the chunk lists into the public stdout_data/stderr_data.
 
-        Called on every path that reads them, including the timeout path where
-        the reader threads are still running -- list.append and str.join are
-        each atomic under the GIL, so a concurrent append lands either side of
-        the join and no output is lost, only deferred to the next call.
+        list.append and str.join are each atomic under the GIL, so collapsing
+        while a reader is still appending loses nothing -- a concurrent append
+        lands either side of the join. The timeout path does not lean on that:
+        it joins both reader threads (bounded to 5s each) before this runs,
+        draining the buffered tail into the chunk lists, because that path has
+        no later call for a straggling append to be picked up by. If a bounded
+        join still leaves a reader alive its remainder is not captured --
+        partial_results then reports what was collected and never claims the
+        output is complete.
         """
         self.stdout_data = ''.join(self._stdout_chunks)
         self.stderr_data = ''.join(self._stderr_chunks)
@@ -117,6 +122,16 @@ class CommandExecutor:
 
                 # Update final output
                 self.return_code = -1
+
+                # Drain the reader threads into the chunk lists before
+                # _finalize_output snapshots them. Unlike the normal path above,
+                # this branch has no later call, so a tail still sitting in a
+                # reader would be lost rather than deferred. Bounded at 5s each:
+                # a reader blocked on a pipe the killed process left open must
+                # not hang the response -- a remainder past that bound is simply
+                # not captured, never claimed complete.
+                self.stdout_thread.join(timeout=5)
+                self.stderr_thread.join(timeout=5)
 
             self._finalize_output()
 

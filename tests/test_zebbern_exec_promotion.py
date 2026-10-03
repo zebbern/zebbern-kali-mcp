@@ -99,7 +99,7 @@ def test_a_plain_call_starts_a_background_job():
         "~60s harness abort is orphaned with no log and no job_id"
     )
     assert body["command"] == "whoami", "the caller's own command must survive"
-    assert body["timeout"] == 3600
+    assert "timeout" not in body  # default call omits the sentinel; backend resolves the tier
 
 
 def test_the_promotion_does_not_take_a_heavy_semaphore_slot():

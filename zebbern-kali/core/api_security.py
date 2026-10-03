@@ -34,6 +34,28 @@ logger = logging.getLogger(__name__)
 WEAK_SSTI_INDICATOR = r"\b49\b"
 
 
+# graphql_fuzz, api_fuzz_endpoint and rate_limit_test run their request loop
+# INSIDE the Flask handler -- they post with `requests` in a Python loop rather
+# than shelling out, so job_manager (which launches shell commands, not Python
+# callables) cannot adopt, tee or cancel them. Past the ~60s MCP harness abort
+# an unbounded loop keeps firing at the target with nobody listening and
+# nothing teed to disk: the orphan CLAUDE.md forbids. These two bound that
+# orphan window, in the same formula-free, explicit spirit as
+# ad_tools.SPRAY_TIMEOUT_CEILING.
+#
+# API_REQUEST_CEILING caps the COUNT, bounding a params x attack_types x
+# payloads explosion (a caller passing hundreds of parameters would otherwise
+# fan out to tens of thousands of 10s requests). It is NOT what keeps the loop
+# under the harness abort: count times the 10s per-request timeout is still an
+# unbounded wall-clock, so a count ceiling alone cannot bound orphan time.
+# API_LOOP_BUDGET_SECONDS is what actually bounds orphan time -- a wall-clock
+# deadline chosen below the ~60s harness abort (and under the 55s the reverse
+# shell / callback defaults are held to), so the loop returns its partial
+# result before the harness abandons the call.
+API_REQUEST_CEILING = 2000
+API_LOOP_BUDGET_SECONDS = 45
+
+
 def header_pairs(headers) -> List[tuple]:
     """Normalise a headers argument into (key, value) pairs.
 
@@ -504,13 +526,32 @@ class APISecurityTester:
                     "total_requests": 0,
                 }
 
-            # Test each variable with fuzz payloads
+            # Test each variable with fuzz payloads. requests_sent counts what
+            # actually went out; the clamp below bounds the orphan window (see
+            # API_REQUEST_CEILING / API_LOOP_BUDGET_SECONDS). A full job-backed
+            # rewrite -- cancellable and teed to disk like a shell job -- is
+            # deferred because job_manager cannot run a Python callable today.
+            requests_sent = 0
+            requests_capped = False
+            time_capped = False
+            loop_start = time.time()
             for var_name, var_value in variables.items():
+                if requests_capped or time_capped:
+                    break
                 for attack_type, payloads in self.fuzz_payloads.items():
+                    if requests_capped or time_capped:
+                        break
                     for payload in payloads:
+                        if requests_sent >= API_REQUEST_CEILING:
+                            requests_capped = True
+                            break
+                        if (time.time() - loop_start) >= API_LOOP_BUDGET_SECONDS:
+                            time_capped = True
+                            break
                         fuzzed_vars = variables.copy()
                         fuzzed_vars[var_name] = payload
 
+                        requests_sent += 1
                         try:
                             response = requests.post(
                                 url,
@@ -557,7 +598,9 @@ class APISecurityTester:
                 "query_generated": generated_query,
                 "variables_tested": list(variables.keys()),
                 "findings": findings,
-                "total_requests": len(variables) * sum(len(p) for p in self.fuzz_payloads.values()),
+                "total_requests": requests_sent,
+                "requests_capped": requests_capped,
+                "time_capped": time_capped,
                 "timestamp": datetime.now().isoformat()
             }
 
@@ -909,12 +952,32 @@ class APISecurityTester:
             if data:
                 test_data.update(data)
 
+            # requests_sent counts what actually went out; the clamp below
+            # bounds the orphan window (see API_REQUEST_CEILING /
+            # API_LOOP_BUDGET_SECONDS). A full job-backed rewrite -- cancellable
+            # and teed to disk like a shell job -- is deferred because
+            # job_manager cannot run a Python callable today.
+            requests_sent = 0
+            requests_capped = False
+            time_capped = False
+            loop_start = time.time()
             for param_name, param_value in test_data.items():
+                if requests_capped or time_capped:
+                    break
                 for attack_type, payloads in self.fuzz_payloads.items():
+                    if requests_capped or time_capped:
+                        break
                     for payload in payloads:
+                        if requests_sent >= API_REQUEST_CEILING:
+                            requests_capped = True
+                            break
+                        if (time.time() - loop_start) >= API_LOOP_BUDGET_SECONDS:
+                            time_capped = True
+                            break
                         fuzzed_params = test_data.copy()
                         fuzzed_params[param_name] = payload
 
+                        requests_sent += 1
                         try:
                             if method.upper() == "GET":
                                 response = requests.get(
@@ -1048,6 +1111,9 @@ class APISecurityTester:
                 "method": method,
                 "parameters_tested": list(test_data.keys()),
                 "findings": findings,
+                "total_requests": requests_sent,
+                "requests_capped": requests_capped,
+                "time_capped": time_capped,
                 "timestamp": datetime.now().isoformat()
             }
 
@@ -1084,10 +1150,25 @@ class APISecurityTester:
             results = []
             rate_limited = False
             rate_limit_threshold = None
+            requests_capped = False
+            time_capped = False
 
             start_time = time.time()
 
+            # Bound the orphan window: this loops in the Flask handler, so past
+            # the ~60s harness abort an unclamped requests_count (or a tarpit
+            # that never returns 429, the only other exit) keeps firing with
+            # nothing teed to disk. A full job-backed rewrite -- cancellable and
+            # teed to disk like a shell job -- is deferred because job_manager
+            # cannot run a Python callable today. len(results) is the honest
+            # requests_sent already reported below.
             for i in range(requests_count):
+                if len(results) >= API_REQUEST_CEILING:
+                    requests_capped = True
+                    break
+                if (time.time() - start_time) >= API_LOOP_BUDGET_SECONDS:
+                    time_capped = True
+                    break
                 try:
                     if method.upper() == "GET":
                         response = requests.get(url, headers=req_headers,
@@ -1136,6 +1217,8 @@ class APISecurityTester:
                 "success": True,
                 "url": url,
                 "requests_sent": len(results),
+                "requests_capped": requests_capped,
+                "time_capped": time_capped,
                 "rate_limited": rate_limited,
                 "rate_limit_threshold": rate_limit_threshold,
                 "requests_per_second": len(results) / elapsed if elapsed > 0 else 0,
@@ -1150,7 +1233,7 @@ class APISecurityTester:
             return {"success": False, "error": str(e)}
 
     def auth_bypass_test(self, url: str, valid_token: str = "",
-                         headers: Dict = None) -> Dict[str, Any]:
+                         headers: Dict = None, method: str = "GET") -> Dict[str, Any]:
         """
         Test for authentication bypass vulnerabilities.
 
@@ -1181,7 +1264,7 @@ class APISecurityTester:
 
             # Test 1: No auth header
             try:
-                resp = requests.get(url, headers=req_headers, timeout=10, verify=False)
+                resp = requests.request(method, url, headers=req_headers, timeout=10, verify=False)
                 if resp.status_code in [200, 201]:
                     findings.append({
                         "type": "no_auth_required",
@@ -1206,7 +1289,7 @@ class APISecurityTester:
                 try:
                     test_headers = req_headers.copy()
                     test_headers["Authorization"] = auth_value
-                    resp = requests.get(url, headers=test_headers, timeout=10, verify=False)
+                    resp = requests.request(method, url, headers=test_headers, timeout=10, verify=False)
 
                     if resp.status_code in [200, 201]:
                         findings.append({

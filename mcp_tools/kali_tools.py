@@ -24,7 +24,11 @@ def register(mcp: FastMCP, kali_client) -> None:  # noqa: C901
             target: Target IP, hostname, or CIDR range
             scan_type: Nmap scan type flags (default: -sV)
             ports: Port specification (e.g., '80,443' or '1-1024')
-            additional_args: Extra nmap arguments
+            additional_args: Extra nmap arguments. These AUGMENT the baseline
+                -T4 -Pn that is always applied by the backend; they do not replace
+                it. An operator -Tn here still wins (nmap honours the last -T
+                template). -Pn cannot be disabled via this wrapper; to run host
+                discovery, call zebbern_exec with nmap directly.
             output_format: Output format — 'normal', 'xml', or 'grepable' (default: normal).
                 When 'xml', adds -oX - for structured XML output.
             background: Optional. This tool auto-promotes to a background job and

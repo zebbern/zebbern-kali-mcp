@@ -46,10 +46,10 @@ def signal_handler(signum, frame):
         except Exception as e:
             logger.error(f"Error stopping SSH session {session_id}: {e}")
 
-    logger.info("Destroying active Metasploit sessions...")
+    logger.info("Stopping active Metasploit sessions (keeping records)...")
     try:
         from core.metasploit_manager import msf_manager
-        msf_manager.destroy_all_sessions()
+        msf_manager.shutdown()
     except Exception as e:
         logger.error(f"Error destroying Metasploit sessions: {e}")
 

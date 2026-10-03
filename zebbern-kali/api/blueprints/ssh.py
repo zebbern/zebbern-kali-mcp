@@ -2,9 +2,23 @@
 
 from flask import Blueprint, request, jsonify
 from core.config import logger, active_ssh_sessions
-from core.ssh_manager import SSHSessionManager
+from core.ssh_manager import (
+    SSHSessionManager,
+    persist_sessions,
+    restore_sessions,
+)
 
 bp = Blueprint("ssh", __name__)
+
+# Rebuild restored stand-ins from a prior process's ssh_sessions.json at
+# import, i.e. backend start. A restart otherwise drops the in-memory
+# registry and the status/list routes answer empty, indistinguishable
+# from 'nothing ever started'. restore_sessions never raises; the guard
+# is belt-and-suspenders so a corrupt state file cannot stop the backend.
+try:
+    restore_sessions(active_ssh_sessions)
+except Exception as exc:  # pragma: no cover - restore_sessions is total
+    logger.warning(f"Could not restore SSH sessions: {exc}")
 
 
 @bp.route("/api/ssh/session/start", methods=["POST"])
@@ -32,6 +46,11 @@ def start_ssh_session():
 
         if result.get("success"):
             active_ssh_sessions[session_id] = ssh_manager
+            # Persist on create so the session survives a restart as a
+            # restored stand-in (metadata only; never the credential).
+            # persisted=false means the state dir was unwritable; the
+            # session still started.
+            result["persisted"] = persist_sessions(active_ssh_sessions)
 
         return jsonify(result)
     except Exception as e:
@@ -96,6 +115,9 @@ def stop_ssh_session():
         return jsonify({
             "success": True,
             "message": f"SSH session {session_id} stopped successfully",
+            # Rewrite the registry so the stopped session is no longer a
+            # restored stand-in after the next restart.
+            "persisted": persist_sessions(active_ssh_sessions),
         })
     except Exception as e:
         logger.error(f"Error stopping SSH session: {str(e)}")

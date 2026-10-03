@@ -5,9 +5,12 @@ Runs threaded HTTP and DNS listeners on a configurable interface, captures all
 incoming requests, and stores them in thread-safe in-memory storage.
 """
 
+import json
+import os
 import socket
 import struct
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -270,6 +273,7 @@ class CallbackCatcher:
 
     def __init__(self) -> None:
         self._callbacks: List[Dict[str, Any]] = []
+        self._callbacks_received = 0
         self._lock = threading.Lock()
         self._max_size = _MAX_CALLBACKS
         self._http_server: Optional[HTTPServer] = None
@@ -279,12 +283,74 @@ class CallbackCatcher:
         self._http_port = 0
         self._dns_port = 0
         self._bind_ip = "0.0.0.0"
+        self._session_id = uuid.uuid4().hex[:12]
+        self._callback_log_path: Optional[str] = None
+        self._callback_log_file = None
+        self._callbacks_logged = False
+        self._open_callback_log()
 
     # -- storage ----------------------------------------------------------
 
+    def _open_callback_log(self) -> None:
+        """Open the per-session .jsonl that captures 100% of callbacks.
+
+        Mirrors job_manager's log convention: the full callback stream lands
+        on disk before the in-memory ring clips or evicts, so the bounded
+        polling window may drop entries but the log never does. On any
+        filesystem error the catcher keeps running with the bounded ring only
+        and reports callbacks_logged=False, which keeps the eviction loss
+        visible rather than hiding it. The log is never rotated, capped, or
+        auto-deleted; cleanup is the operator's (see CLAUDE.md).
+        """
+        base_dir = os.environ.get("JOB_OUTPUT_DIR") or os.path.join(
+            tempfile.gettempdir(), "zebbern-kali-jobs"
+        )
+        path = os.path.join(base_dir, f"callbacks-{self._session_id}.jsonl")
+        try:
+            os.makedirs(base_dir, exist_ok=True)
+            self._callback_log_file = open(
+                path, "a", encoding="utf-8", errors="replace", newline=""
+            )
+            self._callback_log_path = path
+            self._callbacks_logged = True
+        except OSError:
+            self._callback_log_file = None
+            self._callback_log_path = None
+            self._callbacks_logged = False
+
+    def _tee_callback(self, entry: Dict[str, Any]) -> None:
+        """Append one JSON line for *entry* to the session log.
+
+        Caller holds ``self._lock``. The full entry lands here before the ring
+        is clipped, so the bounded polling window may evict an entry while the
+        .jsonl keeps it (rule 2: spill to disk, never discard). A write failure
+        degrades the log to unavailable (callbacks_logged=False) rather than
+        dropping silently or killing the listener thread.
+        """
+        log_file = self._callback_log_file
+        if log_file is None:
+            return
+        try:
+            log_file.write(json.dumps(entry, default=str) + "\n")
+            log_file.flush()
+        except (OSError, ValueError, TypeError):
+            self._callbacks_logged = False
+            self._callback_log_file = None
+            try:
+                log_file.close()
+            except OSError:
+                pass
+
     def _store_callback(self, entry: Dict[str, Any]) -> None:
-        """Thread-safe append to the callback list."""
+        """Thread-safe append to the callback list.
+
+        The entry is teed to the per-session .jsonl (100%, never evicted)
+        before the in-memory ring is clipped to max_size, so the ring bounds
+        only the polling window while the log keeps every callback.
+        """
         with self._lock:
+            self._callbacks_received += 1
+            self._tee_callback(entry)
             self._callbacks.append(entry)
             if len(self._callbacks) > self._max_size:
                 self._callbacks = self._callbacks[-self._max_size:]
@@ -405,6 +471,9 @@ class CallbackCatcher:
             total = len(self._callbacks)
             http_count = sum(1 for c in self._callbacks if c["type"] == "http")
             dns_count = sum(1 for c in self._callbacks if c["type"] == "dns")
+            received = self._callbacks_received
+            logged = self._callbacks_logged
+            log_path = self._callback_log_path
 
         return {
             "running": self._running,
@@ -416,6 +485,10 @@ class CallbackCatcher:
             "callbacks_http": http_count,
             "callbacks_dns": dns_count,
             "max_storage": self._max_size,
+            "callbacks_received": received,
+            "callbacks_dropped": received - total,
+            "callbacks_logged": logged,
+            "callback_log_path": log_path,
         }
 
     # -- query ------------------------------------------------------------

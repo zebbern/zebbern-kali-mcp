@@ -1,0 +1,10 @@
+{
+  "console_exited": false,
+  "detector": "generic_prompt",
+  "execution_time": "<normalized:execution_time>",
+  "output": "shell\r\nProcess 1 created.\r\nid\r\nuid=0(root) gid=0(root)\r\nroot@target:/root# ",
+  "partial_results": false,
+  "session_id": "golden_msf",
+  "success": true,
+  "timed_out": false
+}

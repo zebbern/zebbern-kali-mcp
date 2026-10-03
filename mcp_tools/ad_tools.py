@@ -15,7 +15,7 @@ def register(mcp: FastMCP, kali_client) -> None:
     @mcp.tool()
     def ad_bloodhound_collect(
         domain: str, username: str, password: str,
-        dc_ip: str = "", collection_method: str = "all",
+        dc_ip: str, collection_method: str = "all",
         nameserver: str = "",
     ) -> Dict[str, Any]:
         """
@@ -25,7 +25,7 @@ def register(mcp: FastMCP, kali_client) -> None:
             domain: Target AD domain (e.g., corp.local)
             username: Domain username
             password: Domain password
-            dc_ip: Domain Controller IP (auto-detected if empty)
+            dc_ip: Domain Controller IP
             collection_method: Collection method (all, default, DCOnly, etc.)
             nameserver: Custom DNS nameserver
         """

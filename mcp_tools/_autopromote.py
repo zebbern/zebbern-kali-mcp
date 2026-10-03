@@ -18,7 +18,7 @@ from typing import Any, Dict
 # (mcp_tools cannot import the backend). Anything else -- queued, running,
 # canceling, or an unknown future state -- means "keep waiting", which degrades
 # safely to a handoff at the deadline.
-_TERMINAL_STATES = frozenset({"succeeded", "failed", "canceled", "timed_out"})
+_TERMINAL_STATES = frozenset({"succeeded", "failed", "canceled", "timed_out", "orphaned"})
 
 _DEFAULT_INLINE_WAIT = 50.0
 _DEFAULT_POLL = 2.0
