@@ -644,11 +644,28 @@ the surface at exactly **135**, so no pin site moves and no count assertion chan
 names are ignored — fail-open, never raise. Widening the env set is gated on the
 `probe_tools.py` falsifier: the model composes the collapsed command into `zebbern_exec`, and
 the orphan / wrong-syntax / destructive rates are compared **net of the wrappers' own measured
-defects**, not against zero. What shipped builds the instrument and runs no experiment — in
-the pilot-OFF default the 135-vs-1 question stays **open**, and `tools_nmap` keeps its deferred
-footgun: passing `additional_args` silently replaces its `-T4 -Pn` default (that default is the
-value of the same arg), so asking for `--script vuln` drops `-Pn` and a ping-blocking host
-reads as down — documented here, not fixed in this change.
+defects**, not against zero. **The falsifier has now been run, against a live 1.0.19 backend (2026-10-03).** Sixteen
+wrappers measured as thin projections — `tools_nmap`, `masscan`, `sqlmap`, `nikto`, `gobuster`,
+`wpscan`, `hydra`, `john`, `enum4linux`, `sslscan`, `ssh_audit`, `fierce`, `subzy`, `httpx` plus
+`api_ffuf_fuzz` and `api_nuclei_scan` — each a build-an-f-string-and-return-`execute_command`
+runner meeting none of the four keep-tests. Both advantages a wrapper was assumed to buy are
+gone: an `api/exec` job with an omitted `timeout` inherits the binary's tier
+(`api/blueprints/command.py`), and `run_promotable` forces `background: True` unconditionally
+(`mcp_tools/_autopromote.py`), so a collapsed command registers in `job_list`, tees 100% to
+`$JOB_OUTPUT_DIR` and is cancellable. Two findings worth keeping: `ssh_audit`'s typed route is a
+bare `subprocess.run` with a 40s cap that ignores its own 1800s tier and tees nowhere, so
+collapsing it is a strict **upgrade**; and `api_ffuf_fuzz`/`api_nuclei_scan`'s output-file parse
+branch is **dead code for any MCP caller**, because promotion forces background and the agent
+already receives raw ndjson. The sheet and the env must widen in the SAME change — enabling a
+suppression whose cheat-sheet line has not shipped strips the wrapper before the model gains
+the guidance that replaces it. What a localhost-only run does NOT prove: that the model writes
+good commands against real, diverse targets over many sessions. [Delegated-agent decision under
+zebbern's standing authority grant, 2026-10-03.]
+
+`tools_nmap`'s footgun is **fixed**, not deferred — this paragraph used to say otherwise.
+`run_nmap` now always appends `-T4 -Pn` and puts `additional_args` AFTER them, so asking for
+`--script vuln` no longer drops `-Pn`; nmap honours the last `-T` template, so an operator's own
+`-Tn` still wins, and `-Pn` is forced (to run host discovery, call `zebbern_exec` directly).
 
 **The capability cheat-sheet lives in the `zebbern_exec` docstring**, not in a new tool (a
 six-pin-site change plus a probe case and a baseline entry) and not in a README or an MCP
