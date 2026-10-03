@@ -7,7 +7,7 @@ import sys
 import tempfile
 
 # Version information
-VERSION = "1.0.19"
+VERSION = "1.0.20"
 
 # Configuration
 API_PORT = int(os.environ.get("API_PORT", 5000))
