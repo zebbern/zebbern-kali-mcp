@@ -188,6 +188,42 @@ def register(mcp: FastMCP, kali_client) -> None:
         - msfconsole: drive it non-interactively with `-q -x '<resource
           commands>; exit'`, never bare, or it waits at its own prompt until
           the budget expires.
+        - masscan: set `--rate` explicitly -- masscan's own default is 100,
+          not the 1000 the wrapper used, so an unset rate is ~10x slower than
+          you expect. `--wait 0` exits promptly. Tier: 7200s.
+        - nikto: `nikto -h <url>`. Bound it with `-maxtime <N>s`; it has no
+          self-limit and will run for hours. Tier: 7200s.
+        - gobuster: `gobuster <dir|dns|fuzz|vhost> -u <url> -w <wordlist>
+          --no-color`. There is no default wordlist -- the usual one is
+          /usr/share/wordlists/dirb/common.txt. Tier: 7200s.
+        - wpscan: add `--no-banner --random-user-agent --disable-tls-checks`;
+          without them it banners, fingerprints as wpscan and fails on a lab
+          cert. `--api-token` and `-e <enum>` as needed. Tier: 14400s.
+        - john: no implicit wordlist -- without `--wordlist=` it falls back to
+          single/incremental mode and looks like it is working. Cracking is
+          only half of it: `john --show <hashfile>` is what prints the
+          credentials. Tier: 86400s.
+        - enum4linux: pass `-a` yourself; it is the full-enumeration flag and
+          without it the run is nearly silent. Tier: 3600s.
+        - sslscan: `sslscan --no-colour <host:port>`; append the port only for
+          non-443.
+        - ssh-audit: `ssh-audit -j <host>` (`-p` for non-22). `-j` emits JSON
+          on stdout and you parse it. Collapsing this one is an upgrade, not a
+          trade: its typed route ran a bare subprocess with no job, no disk tee
+          and a 40s cap that ignored its own 1800s tier.
+        - fierce: `fierce --domain <d> --dns-servers <server>`. It queries
+          PUBLIC DNS by default -- scope it deliberately.
+        - subzy: `subzy run --target <url>`, or `--targets <file>` for a list.
+          It reaches every target over the network.
+        - httpx: `httpx -silent -u <url>` (`-l <file>` for a list); without
+          `-silent` the banner drowns the results.
+        - ffuf: `ffuf -u <url>/FUZZ -w <wordlist> -mc <codes> -rate <n> -json
+          -s -timeout 10`. `-json -s` gives one ndjson hit per line; pipe to
+          `wc -l` for a count. Tier: 7200s.
+        - nuclei: `nuclei -u <url> -jsonl -rate-limit 150 -timeout 10
+          -retries 1` (`-t`/`-tags` to scope). Findings appear only after the
+          banner and often minutes in; `jq 'group_by(.info.severity)'` for a
+          rollup. Tier: 7200s.
 
         A backgrounded command inherits its binary's TOOL_TIMEOUTS tier
         automatically now (see `timeout` above), so you restate a tier only
